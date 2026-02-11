@@ -1,3 +1,12 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,15 +17,37 @@ build/
 *.egg
 .venv/
 venv/
+.mypy_cache/
+.tox/
+.nox/
+
+# Tooling / test artifacts
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.log
+
+# Environment files
+.env
+.env.*
+
+# Model artifacts
 *.pt
 *.engine
 *.onnx
 !models/.gitkeep
-.ruff_cache/
-.pytest_cache/
-.coverage
-htmlcov/
+
+# Video and pipeline outputs
 *.mp4
 *.insv
 *.mov
 *.avi
+detections.jsonl
+tracks.json
+camera_path.json
+foi_meta.json
+ffprobe_meta.json
+metadata.json
+config_snapshot.json
