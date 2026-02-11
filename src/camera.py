@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .utils import VideoMeta, load_json, write_json
+from .utils import VideoMeta, load_json, pixel_to_yaw_pitch, write_json
 
 logger = logging.getLogger("soccer360.camera")
 
@@ -110,7 +110,7 @@ class CameraPathGenerator:
         for t in tracks:
             if t.get("ball") is not None:
                 ball = t["ball"]
-                yaw, pitch = self._pixel_to_angle(
+                yaw, pitch = pixel_to_yaw_pitch(
                     ball["x"], ball["y"],
                     self.det_width, self.det_height,
                 )
@@ -119,18 +119,6 @@ class CameraPathGenerator:
             else:
                 result.append(None)
         return result
-
-    @staticmethod
-    def _pixel_to_angle(x: float, y: float, w: int, h: int) -> tuple[float, float]:
-        """Convert pixel position in equirectangular image to (yaw, pitch) degrees.
-
-        Equirectangular mapping:
-          x=0 -> yaw=-180, x=w -> yaw=+180
-          y=0 -> pitch=+90 (top), y=h -> pitch=-90 (bottom)
-        """
-        yaw = (x / w) * 360.0 - 180.0
-        pitch = 90.0 - (y / h) * 180.0
-        return yaw, pitch
 
     def _kalman_smooth(
         self,

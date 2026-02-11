@@ -39,6 +39,16 @@ def test_config() -> dict:
                 "nms_iou_threshold": 0.45,
                 "tiling": {"enabled": False},
             },
+            "field_of_interest": {
+                "enabled": False,
+                "center_mode": "fixed",
+                "center_yaw_deg": 0,
+                "yaw_window_deg": 200,
+                "pitch_min_deg": -45,
+                "pitch_max_deg": 20,
+                "auto_sample_seconds": 30,
+                "auto_min_conf": 0.25,
+            },
             "tracker": {
                 "track_high_thresh": 0.25,
                 "track_low_thresh": 0.1,

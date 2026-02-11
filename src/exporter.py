@@ -78,6 +78,7 @@ class Exporter:
             "detections.jsonl",
             "tracks.json",
             "camera_path.json",
+            "foi_meta.json",
         ]
         for name in artifacts:
             src = work_dir / name

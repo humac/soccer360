@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from src.camera import CameraPathGenerator, angle_diff, unwrap_angles, wrap_angle
-from src.utils import VideoMeta
+from src.utils import VideoMeta, pixel_to_yaw_pitch
 
 
 # ---------------------------------------------------------------------------
@@ -79,24 +79,24 @@ class TestUnwrapAngles:
 class TestPixelToAngle:
     def test_center(self):
         """Center of equirectangular = (0, 0) in yaw/pitch."""
-        yaw, pitch = CameraPathGenerator._pixel_to_angle(160, 80, 320, 160)
+        yaw, pitch = pixel_to_yaw_pitch(160, 80, 320, 160)
         assert abs(yaw) < 1e-6
         assert abs(pitch) < 1e-6
 
     def test_left_edge(self):
-        yaw, pitch = CameraPathGenerator._pixel_to_angle(0, 80, 320, 160)
+        yaw, pitch = pixel_to_yaw_pitch(0, 80, 320, 160)
         assert abs(yaw - (-180)) < 1e-6
 
     def test_right_edge(self):
-        yaw, pitch = CameraPathGenerator._pixel_to_angle(320, 80, 320, 160)
+        yaw, pitch = pixel_to_yaw_pitch(320, 80, 320, 160)
         assert abs(yaw - 180) < 1e-6
 
     def test_top(self):
-        yaw, pitch = CameraPathGenerator._pixel_to_angle(160, 0, 320, 160)
+        yaw, pitch = pixel_to_yaw_pitch(160, 0, 320, 160)
         assert abs(pitch - 90) < 1e-6
 
     def test_bottom(self):
-        yaw, pitch = CameraPathGenerator._pixel_to_angle(160, 160, 320, 160)
+        yaw, pitch = pixel_to_yaw_pitch(160, 160, 320, 160)
         assert abs(pitch - (-90)) < 1e-6
 
 

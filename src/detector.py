@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 
 import numpy as np
 
-from .utils import FFmpegFrameReader, VideoMeta, write_detections_jsonl
+from .utils import (
+    FFmpegFrameReader,
+    VideoMeta,
+    pixel_to_yaw_pitch,
+    wrap_angle_deg,
+    write_detections_jsonl,
+    write_json,
+)
 
 logger = logging.getLogger("soccer360.detector")
 
@@ -39,6 +47,18 @@ class Detector:
         self.tiling_enabled = self.tiling.get("enabled", False)
         self.tile_count = self.tiling.get("tiles", 4)  # 2x2
         self.tile_overlap = self.tiling.get("overlap", 0.1)
+
+        # Field-of-Interest filtering
+        foi_cfg = config.get("field_of_interest", {})
+        self.foi_enabled = foi_cfg.get("enabled", False)
+        self.foi_center_mode = foi_cfg.get("center_mode", "fixed")
+        self.foi_center_yaw = foi_cfg.get("center_yaw_deg", 0.0)
+        self.foi_yaw_window = foi_cfg.get("yaw_window_deg", 200.0)
+        self.foi_pitch_min = foi_cfg.get("pitch_min_deg", -45.0)
+        self.foi_pitch_max = foi_cfg.get("pitch_max_deg", 20.0)
+        self.foi_auto_sample_sec = foi_cfg.get("auto_sample_seconds", 30.0)
+        self.foi_auto_min_conf = foi_cfg.get("auto_min_conf", 0.25)
+        self._effective_center_yaw: float | None = None
 
         self.device = "cuda:0"
         self._model = None
@@ -126,6 +146,11 @@ class Detector:
         else:
             all_detections = detected_detections
 
+        # Field-of-Interest filtering
+        all_detections = self._filter_foi(
+            all_detections, det_w, det_h, meta.fps, output_path.parent,
+        )
+
         logger.info(
             "Detection complete: %d frames processed, %d detected, %d total detections",
             frame_count, len(detected_detections), len(all_detections),
@@ -181,6 +206,148 @@ class Detector:
 
         all_detections.sort(key=lambda d: d["frame"])
         return all_detections
+
+    def _filter_foi(
+        self,
+        detections: list[dict],
+        width: int,
+        height: int,
+        fps: float,
+        work_dir: Path,
+    ) -> list[dict]:
+        """Filter detections outside the configured Field-of-Interest region.
+
+        Writes foi_meta.json to work_dir with effective center and stats.
+        """
+        if not self.foi_enabled:
+            return detections
+
+        # Determine effective center yaw (compute once per run)
+        if self._effective_center_yaw is None:
+            fallback = False
+            sample_count = 0
+
+            if self.foi_center_mode == "auto":
+                self._effective_center_yaw, sample_count, fallback = (
+                    self._compute_auto_center(detections, width, height, fps)
+                )
+            else:
+                self._effective_center_yaw = self.foi_center_yaw
+
+            # Write foi_meta.json immediately
+            foi_meta = {
+                "enabled": True,
+                "center_mode": self.foi_center_mode,
+                "effective_center_yaw_deg": self._effective_center_yaw,
+                "configured_center_yaw_deg": self.foi_center_yaw,
+                "yaw_window_deg": self.foi_yaw_window,
+                "pitch_min_deg": self.foi_pitch_min,
+                "pitch_max_deg": self.foi_pitch_max,
+                "sample_count": sample_count,
+                "fallback": fallback,
+            }
+            write_json(foi_meta, work_dir / "foi_meta.json")
+
+        # Filter detections
+        half_window = self.foi_yaw_window / 2.0
+        center = self._effective_center_yaw
+        total = len(detections)
+
+        kept = []
+        for det in detections:
+            bbox = det["bbox"]
+            cx = (bbox[0] + bbox[2]) / 2.0
+            cy = (bbox[1] + bbox[3]) / 2.0
+            yaw, pitch = pixel_to_yaw_pitch(cx, cy, width, height)
+
+            if abs(wrap_angle_deg(yaw - center)) > half_window:
+                continue
+            if pitch < self.foi_pitch_min or pitch > self.foi_pitch_max:
+                continue
+            kept.append(det)
+
+        filtered_pct = (1.0 - len(kept) / total) * 100.0 if total > 0 else 0.0
+        logger.info(
+            "FoI filter: %d total -> %d kept (%.1f%% filtered), effective center_yaw=%.1f",
+            total, len(kept), filtered_pct, center,
+        )
+        return kept
+
+    def _compute_auto_center(
+        self,
+        detections: list[dict],
+        width: int,
+        height: int,
+        fps: float,
+    ) -> tuple[float, int, bool]:
+        """Compute auto-center yaw from histogram peak of early detections.
+
+        Returns (effective_center_yaw, sample_count, is_fallback).
+        """
+        max_frame = int(fps * self.foi_auto_sample_sec)
+
+        # Collect samples: early frames, sufficient confidence, valid pitch
+        sample_yaws = []
+        for det in detections:
+            if det["frame"] >= max_frame:
+                continue
+            if det.get("confidence", 0) < self.foi_auto_min_conf:
+                continue
+
+            bbox = det["bbox"]
+            cx = (bbox[0] + bbox[2]) / 2.0
+            cy = (bbox[1] + bbox[3]) / 2.0
+            yaw, pitch = pixel_to_yaw_pitch(cx, cy, width, height)
+
+            if pitch < self.foi_pitch_min or pitch > self.foi_pitch_max:
+                continue
+            sample_yaws.append(yaw)
+
+        sample_count = len(sample_yaws)
+
+        if sample_count == 0:
+            logger.warning(
+                "FoI auto-center: no samples passed filters, "
+                "falling back to center_yaw_deg=%.1f",
+                self.foi_center_yaw,
+            )
+            return self.foi_center_yaw, 0, True
+
+        # Build 5-degree histogram over (-180, 180]
+        bin_width = 5.0
+        num_bins = 72  # 360 / 5
+        bins = [0] * num_bins
+
+        for yaw in sample_yaws:
+            idx = int((wrap_angle_deg(yaw) + 180.0) / bin_width) % num_bins
+            bins[idx] += 1
+
+        # Find peak bin
+        peak_idx = max(range(num_bins), key=lambda i: bins[i])
+        peak_center = -180.0 + (peak_idx + 0.5) * bin_width
+
+        # Collect yaws in peak bin ± 1 neighbor (with wraparound)
+        neighbor_indices = {
+            (peak_idx - 1) % num_bins,
+            peak_idx,
+            (peak_idx + 1) % num_bins,
+        }
+        local_yaws = []
+        for yaw in sample_yaws:
+            idx = int((wrap_angle_deg(yaw) + 180.0) / bin_width) % num_bins
+            if idx in neighbor_indices:
+                local_yaws.append(yaw)
+
+        # Circular mean of local cluster
+        sin_sum = sum(math.sin(math.radians(y)) for y in local_yaws)
+        cos_sum = sum(math.cos(math.radians(y)) for y in local_yaws)
+        effective = math.degrees(math.atan2(sin_sum, cos_sum))
+
+        logger.info(
+            "FoI auto-center: %d samples, peak_bin=%.0f, effective center_yaw=%.1f",
+            sample_count, peak_center, effective,
+        )
+        return effective, sample_count, False
 
     def _detect_batch(
         self, frames: list[np.ndarray], indices: list[int]

@@ -309,6 +309,33 @@ def load_config(path: str | Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Equirectangular angle helpers
+# ---------------------------------------------------------------------------
+
+def pixel_to_yaw_pitch(x: float, y: float, w: int, h: int) -> tuple[float, float]:
+    """Convert pixel position in equirectangular image to (yaw, pitch) degrees.
+
+    Equirectangular mapping:
+      x=0 -> yaw=-180, x=w -> yaw=+180
+      y=0 -> pitch=+90 (top), y=h -> pitch=-90 (bottom)
+    """
+    yaw = (x / w) * 360.0 - 180.0
+    pitch = 90.0 - (y / h) * 180.0
+    return yaw, pitch
+
+
+def wrap_angle_deg(a: float) -> float:
+    """Wrap angle to (-180, 180] range.
+
+    Consistent half-open interval: -180 maps to +180, 0 stays 0.
+    """
+    a = a % 360.0
+    if a > 180.0:
+        a -= 360.0
+    return a
+
+
+# ---------------------------------------------------------------------------
 # Grouping helpers
 # ---------------------------------------------------------------------------
 

@@ -31,6 +31,17 @@ detector:
     tiles: 4
     overlap: 0.1
 
+field_of_interest:
+  enabled: true
+  # fixed: use center_yaw_deg as-is; auto: compute from first N seconds of detections
+  center_mode: fixed
+  center_yaw_deg: 0
+  yaw_window_deg: 200        # +/-100 from center
+  pitch_min_deg: -45
+  pitch_max_deg: 20
+  auto_sample_seconds: 30    # seconds to sample for auto center mode
+  auto_min_conf: 0.25        # min detection confidence for auto-center sampling
+
 tracker:
   algorithm: bytetrack
   track_high_thresh: 0.25
