@@ -38,18 +38,18 @@ docker compose logs -f worker
 Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 minutes:
 
 ```
-360 video → Ball Detection (GPU) → Tracking → Camera Path → Reframing → Export
+360 video --> Detection (GPU) --> FoI Filter --> Tracking --> Camera Path --> Reframing --> Export
 ```
 
-**Pass 1 (GPU):** Frames streamed via ffmpeg pipe → YOLO batch inference → detections JSONL. Frames never touch disk.
+**Pass 1 (GPU):** Frames streamed via ffmpeg pipe -> YOLO batch inference -> Field-of-Interest filtering -> detections JSONL. Frames never touch disk.
 
-**Pass 2 (CPU, parallel):** Frames streamed again → py360convert e2p with per-frame camera angles → encoded via ffmpeg. 12 parallel workers for segment-based rendering.
+**Pass 2 (CPU, parallel):** Frames streamed again -> py360convert e2p with per-frame camera angles -> encoded via ffmpeg. 12 parallel workers with segment overlap for clean cuts.
 
 ### Processing Phases
 
 | Phase | Operation | Hardware |
 |-------|-----------|----------|
-| 1 | Ball detection (YOLO) | GPU (P40) |
+| 1 | Ball detection (YOLO) + FoI filtering | GPU (P40) |
 | 2 | Ball tracking (ByteTrack) | CPU |
 | 3 | Camera path (Kalman filter + EMA) | CPU |
 | 4 | Broadcast reframing (py360convert) | CPU (12 workers) |
@@ -57,6 +57,16 @@ Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 
 | 6 | Highlight detection & export | CPU |
 | 7 | Output organization | I/O |
 | 8 | Scratch cleanup | I/O |
+
+## Field-of-Interest (FoI) Filtering
+
+When the 360 camera sits between adjacent soccer fields, YOLO detects balls on both. The FoI filter removes detections outside a configurable yaw/pitch window so only the target game reaches the tracker.
+
+**Modes:**
+- **fixed** (default): Use `center_yaw_deg` directly. Camera front lens faces the target field, so `center_yaw_deg: 0` with `yaw_window_deg: 200` covers the front hemisphere.
+- **auto**: Analyzes the first N seconds of detections, builds a 5-degree yaw histogram, finds the dominant cluster via peak detection + circular mean, and locks the center for the rest of the run.
+
+**Runtime metadata:** `foi_meta.json` is written to the output directory with the effective center yaw, sample count, and whether fallback was used.
 
 ## CLI Commands
 
@@ -82,21 +92,22 @@ All commands accept `--config` / `-c` to specify a custom config file (default: 
 ```
 /scratch/                   Fast NVMe, active processing only (auto-cleaned)
 /tank/
-  ├── ingest/               Drop raw 360 videos here
-  ├── processed/            Final outputs (broadcast + tactical + metadata)
-  │   └── <match_name>/
-  │       ├── broadcast.mp4
-  │       ├── tactical_wide.mp4
-  │       ├── camera_path.json
-  │       ├── detections.jsonl
-  │       ├── tracks.json
-  │       └── metadata.json
-  ├── highlights/           Highlight clips
-  │   └── <match_name>/
-  ├── models/               Trained YOLO models (versioned)
-  ├── labeling/             Hard frames + labels for training
-  ├── archive_raw/          Optional raw file archive
-  └── logs/                 Pipeline logs
+  +-- ingest/               Drop raw 360 videos here
+  +-- processed/            Final outputs (broadcast + tactical + metadata)
+  |   +-- <match_name>/
+  |       +-- broadcast.mp4
+  |       +-- tactical_wide.mp4
+  |       +-- camera_path.json
+  |       +-- detections.jsonl
+  |       +-- tracks.json
+  |       +-- foi_meta.json
+  |       +-- metadata.json
+  +-- highlights/           Highlight clips
+  |   +-- <match_name>/
+  +-- models/               Trained YOLO models (versioned)
+  +-- labeling/             Hard frames + labels for training
+  +-- archive_raw/          Optional raw file archive
+  +-- logs/                 Pipeline logs
 ```
 
 ## Configuration
@@ -104,13 +115,15 @@ All commands accept `--config` / `-c` to specify a custom config file (default: 
 All parameters are in `configs/pipeline.yaml`:
 
 - **paths** -- ingest, scratch, processed, models, etc.
-- **model** -- YOLO model path, TensorRT toggle
-- **detector** -- batch size, detection resolution, confidence threshold, tiling
-- **tracker** -- ByteTrack thresholds and buffer
-- **camera** -- pan speed limits, FOV range, Kalman filter noise, ball-lost behavior
-- **reframer** -- output resolution, source downscale, worker count, tactical view params
+- **model** -- YOLO model path, TensorRT toggle, inference backend (`fp32` or `tensorrt_int8`)
+- **detector** -- batch size, detection resolution, confidence threshold, frame skipping, tiling
+- **field_of_interest** -- enable/disable, center mode (fixed/auto), yaw window, pitch range, auto-center sampling
+- **tracker** -- ByteTrack thresholds, track buffer, ball selection sanity checks (detector.resolution pixel space)
+- **camera** -- pan speed limits, FOV range, Kalman filter noise, deadband, velocity threshold, ball-lost behavior
+- **reframer** -- output resolution, source downscale, worker count, segment overlap, tactical view (FOV 120)
 - **highlights** -- speed percentile, direction change threshold, goal-box regions, clip margins
-- **exporter** -- codec, CRF quality, raw file handling
+- **exporter** -- codec, CRF quality, encoder (cpu/nvenc), raw file handling
+- **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s)
 
 ## Camera Smoothing
 
@@ -171,30 +184,64 @@ The P40 is a Pascal GP102 GPU with 24GB VRAM. It supports FP16 arithmetic (no Te
 1. **TensorRT INT8**: Export model and set `model.backend: tensorrt_int8` in config. 47 TOPS INT8 vs 12 TFLOPS FP32.
 2. **NVENC encoding**: Set `exporter.encoder: nvenc` to use hardware encoding instead of CPU libx264.
 3. **Frame skipping**: Set `detector.process_every_n_frames: 2` to halve GPU detection load (positions interpolated).
+4. **Source downscale**: Set `reframer.source_downscale: [3840, 1920]` to downscale before reframing.
 
 ## Project Structure
 
 ```
 src/
   cli.py          Click CLI entry point
-  watcher.py      Watchdog folder daemon
-  pipeline.py     Orchestrator (coordinates all phases)
-  detector.py     YOLO streaming batch detection
-  tracker.py      ByteTrack ball tracking
-  camera.py       Camera path generation (Kalman + EMA)
-  reframer.py     360-to-perspective rendering (parallel)
-  highlights.py   Heuristic highlight detection
-  exporter.py     Output organization + metadata
-  trainer.py      YOLO fine-tuning + hard frame export
-  utils.py        FFmpeg I/O, config, logging
+  watcher.py      Watchdog folder daemon (stability checks, staging suffix ignore)
+  pipeline.py     Orchestrator (coordinates all 8 processing phases)
+  detector.py     YOLO streaming batch detection + Field-of-Interest filtering
+  tracker.py      ByteTrack ball tracking (two-stage association, Kalman box filter)
+  camera.py       Camera path generation (Kalman + EMA + deadband + dynamic FOV)
+  reframer.py     360-to-perspective rendering (parallel segments, overlap warmup)
+  highlights.py   Heuristic highlight detection (speed, direction, goal-box events)
+  exporter.py     Output organization + metadata + artifact preservation
+  trainer.py      YOLO fine-tuning + TensorRT export + hard frame export
+  utils.py        FFmpeg streaming I/O, config, equirectangular angle helpers
+
+configs/
+  pipeline.yaml       Main processing configuration
+  model_config.yaml   YOLO training configuration
+
+scripts/
+  install.sh      Server installation (directories, Docker build, verification)
+  train.sh        Model training wrapper
+
+tests/
+  conftest.py         Shared pytest fixtures
+  test_pipeline.py    End-to-end pipeline tests
+  test_detector.py    Detection + FoI filter + NMS tests
+  test_tracker.py     ByteTrack association + ball selection tests
+  test_camera.py      Camera path smoothing + angle conversion tests
+  test_reframer.py    Vertical FOV math + e2p integration tests
+  test_highlights.py  Highlight detection tests
 ```
+
+## Key Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| ultralytics | YOLO ball detection |
+| py360convert | Equirectangular-to-perspective projection |
+| filterpy | Kalman filtering (tracking + camera smoothing) |
+| scipy | Linear sum assignment (ByteTrack matching) |
+| watchdog | File system event monitoring |
+| click | CLI framework |
+| opencv-python-headless | Image processing |
+| ffmpeg (system) | Video decode/encode via streaming pipes |
 
 ## Testing
 
 ```bash
-# Run tests inside Docker
+# Run all tests inside Docker
 docker compose run --rm worker pytest tests/ -v
 
-# Run specific test
-docker compose run --rm worker pytest tests/test_camera.py -v
+# Run specific test module
+docker compose run --rm worker pytest tests/test_detector.py -v
+
+# Run with coverage
+docker compose run --rm worker pytest tests/ --cov=src --cov-report=term-missing
 ```
