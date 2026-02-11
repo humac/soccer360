@@ -1,0 +1,35 @@
+# YOLO Training Configuration
+
+training:
+  base_model: yolov8s.pt
+  imgsz: 640
+  batch: 16
+  epochs: 50
+  device: "cuda:0"
+  patience: 10
+  optimizer: AdamW
+  lr0: 0.001
+  augmentation:
+    hsv_h: 0.015
+    hsv_s: 0.7
+    hsv_v: 0.4
+    degrees: 10.0
+    translate: 0.1
+    scale: 0.5
+    flipud: 0.0
+    fliplr: 0.5
+    mosaic: 1.0
+    mixup: 0.1
+
+export:
+  format: engine
+  int8: true
+  dynamic: false
+  simplify: true
+  workspace: 8
+
+dataset:
+  path: /tank/labeling/dataset.yaml
+  classes: ["ball"]
+  train: /tank/labeling/train/images
+  val: /tank/labeling/val/images

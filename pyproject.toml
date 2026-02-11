@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "soccer360"
+version = "0.1.0"
+description = "Automated 360 soccer video processing pipeline"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    "click>=8.1",
+    "watchdog>=4.0",
+    "numpy>=1.24",
+    "opencv-python-headless>=4.8",
+    "py360convert>=1.0",
+    "pyyaml>=6.0",
+    "ultralytics>=8.1",
+    "filterpy>=1.4",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.1",
+]
+
+[project.scripts]
+soccer360 = "src.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

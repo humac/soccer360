@@ -1,0 +1,114 @@
+# Soccer360 Pipeline Configuration
+
+paths:
+  ingest: /tank/ingest
+  scratch: /scratch/work
+  processed: /tank/processed
+  highlights: /tank/highlights
+  models: /tank/models
+  labeling: /tank/labeling
+  archive_raw: /tank/archive_raw
+  logs: /tank/logs
+
+model:
+  path: /app/models/ball_best.pt
+  base_model: yolov8s.pt
+  tensorrt_path: /app/models/ball_best.engine
+  # Inference backend: fp32 (default baseline) or tensorrt_int8 (optimization)
+  backend: fp32
+
+detector:
+  batch_size: 16
+  batch_size_tensorrt: 32
+  resolution: [1920, 960]
+  confidence_threshold: 0.25
+  nms_iou_threshold: 0.45
+  # Process every Nth frame (1 = all frames, 2 = skip every other, etc.)
+  # Skipped frames get positions interpolated from neighbors
+  process_every_n_frames: 1
+  tiling:
+    enabled: false
+    tiles: 4
+    overlap: 0.1
+
+tracker:
+  algorithm: bytetrack
+  track_high_thresh: 0.25
+  track_low_thresh: 0.1
+  new_track_thresh: 0.25
+  track_buffer: 30
+  match_thresh: 0.4
+  # Ball selection sanity checks (all values in detector.resolution pixel space)
+  # At default resolution [1920, 960], 200px ≈ 10% of frame width
+  max_speed_px_per_frame: 200
+  max_displacement_px: 300
+  min_bbox_area: 10
+  max_bbox_area: 10000
+
+camera:
+  max_pan_speed_deg_per_sec: 60.0
+  max_fast_pan_speed_deg_per_sec: 120.0
+  ema_alpha: 0.15
+  default_fov: 90.0
+  min_fov: 80.0
+  max_fov: 100.0
+  lost_coast_frames: 30
+  lost_drift_frames: 90
+  field_center_yaw_deg: 0.0
+  field_center_pitch_deg: -5.0
+  # Deadband: ignore movements smaller than this to prevent micro-oscillation
+  deadband_deg: 0.5
+  # Minimum velocity threshold to start camera movement (deg/sec)
+  velocity_threshold_deg_per_sec: 2.0
+  # Immediately widen FOV when ball is lost
+  lost_fov_widen: true
+  kalman:
+    process_noise: 0.1
+    measurement_noise: 1.0
+
+reframer:
+  output_resolution: [1920, 1080]
+  # Pass source frames at native resolution to e2p (null = no downscale)
+  # Set to [3840, 1920] to downscale before reframing for speed
+  source_downscale: null
+  num_workers: 12
+  interpolation: bilinear
+  # Seconds of overlap at segment boundaries for codec warmup (clean cuts)
+  overlap_sec: 0.5
+  tactical_fov: 120
+  tactical_yaw: 0.0
+  tactical_pitch: -5.0
+
+highlights:
+  speed_percentile: 95
+  direction_change_deg: 90
+  goal_box_regions:
+    - [0.0, 0.3, 0.08, 0.7]
+    - [0.92, 0.3, 1.0, 0.7]
+  pre_margin_sec: 5.0
+  post_margin_sec: 3.0
+  min_clip_gap_sec: 5.0
+  min_clip_duration_sec: 3.0
+
+exporter:
+  codec: libx264
+  crf: 18
+  preset: medium
+  # Encoder: cpu (libx264/libx265) or nvenc (NVIDIA hardware encoder)
+  encoder: cpu
+  audio: copy
+  archive_raw: false
+  delete_raw: false
+
+watcher:
+  extensions: [".mp4", ".insv", ".mov"]
+  # Ignore files still being uploaded (staging extensions)
+  ignore_suffixes: [".uploading", ".tmp", ".part"]
+  # File size must be stable for stability_checks * stability_interval_sec
+  # Default: 5 * 10s = 50 seconds of stable size before processing
+  stability_checks: 5
+  stability_interval_sec: 10.0
+
+logging:
+  level: INFO
+  file: null

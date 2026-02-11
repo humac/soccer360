@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: soccer360-worker
+    restart: unless-stopped
+    command: ["soccer360", "watch"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - /tank:/tank
+      - /scratch:/scratch
+      - ./configs:/app/configs:ro
+      - ./models:/app/models
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - SOCCER360_CONFIG=/app/configs/pipeline.yaml
+    shm_size: "16gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+  labelstudio:
+    image: heartexlabs/label-studio:latest
+    container_name: soccer360-labelstudio
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /tank/labeling:/label-studio/data/labeling
+      - labelstudio_data:/label-studio/data/db
+    environment:
+      - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
+      - LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/data
+
+volumes:
+  labelstudio_data:
