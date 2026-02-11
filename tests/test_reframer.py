@@ -9,6 +9,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import src.reframer as reframer_mod
+from src.reframer import Reframer
 from src.utils import VideoMeta
 
 
@@ -135,3 +137,122 @@ class TestFFmpegFrameIO:
 
         frames = list(reader)
         assert len(frames) == 5
+
+
+class TestReframerHardening:
+    def test_render_broadcast_rejects_zero_frames(self, test_config, tmp_path):
+        reframer = Reframer(test_config)
+        camera_path = tmp_path / "camera_path.json"
+        camera_path.write_text("[]")
+
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=0.0, total_frames=0, codec="h264",
+        )
+        with pytest.raises(ValueError, match="camera_path has no frames"):
+            reframer.render_broadcast(
+                video_path="dummy.mp4",
+                meta=meta,
+                camera_path_file=camera_path,
+                output_path=tmp_path / "broadcast.mp4",
+            )
+
+    def test_render_tactical_rejects_zero_frames(self, test_config, tmp_path):
+        reframer = Reframer(test_config)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=0.0, total_frames=0, codec="h264",
+        )
+        with pytest.raises(ValueError, match="source has no frames"):
+            reframer.render_tactical(
+                video_path="dummy.mp4",
+                meta=meta,
+                output_path=tmp_path / "tactical.mp4",
+            )
+
+    def test_short_render_segment_raises(self, monkeypatch, tmp_path):
+        class DummyReader:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __iter__(self):
+                frame = np.zeros((8, 8, 3), dtype=np.uint8)
+                yield frame
+                yield frame
+
+        class DummyWriter:
+            def __init__(self, *args, **kwargs):
+                self.writes = 0
+
+            def write(self, frame):
+                self.writes += 1
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(reframer_mod, "FFmpegFrameReader", DummyReader)
+        monkeypatch.setattr(reframer_mod, "FFmpegFrameWriter", DummyWriter)
+        monkeypatch.setattr(reframer_mod.py360convert, "e2p", lambda frame, **kwargs: frame)
+
+        camera_entries = [{"yaw": 0.0, "pitch": 0.0, "fov": 90.0} for _ in range(3)]
+        with pytest.raises(RuntimeError, match="Short render"):
+            reframer_mod._render_segment(
+                video_path="dummy.mp4",
+                camera_entries=camera_entries,
+                start_frame=0,
+                fps=30.0,
+                source_w=8,
+                source_h=8,
+                out_w=8,
+                out_h=8,
+                codec="libx264",
+                crf=23,
+                preset="ultrafast",
+                output_path=str(tmp_path / "seg.mp4"),
+                overlap_frames=0,
+            )
+
+    def test_tactical_cleanup_on_worker_failure(self, test_config, monkeypatch, tmp_path):
+        class DummyFuture:
+            def __init__(self, fail: bool = False):
+                self.fail = fail
+
+            def result(self):
+                if self.fail:
+                    raise RuntimeError("worker failed")
+                return None
+
+        class DummyPool:
+            def __init__(self, max_workers):
+                self.calls = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def submit(self, fn, *args):
+                self.calls += 1
+                seg_path = Path(args[14])
+                seg_path.parent.mkdir(parents=True, exist_ok=True)
+                seg_path.write_bytes(b"segment")
+                return DummyFuture(fail=self.calls == 2)
+
+        monkeypatch.setattr(reframer_mod, "ProcessPoolExecutor", DummyPool)
+        monkeypatch.setattr(reframer_mod, "concat_segments", lambda *args, **kwargs: None)
+
+        reframer = Reframer(test_config)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=0.13, total_frames=4, codec="h264",
+        )
+
+        with pytest.raises(RuntimeError, match="worker failed"):
+            reframer.render_tactical(
+                video_path="dummy.mp4",
+                meta=meta,
+                output_path=tmp_path / "tactical.mp4",
+            )
+
+        assert list(tmp_path.glob("tactical_seg_*.mp4")) == []

@@ -78,8 +78,12 @@ def _render_segment(
         codec=codec, crf=crf, preset=preset,
     )
 
+    written = 0
     try:
-        for i, (frame, cam) in enumerate(zip(reader, full_cam)):
+        for i, frame in enumerate(reader):
+            if i >= len(full_cam):
+                break
+            cam = full_cam[i]
             fov_h = cam["fov"]
             fov_v = math.degrees(
                 2 * math.atan(math.tan(math.radians(fov_h / 2)) * (out_h / out_w))
@@ -97,8 +101,15 @@ def _render_segment(
             # Skip overlap warmup frames
             if i >= skip_count:
                 writer.write(perspective)
+                written += 1
     finally:
         writer.close()
+
+    if written != len(camera_entries):
+        raise RuntimeError(
+            f"Short render in segment starting at frame {start_frame}: "
+            f"wrote {written}/{len(camera_entries)} frames"
+        )
 
 
 def _render_tactical_segment(
@@ -146,6 +157,7 @@ def _render_tactical_segment(
         codec=codec, crf=crf, preset=preset,
     )
 
+    written = 0
     try:
         for i, frame in enumerate(reader):
             perspective = py360convert.e2p(
@@ -158,8 +170,15 @@ def _render_tactical_segment(
             )
             if i >= skip_count:
                 writer.write(perspective)
+                written += 1
     finally:
         writer.close()
+
+    if written != num_frames:
+        raise RuntimeError(
+            f"Short tactical render in segment starting at frame {start_frame}: "
+            f"wrote {written}/{num_frames} frames"
+        )
 
 
 class Reframer:
@@ -207,6 +226,8 @@ class Reframer:
         """Render broadcast follow video using parallel segment rendering."""
         camera_path = load_json(camera_path_file)
         total_frames = len(camera_path)
+        if total_frames <= 0:
+            raise ValueError("Cannot render broadcast: camera_path has no frames")
         video_str = str(video_path)
 
         source_dims = self._resolve_source_dims(meta)
@@ -228,43 +249,51 @@ class Reframer:
 
         segments: list[Path] = []
         futures = []
+        planned_total = 0
 
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            offset = 0
-            for i in range(workers):
-                n = chunk_size + (1 if i < remainder else 0)
-                seg_path = output_path.parent / f"broadcast_seg_{i:03d}.mp4"
-                segments.append(seg_path)
+        try:
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                offset = 0
+                for i in range(workers):
+                    n = chunk_size + (1 if i < remainder else 0)
+                    planned_total += n
+                    seg_path = output_path.parent / f"broadcast_seg_{i:03d}.mp4"
+                    segments.append(seg_path)
 
-                cam_slice = camera_path[offset : offset + n]
+                    cam_slice = camera_path[offset : offset + n]
 
-                futures.append(pool.submit(
-                    _render_segment,
-                    video_str,
-                    cam_slice,
-                    offset,
-                    meta.fps,
-                    src_w if source_dims else None,
-                    src_h if source_dims else None,
-                    self.out_w,
-                    self.out_h,
-                    self.codec,
-                    self.crf,
-                    self.preset,
-                    str(seg_path),
-                    overlap_frames if i > 0 else 0,
-                ))
-                offset += n
+                    futures.append(pool.submit(
+                        _render_segment,
+                        video_str,
+                        cam_slice,
+                        offset,
+                        meta.fps,
+                        src_w if source_dims else None,
+                        src_h if source_dims else None,
+                        self.out_w,
+                        self.out_h,
+                        self.codec,
+                        self.crf,
+                        self.preset,
+                        str(seg_path),
+                        overlap_frames if i > 0 else 0,
+                    ))
+                    offset += n
 
-            for i, f in enumerate(futures):
-                f.result()
-                logger.info("Broadcast segment %d/%d complete", i + 1, workers)
+                if planned_total != total_frames:
+                    raise RuntimeError(
+                        f"Broadcast segment plan mismatch: {planned_total} != {total_frames}"
+                    )
 
-        logger.info("Concatenating %d broadcast segments", len(segments))
-        concat_segments(segments, output_path)
+                for i, f in enumerate(futures):
+                    f.result()
+                    logger.info("Broadcast segment %d/%d complete", i + 1, workers)
 
-        for seg in segments:
-            seg.unlink(missing_ok=True)
+            logger.info("Concatenating %d broadcast segments", len(segments))
+            concat_segments(segments, output_path)
+        finally:
+            for seg in segments:
+                seg.unlink(missing_ok=True)
 
         logger.info("Broadcast render complete: %s", output_path)
 
@@ -280,6 +309,8 @@ class Reframer:
         because the per-frame e2p computation is still CPU-bound.
         """
         total_frames = meta.total_frames
+        if total_frames <= 0:
+            raise ValueError("Cannot render tactical view: source has no frames")
         video_str = str(video_path)
 
         source_dims = self._resolve_source_dims(meta)
@@ -298,43 +329,51 @@ class Reframer:
 
         segments: list[Path] = []
         futures = []
+        planned_total = 0
 
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            offset = 0
-            for i in range(workers):
-                n = chunk_size + (1 if i < remainder else 0)
-                seg_path = output_path.parent / f"tactical_seg_{i:03d}.mp4"
-                segments.append(seg_path)
+        try:
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                offset = 0
+                for i in range(workers):
+                    n = chunk_size + (1 if i < remainder else 0)
+                    planned_total += n
+                    seg_path = output_path.parent / f"tactical_seg_{i:03d}.mp4"
+                    segments.append(seg_path)
 
-                futures.append(pool.submit(
-                    _render_tactical_segment,
-                    video_str,
-                    offset,
-                    n,
-                    meta.fps,
-                    src_w,
-                    src_h,
-                    self.out_w,
-                    self.out_h,
-                    self.tactical_yaw,
-                    self.tactical_pitch,
-                    self.tactical_fov,
-                    self.codec,
-                    self.crf,
-                    self.preset,
-                    str(seg_path),
-                    overlap_frames if i > 0 else 0,
-                ))
-                offset += n
+                    futures.append(pool.submit(
+                        _render_tactical_segment,
+                        video_str,
+                        offset,
+                        n,
+                        meta.fps,
+                        src_w,
+                        src_h,
+                        self.out_w,
+                        self.out_h,
+                        self.tactical_yaw,
+                        self.tactical_pitch,
+                        self.tactical_fov,
+                        self.codec,
+                        self.crf,
+                        self.preset,
+                        str(seg_path),
+                        overlap_frames if i > 0 else 0,
+                    ))
+                    offset += n
 
-            for i, f in enumerate(futures):
-                f.result()
-                logger.info("Tactical segment %d/%d complete", i + 1, workers)
+                if planned_total != total_frames:
+                    raise RuntimeError(
+                        f"Tactical segment plan mismatch: {planned_total} != {total_frames}"
+                    )
 
-        logger.info("Concatenating %d tactical segments", len(segments))
-        concat_segments(segments, output_path)
+                for i, f in enumerate(futures):
+                    f.result()
+                    logger.info("Tactical segment %d/%d complete", i + 1, workers)
 
-        for seg in segments:
-            seg.unlink(missing_ok=True)
+            logger.info("Concatenating %d tactical segments", len(segments))
+            concat_segments(segments, output_path)
+        finally:
+            for seg in segments:
+                seg.unlink(missing_ok=True)
 
         logger.info("Tactical render complete: %s", output_path)
