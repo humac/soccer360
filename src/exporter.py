@@ -31,6 +31,7 @@ class Exporter:
 
         self.archive_raw = exp_cfg.get("archive_raw", False)
         self.delete_raw = exp_cfg.get("delete_raw", False)
+        self.require_tactical = exp_cfg.get("require_tactical", True)
 
     def finalize(
         self,
@@ -47,6 +48,15 @@ class Exporter:
         # Move main outputs
         broadcast_src = work_dir / "broadcast.mp4"
         tactical_src = work_dir / "tactical_wide.mp4"
+
+        # Validate required outputs before writing metadata/copying artifacts.
+        missing_required = []
+        if not broadcast_src.exists():
+            missing_required.append("broadcast.mp4")
+        if self.require_tactical and not tactical_src.exists():
+            missing_required.append("tactical_wide.mp4")
+        if missing_required:
+            raise RuntimeError(f"Missing required outputs: {', '.join(missing_required)}")
 
         outputs = {}
 
@@ -66,9 +76,8 @@ class Exporter:
         highlights_src = work_dir / "highlights"
         highlights_dst = None
         if highlights_src.exists() and any(highlights_src.iterdir()):
-            highlights_dst = self.highlights_base / game_name
-            if highlights_dst.exists():
-                shutil.rmtree(highlights_dst)
+            self.highlights_base.mkdir(parents=True, exist_ok=True)
+            highlights_dst = self._unique_named_dir(self.highlights_base, game_name)
             shutil.copytree(str(highlights_src), str(highlights_dst))
             outputs["highlights"] = str(highlights_dst)
             logger.info("Exported highlights: %s", highlights_dst)
@@ -123,7 +132,7 @@ class Exporter:
         raw_path = Path(input_path)
         if self.archive_raw and raw_path.exists():
             self.archive_base.mkdir(parents=True, exist_ok=True)
-            archive_dst = self.archive_base / raw_path.name
+            archive_dst = self._unique_file_path(self.archive_base, raw_path.name)
             shutil.move(str(raw_path), str(archive_dst))
             logger.info("Archived raw: %s", archive_dst)
         elif self.delete_raw and raw_path.exists():
@@ -134,17 +143,44 @@ class Exporter:
 
     def _unique_output_dir(self, game_name: str) -> Path:
         """Create a unique output directory. Never overwrite silently."""
-        base = self.output_base / game_name
+        base = self._unique_named_dir(self.output_base, game_name)
+        return base
+
+    @staticmethod
+    def _unique_named_dir(parent: Path, name: str) -> Path:
+        """Create a unique directory name by appending _runN when needed."""
+        base = parent / name
         if not base.exists():
             return base
 
         # If directory already exists, append a run counter
         counter = 1
         while True:
-            candidate = self.output_base / f"{game_name}_run{counter}"
+            candidate = parent / f"{name}_run{counter}"
             if not candidate.exists():
                 logger.info(
                     "Output dir %s exists, using %s", base, candidate
                 )
+                return candidate
+            counter += 1
+
+    @staticmethod
+    def _split_name_suffixes(filename: str) -> tuple[str, str]:
+        p = Path(filename)
+        suffix = "".join(p.suffixes)
+        stem = p.name[: -len(suffix)] if suffix else p.name
+        return stem, suffix
+
+    def _unique_file_path(self, parent: Path, filename: str) -> Path:
+        """Create a unique file path by appending _runN when needed."""
+        candidate = parent / filename
+        if not candidate.exists():
+            return candidate
+
+        stem, suffix = self._split_name_suffixes(filename)
+        counter = 1
+        while True:
+            candidate = parent / f"{stem}_run{counter}{suffix}"
+            if not candidate.exists():
                 return candidate
             counter += 1
