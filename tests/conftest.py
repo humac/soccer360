@@ -37,6 +37,7 @@ def test_config() -> dict:
                 "resolution": [320, 160],
                 "confidence_threshold": 0.25,
                 "nms_iou_threshold": 0.45,
+                "process_every_n_frames": 1,
                 "tiling": {"enabled": False},
             },
             "field_of_interest": {

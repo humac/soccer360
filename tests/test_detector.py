@@ -7,8 +7,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import src.detector as detector_mod
 from src.detector import Detector
-from src.utils import pixel_to_yaw_pitch, wrap_angle_deg
+from src.utils import VideoMeta, pixel_to_yaw_pitch, wrap_angle_deg
 
 
 # ---------------------------------------------------------------------------
@@ -220,3 +221,76 @@ class TestNMS:
         scores = np.array([0.9])
         keep = Detector._nms(boxes, scores, iou_threshold=0.5)
         assert keep == [0]
+
+
+class TestDetectorHardening:
+    def test_interpolation_does_not_bridge_large_gaps(self):
+        detections = [
+            {"frame": 0, "bbox": [0, 0, 10, 10], "confidence": 0.9, "class": 0},
+            {"frame": 6, "bbox": [6, 0, 16, 10], "confidence": 0.8, "class": 0},
+        ]
+        out = Detector._interpolate_skipped(detections, total_frames=7, skip_n=2)
+        frames = sorted(d["frame"] for d in out)
+        assert frames == [0, 6]
+
+    def test_foi_center_resets_between_runs(self, tmp_path, monkeypatch):
+        cfg = {
+            "model": {"path": "dummy.pt"},
+            "detector": {"resolution": [320, 160], "batch_size": 16},
+            "field_of_interest": {
+                "enabled": True,
+                "center_mode": "auto",
+                "center_yaw_deg": 0.0,
+                "yaw_window_deg": 120.0,
+                "pitch_min_deg": -45.0,
+                "pitch_max_deg": 20.0,
+                "auto_sample_seconds": 30.0,
+                "auto_min_conf": 0.1,
+            },
+        }
+        detector = Detector(cfg)
+
+        def fake_load_model():
+            detector._model = object()
+
+        class FakeReader:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __iter__(self):
+                frame = np.zeros((160, 320, 3), dtype=np.uint8)
+                yield frame
+                yield frame
+
+        run_centers = [187.0, 133.0]  # yaw ~ +30, then yaw ~ -30
+        run_idx = {"value": 0}
+
+        def fake_detect_batch(frames, indices):
+            cx = run_centers[run_idx["value"]]
+            run_idx["value"] += 1
+            out = []
+            for idx in indices:
+                out.append({
+                    "frame": idx,
+                    "bbox": [cx - 5, 75.0, cx + 5, 85.0],
+                    "confidence": 0.9,
+                    "class": 0,
+                })
+            return out
+
+        monkeypatch.setattr(detector, "_load_model", fake_load_model)
+        monkeypatch.setattr(detector_mod, "FFmpegFrameReader", FakeReader)
+        monkeypatch.setattr(detector, "_detect_batch", fake_detect_batch)
+
+        meta = VideoMeta(
+            width=640, height=320, fps=10.0,
+            duration=0.2, total_frames=2, codec="h264",
+        )
+
+        detector.run_streaming("dummy.mp4", meta, tmp_path / "run1" / "detections.jsonl")
+        center1 = detector._effective_center_yaw
+        detector.run_streaming("dummy.mp4", meta, tmp_path / "run2" / "detections.jsonl")
+        center2 = detector._effective_center_yaw
+
+        assert center1 is not None and 20.0 < center1 < 40.0
+        assert center2 is not None and -40.0 < center2 < -20.0

@@ -93,6 +93,9 @@ class Detector:
         if self._model is None:
             self._load_model()
 
+        # Recompute FoI auto-center per run (do not leak prior run state).
+        self._effective_center_yaw = None
+
         det_w, det_h = self.det_resolution
         bs = self._effective_batch_size
         skip_n = self.process_every_n
@@ -175,6 +178,9 @@ class Detector:
             f_end = detected_frames[i + 1]
 
             if f_end - f_start <= 1:
+                continue
+            if f_end - f_start > skip_n:
+                # Do not bridge true detector gaps; only fill skip-induced holes.
                 continue
 
             dets_start = by_frame[f_start]
