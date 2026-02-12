@@ -60,8 +60,8 @@ class TestResolveModelPath:
         }
 
         # Mock the base_model.exists() check since /app/models doesn't exist in test
-        with patch.object(Path, "exists") as mock_exists:
-            original_exists = Path.exists
+        original_exists = Path.exists
+        with patch.object(Path, "exists", autospec=True) as mock_exists:
 
             def side_effect(self):
                 if str(self) == str(models_dir / "ball_best.pt"):
