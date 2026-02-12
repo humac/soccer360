@@ -13,7 +13,7 @@ services:
       - /tank:/tank
       - /scratch:/scratch
       - ./configs:/app/configs:ro
-      - ./models:/app/models
+      - /tank/models:/app/models
     environment:
       - NVIDIA_VISIBLE_DEVICES=1
       - SOCCER360_CONFIG=/app/configs/pipeline.yaml

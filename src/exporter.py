@@ -39,6 +39,7 @@ class Exporter:
         input_path: str,
         meta: VideoMeta,
         processing_start: datetime | None = None,
+        mode: str = "normal",
     ):
         """Move outputs from scratch to final destinations."""
         game_name = Path(input_path).stem
@@ -82,13 +83,17 @@ class Exporter:
             outputs["highlights"] = str(highlights_dst)
             logger.info("Exported highlights: %s", highlights_dst)
 
-        # Preserve ALL intermediate artifacts
-        artifacts = [
-            "detections.jsonl",
-            "tracks.json",
-            "camera_path.json",
-            "foi_meta.json",
-        ]
+        # Preserve intermediate artifacts (conditional on mode)
+        if mode == "normal":
+            artifacts = [
+                "detections.jsonl",
+                "tracks.json",
+                "camera_path.json",
+                "foi_meta.json",
+                "hard_frames.json",
+            ]
+        else:
+            artifacts = ["camera_path.json"]
         for name in artifacts:
             src = work_dir / name
             if src.exists():
@@ -122,6 +127,7 @@ class Exporter:
                 (now - processing_start).total_seconds()
                 if processing_start else None
             ),
+            "mode": mode,
             "outputs": outputs,
             "artifacts": artifacts,
         }

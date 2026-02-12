@@ -110,6 +110,13 @@ def test_config() -> dict:
                 "stability_checks": 2,
                 "stability_interval_sec": 0.5,
             },
+            "active_learning": {
+                "enabled": True,
+                "confidence_threshold": 0.3,
+                "gap_frames": 5,
+                "max_export_frames": 50,
+                "position_jump_px": 150,
+            },
             "logging": {
                 "level": "WARNING",
                 "file": None,

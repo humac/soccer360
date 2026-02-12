@@ -20,6 +20,44 @@ from .utils import (
 logger = logging.getLogger("soccer360.detector")
 
 
+def resolve_model_path(config: dict) -> tuple[str | None, str]:
+    """Resolve the best available ball-detection model path.
+
+    Priority:
+      1. {paths.models}/ball_best.pt  (fine-tuned model on /tank)
+      2. config["model"]["path"]      (e.g. /app/models/ball_best.pt)
+      3. /app/models/ball_base.pt     (repo baseline; copied to tank on first use)
+      4. None -> NO_DETECT mode
+
+    Returns:
+        (resolved_path or None, "normal" or "no_detect")
+    """
+    import shutil
+
+    tank_model = Path(config.get("paths", {}).get("models", "/tank/models")) / "ball_best.pt"
+    config_model = Path(config.get("model", {}).get("path", "yolov8s.pt"))
+    base_model = Path("/app/models/ball_base.pt")
+
+    if tank_model.exists():
+        logger.info("Model resolved: %s (fine-tuned)", tank_model)
+        return str(tank_model), "normal"
+
+    if config_model.exists():
+        logger.info("Model resolved: %s (config path)", config_model)
+        return str(config_model), "normal"
+
+    if base_model.exists():
+        tank_model.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(base_model), str(tank_model))
+        logger.info(
+            "Model resolved: %s (base model, copied to %s)", base_model, tank_model
+        )
+        return str(tank_model), "normal"
+
+    logger.warning("No ball detection model found -- entering NO_DETECT mode")
+    return None, "no_detect"
+
+
 class Detector:
     """Streaming ball detector using Ultralytics YOLO.
 

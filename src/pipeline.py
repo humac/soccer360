@@ -14,8 +14,9 @@ from datetime import datetime
 from pathlib import Path
 
 from .camera import CameraPathGenerator
-from .detector import Detector
+from .detector import Detector, resolve_model_path
 from .exporter import Exporter
+from .hard_frames import HardFrameExporter
 from .highlights import HighlightDetector
 from .reframer import Reframer
 from .tracker import Tracker
@@ -31,8 +32,20 @@ class Pipeline:
         self.config = config
         self.scratch_base = Path(config["paths"]["scratch"])
 
-        self.detector = Detector(config)
-        self.tracker = Tracker(config)
+        # Resolve model and determine operating mode
+        resolved_path, self.mode = resolve_model_path(config)
+
+        if self.mode == "normal":
+            config.setdefault("model", {})["path"] = resolved_path
+            self.detector = Detector(config)
+            self.tracker = Tracker(config)
+            self.hard_frame_exporter = HardFrameExporter(config)
+        else:
+            logger.warning("NO_DETECT mode: no ball detection model found")
+            self.detector = None
+            self.tracker = None
+            self.hard_frame_exporter = None
+
         self.camera = CameraPathGenerator(config)
         self.reframer = Reframer(config)
         self.highlights = HighlightDetector(config)
@@ -67,21 +80,35 @@ class Pipeline:
                 meta.width, meta.height, meta.fps, meta.duration,
                 meta.total_frames, meta.codec,
             )
+            logger.info("Operating mode: %s", self.mode)
 
-            # Phase 1: Ball detection (GPU)
-            logger.info("--- Phase 1: Ball Detection (GPU) ---")
-            detections_path = work_dir / "detections.jsonl"
-            self.detector.run_streaming(str(input_path), meta, detections_path)
-
-            # Phase 2: Ball tracking (CPU)
-            logger.info("--- Phase 2: Ball Tracking ---")
-            tracks_path = work_dir / "tracks.json"
-            self.tracker.run(detections_path, tracks_path)
-
-            # Phase 3: Camera path generation (CPU)
-            logger.info("--- Phase 3: Camera Path Generation ---")
             camera_path_file = work_dir / "camera_path.json"
-            self.camera.generate(tracks_path, meta, camera_path_file)
+
+            if self.mode == "normal":
+                # Phase 1: Ball detection (GPU)
+                logger.info("--- Phase 1: Ball Detection (GPU) ---")
+                detections_path = work_dir / "detections.jsonl"
+                self.detector.run_streaming(str(input_path), meta, detections_path)
+
+                # Phase 2: Ball tracking (CPU)
+                logger.info("--- Phase 2: Ball Tracking ---")
+                tracks_path = work_dir / "tracks.json"
+                self.tracker.run(detections_path, tracks_path)
+
+                # Phase 2.5: Hard frame export (active learning)
+                logger.info("--- Phase 2.5: Hard Frame Export ---")
+                self.hard_frame_exporter.run(
+                    str(input_path), meta, detections_path, tracks_path, work_dir
+                )
+
+                # Phase 3: Camera path generation (CPU)
+                logger.info("--- Phase 3: Camera Path Generation ---")
+                self.camera.generate(tracks_path, meta, camera_path_file)
+            else:
+                # NO_DETECT mode: skip detection/tracking, static camera
+                logger.info("--- NO_DETECT: Skipping phases 1-2, static camera path ---")
+                self.camera.generate_static(meta, camera_path_file)
+                tracks_path = None
 
             # Phase 4: Broadcast reframing (CPU, parallel)
             logger.info("--- Phase 4: Broadcast Reframing ---")
@@ -98,14 +125,19 @@ class Pipeline:
             # Phase 6: Highlight detection and export
             logger.info("--- Phase 6: Highlights ---")
             highlights_dir = work_dir / "highlights"
-            self.highlights.detect_and_export(
-                broadcast_path, meta, camera_path_file, tracks_path, highlights_dir
-            )
+            if self.mode == "normal" and tracks_path is not None:
+                self.highlights.detect_and_export(
+                    broadcast_path, meta, camera_path_file, tracks_path, highlights_dir
+                )
+            else:
+                logger.info("Skipping highlights in NO_DETECT mode (no tracks)")
 
             # Phase 7: Export to final destination
             logger.info("--- Phase 7: Export ---")
             output_dir = self.exporter.finalize(
-                work_dir, str(input_path), meta, processing_start=start_time
+                work_dir, str(input_path), meta,
+                processing_start=start_time,
+                mode=self.mode,
             )
 
             elapsed = (datetime.now() - start_time).total_seconds()

@@ -75,6 +75,22 @@ class CameraPathGenerator:
         self.det_width = det_cfg.get("resolution", [1920, 960])[0]
         self.det_height = det_cfg.get("resolution", [1920, 960])[1]
 
+    def generate_static(self, meta: VideoMeta, output_path: Path):
+        """Generate a static camera path at field center for NO_DETECT mode."""
+        camera_path = []
+        for _ in range(meta.total_frames):
+            camera_path.append({
+                "yaw": self.field_center_yaw,
+                "pitch": self.field_center_pitch,
+                "fov": self.default_fov,
+            })
+        logger.info(
+            "Static camera path: %d frames at yaw=%.1f, pitch=%.1f, fov=%.1f",
+            len(camera_path), self.field_center_yaw,
+            self.field_center_pitch, self.default_fov,
+        )
+        write_json(camera_path, output_path)
+
     def generate(self, tracks_path: Path, meta: VideoMeta, output_path: Path):
         """Generate camera path from tracked ball positions."""
         tracks = load_json(tracks_path)

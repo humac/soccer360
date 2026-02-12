@@ -75,6 +75,45 @@ def test_copy_to_scratch_creates_unique_job_dirs(tmp_path: Path):
     handler.close()
 
 
+def test_dotfile_ignored(tmp_path: Path):
+    """Hidden files (dotfiles) should be silently ignored."""
+    job_queue: queue.Queue = queue.Queue()
+    scratch_dir = tmp_path / "scratch"
+    scratch_dir.mkdir()
+
+    handler = VideoFileHandler(job_queue, scratch_dir, max_copy_workers=1)
+
+    # Create various dotfiles
+    (tmp_path / ".DS_Store").write_bytes(b"x")
+    (tmp_path / ".nfs000001").write_bytes(b"x")
+    (tmp_path / ".hidden_video.mp4").write_bytes(b"x")
+
+    handler._handle_candidate(tmp_path / ".DS_Store")
+    handler._handle_candidate(tmp_path / ".nfs000001")
+    handler._handle_candidate(tmp_path / ".hidden_video.mp4")
+
+    assert job_queue.empty()
+    handler.close()
+
+
+def test_part_file_ignored(tmp_path: Path):
+    """Files with staging suffixes (.part, .tmp) should be ignored."""
+    job_queue: queue.Queue = queue.Queue()
+    scratch_dir = tmp_path / "scratch"
+    scratch_dir.mkdir()
+
+    handler = VideoFileHandler(job_queue, scratch_dir, max_copy_workers=1)
+
+    (tmp_path / "match.part").write_bytes(b"partial")
+    (tmp_path / "match.tmp").write_bytes(b"partial")
+
+    handler._handle_candidate(tmp_path / "match.part")
+    handler._handle_candidate(tmp_path / "match.tmp")
+
+    assert job_queue.empty()
+    handler.close()
+
+
 def test_create_handler_uses_configured_limits(test_config):
     cfg = {
         **test_config,

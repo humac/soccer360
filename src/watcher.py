@@ -58,6 +58,10 @@ class VideoFileHandler(FileSystemEventHandler):
         if is_directory:
             return
 
+        # Ignore hidden files (dotfiles like .DS_Store, .nfs*, etc.)
+        if path.name.startswith("."):
+            return
+
         # Ignore staging/temp files (e.g. .uploading, .tmp, .part)
         if path.suffix.lower() in self.ignore_suffixes:
             return

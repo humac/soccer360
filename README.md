@@ -51,12 +51,27 @@ Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 
 |-------|-----------|----------|
 | 1 | Ball detection (YOLO) + FoI filtering | GPU (P40) |
 | 2 | Ball tracking (ByteTrack) | CPU |
+| 2.5 | Hard frame export (active learning) | I/O |
 | 3 | Camera path (Kalman filter + EMA) | CPU |
 | 4 | Broadcast reframing (py360convert) | CPU (12 workers) |
 | 5 | Tactical wide view | CPU (parallel) |
 | 6 | Highlight detection & export | CPU |
 | 7 | Output organization | I/O |
 | 8 | Scratch cleanup | I/O |
+
+### Model Fallback (NO_DETECT mode)
+
+If no ball detection model is available, the pipeline runs in **NO_DETECT mode**:
+- Skips phases 1, 2, 2.5, and 6 (detection, tracking, hard frames, highlights)
+- Generates a static camera path at field center with default FOV
+- Still produces `broadcast.mp4` (fixed framing) and `tactical_wide.mp4`
+- `metadata.json` includes `"mode": "no_detect"` to indicate degraded output
+
+Model resolution priority:
+1. `/tank/models/ball_best.pt` (fine-tuned model)
+2. Config `model.path` (`/app/models/ball_best.pt`)
+3. `/app/models/ball_base.pt` (base model, auto-copied to tank)
+4. No model found -- NO_DETECT mode
 
 ## Field-of-Interest (FoI) Filtering
 
@@ -101,11 +116,20 @@ All commands accept `--config` / `-c` to specify a custom config file (default: 
   |       +-- detections.jsonl
   |       +-- tracks.json
   |       +-- foi_meta.json
+  |       +-- hard_frames.json
   |       +-- metadata.json
   +-- highlights/           Highlight clips
   |   +-- <match_name>/
-  +-- models/               Trained YOLO models (versioned)
+  +-- models/               Trained YOLO models (versioned, timestamped)
+  |   +-- ball_best.pt      Active model (auto-picked up by worker)
+  |   +-- ball_model_YYYYMMDD_HHMM/  Versioned training runs
   +-- labeling/             Hard frames + labels for training
+  |   +-- <match_name>/
+  |       +-- frames/       Auto-exported hard frames (JPEG)
+  |       +-- labels/       YOLO-format labels (from Label Studio)
+  |       +-- hard_frames.json  Manifest with reasons + predicted bboxes
+  |       +-- labelstudio/  Label Studio task JSON
+  |   +-- dataset/          Built dataset (train/val splits)
   +-- archive_raw/          Optional raw file archive
   +-- logs/                 Pipeline logs
 ```
@@ -123,7 +147,8 @@ All parameters are in `configs/pipeline.yaml`:
 - **reframer** -- output resolution, source downscale, worker count, segment overlap, tactical view (FOV 120)
 - **highlights** -- speed percentile, direction change threshold, goal-box regions, clip margins
 - **exporter** -- codec, CRF quality, encoder (cpu/nvenc), raw file handling
-- **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s)
+- **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s), dotfile filtering
+- **active_learning** -- hard frame export thresholds (confidence, gap frames, position jump), max export count
 
 ## Camera Smoothing
 
@@ -142,27 +167,64 @@ Ball-lost fallback:
 - Frames 31-90: velocity decays, camera slows
 - Frames 91+: slowly drift toward field center
 
-## Model Training Workflow
+## Weekly Improvement Loop (Active Learning)
+
+The system improves over time through a simple weekly cycle:
+
+1. **Process games** -- hard frames are exported automatically
+2. **Label 5-10 minutes** -- annotate ball bounding boxes in Label Studio
+3. **Build dataset + train** -- one command each
+4. **Next games are better** -- worker auto-picks up the new model
 
 ```bash
-# 1. Process a match to generate detections
-soccer360 process /tank/ingest/match.mp4 --no-cleanup
+# 1. Process games (hard frames exported to /tank/labeling/<match>/frames/)
+docker compose up -d worker
+cp match1.mp4 match2.mp4 /tank/ingest/
 
-# 2. Export hard frames (low confidence + lost ball)
-soccer360 export-hard-frames match.mp4 detections.jsonl --threshold 0.3
+# 2. Import hard frames into Label Studio
+bash scripts/labelstudio_import.sh match1
+bash scripts/labelstudio_import.sh match2
 
 # 3. Label in Label Studio
-docker compose up -d labelstudio
-# Open http://localhost:8080, import images, annotate ball bounding boxes
+#    Open http://<server>:8080
+#    Create project, import tasks.json, label ball bounding boxes
+#    Export annotations in YOLO format to /tank/labeling/<match>/labels/
 
-# 4. Export labels in YOLO format, create dataset.yaml
+# 4. Build dataset from all labeled matches
+bash scripts/build_dataset.sh
 
-# 5. Train
-bash scripts/train.sh 50 /tank/labeling/dataset.yaml
+# 5. Train (50 epochs by default)
+bash scripts/train_ball.sh 50
 
-# 6. Update config to use new model
-# Edit configs/pipeline.yaml -> model.path
+# 6. Next games automatically use /tank/models/ball_best.pt
+#    To reprocess a match with the new model:
+docker compose run --rm worker soccer360 process /tank/ingest/match.mp4
 ```
+
+### Safe Ingest
+
+When copying files to `/tank/ingest/`, use atomic copy to avoid processing partial files:
+
+```bash
+# Recommended: copy to .part then rename
+cp match.mp4 /tank/ingest/match.mp4.part
+mv /tank/ingest/match.mp4.part /tank/ingest/match.mp4
+```
+
+The watcher ignores `.part`, `.tmp`, `.uploading` suffixes and hidden files (dotfiles).
+Files must have a stable size for 50 seconds (configurable) before processing begins.
+
+### Hard Frame Export
+
+During every pipeline run, Phase 2.5 automatically identifies "hard frames" where the model struggled:
+
+- **Low confidence** -- detection confidence below threshold (default 0.3)
+- **Lost ball gaps** -- consecutive frames with no ball detected (default >15 frames)
+- **Position jumps** -- ball position jumps between frames (default >150px)
+
+Exported to `/tank/labeling/<match>/frames/` with a manifest at `hard_frames.json` containing frame index, timestamp, reason, and predicted bbox/confidence.
+
+Configure in `configs/pipeline.yaml` under `active_learning`.
 
 ## Docker Services
 
@@ -191,15 +253,16 @@ The P40 is a Pascal GP102 GPU with 24GB VRAM. It supports FP16 arithmetic (no Te
 ```
 src/
   cli.py          Click CLI entry point
-  watcher.py      Watchdog folder daemon (stability checks, staging suffix ignore)
-  pipeline.py     Orchestrator (coordinates all 8 processing phases)
-  detector.py     YOLO streaming batch detection + Field-of-Interest filtering
+  watcher.py      Watchdog folder daemon (stability checks, dotfile filtering)
+  pipeline.py     Orchestrator (coordinates all processing phases + NO_DETECT mode)
+  detector.py     YOLO streaming batch detection + FoI filtering + model resolution
   tracker.py      ByteTrack ball tracking (two-stage association, Kalman box filter)
   camera.py       Camera path generation (Kalman + EMA + deadband + dynamic FOV)
   reframer.py     360-to-perspective rendering (parallel segments, overlap warmup)
   highlights.py   Heuristic highlight detection (speed, direction, goal-box events)
   exporter.py     Output organization + metadata + artifact preservation
-  trainer.py      YOLO fine-tuning + TensorRT export + hard frame export
+  hard_frames.py  Automatic hard-frame export for active learning
+  trainer.py      YOLO fine-tuning + TensorRT export
   utils.py        FFmpeg streaming I/O, config, equirectangular angle helpers
 
 configs/
@@ -207,17 +270,24 @@ configs/
   model_config.yaml   YOLO training configuration
 
 scripts/
-  install.sh      Server installation (directories, Docker build, verification)
-  train.sh        Model training wrapper
+  install.sh              Server installation (directories, Docker build, verification)
+  train.sh                Legacy model training wrapper
+  train_ball.sh           Active learning training (timestamp-versioned)
+  build_dataset.sh        Build YOLO dataset from labeled matches
+  labelstudio_import.sh   Generate Label Studio task JSON from hard frames
 
 tests/
-  conftest.py         Shared pytest fixtures
-  test_pipeline.py    End-to-end pipeline tests
-  test_detector.py    Detection + FoI filter + NMS tests
-  test_tracker.py     ByteTrack association + ball selection tests
-  test_camera.py      Camera path smoothing + angle conversion tests
-  test_reframer.py    Vertical FOV math + e2p integration tests
-  test_highlights.py  Highlight detection tests
+  conftest.py              Shared pytest fixtures
+  test_pipeline.py         End-to-end pipeline tests
+  test_detector.py         Detection + FoI filter + NMS tests
+  test_tracker.py          ByteTrack association + ball selection tests
+  test_camera.py           Camera path smoothing + angle conversion tests
+  test_reframer.py         Vertical FOV math + e2p integration tests
+  test_highlights.py       Highlight detection tests
+  test_hard_frames.py      Hard frame identification + export tests
+  test_model_resolution.py Model resolution + NO_DETECT mode tests
+  test_watcher.py          Watcher ingest handling + safety tests
+  test_exporter.py         Output organization tests
 ```
 
 ## Key Dependencies

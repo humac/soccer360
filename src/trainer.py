@@ -28,7 +28,7 @@ class Trainer:
         from ultralytics import YOLO
 
         version = self._next_version()
-        run_name = f"ball_model_v{version}"
+        run_name = f"ball_model_{version}"
 
         logger.info("Starting training: %s (base=%s, epochs=%d)", run_name, self.base_model, epochs)
 
@@ -148,17 +148,17 @@ class Trainer:
             exported, images_dir,
         )
 
-    def _next_version(self) -> int:
-        """Determine the next model version number."""
+    def _next_version(self) -> str:
+        """Generate a timestamp-based version string.
+
+        Respects SOCCER360_RUN_NAME env var if set (used by train_ball.sh).
+        """
+        import os
+        from datetime import datetime
+
+        env_name = os.environ.get("SOCCER360_RUN_NAME")
+        if env_name:
+            return env_name.replace("ball_model_", "")
+
         self.model_dir.mkdir(parents=True, exist_ok=True)
-        existing = list(self.model_dir.glob("ball_model_v*"))
-        if not existing:
-            return 1
-        versions = []
-        for p in existing:
-            try:
-                v = int(p.name.split("_v")[-1])
-                versions.append(v)
-            except ValueError:
-                continue
-        return max(versions, default=0) + 1
+        return datetime.now().strftime("%Y%m%d_%H%M")

@@ -120,6 +120,17 @@ watcher:
   stability_checks: 5
   stability_interval_sec: 10.0
 
+active_learning:
+  enabled: true
+  # Minimum detection confidence; frames below this are exported for labeling
+  confidence_threshold: 0.3
+  # Consecutive lost-ball frames to trigger export (gap detection)
+  gap_frames: 15
+  # Maximum frames to export per video (sampled if exceeded)
+  max_export_frames: 500
+  # Minimum position jump (pixels in detector resolution) to flag as hard frame
+  position_jump_px: 150
+
 logging:
   level: INFO
   file: /tank/logs/soccer360.log
