@@ -184,7 +184,7 @@ class CameraPathGenerator:
                 yaw, pitch, conf = angle
 
                 # Handle yaw wrap-around: unwrap relative to filter state
-                filter_yaw = float(kf.x[0])
+                filter_yaw = float(kf.x[0, 0])
                 yaw_unwrapped = filter_yaw + angle_diff(yaw, wrap_angle(filter_yaw))
 
                 kf.update(np.array([[yaw_unwrapped], [pitch]]))
@@ -200,7 +200,7 @@ class CameraPathGenerator:
                 # Drift toward field center when lost for extended period
                 if lost_count > self.lost_drift_frames:
                     # Unwrap field center relative to current yaw
-                    current_yaw = float(kf.x[0])
+                    current_yaw = float(kf.x[0, 0])
                     target_yaw = current_yaw + angle_diff(
                         self.field_center_yaw, wrap_angle(current_yaw)
                     )
@@ -209,10 +209,10 @@ class CameraPathGenerator:
                     kf.x[1] += (target_pitch - kf.x[1]) * 0.02
 
             output.append({
-                "yaw": float(kf.x[0]),
-                "pitch": float(kf.x[1]),
-                "d_yaw": float(kf.x[2]),
-                "d_pitch": float(kf.x[3]),
+                "yaw": float(kf.x[0, 0]),
+                "pitch": float(kf.x[1, 0]),
+                "d_yaw": float(kf.x[2, 0]),
+                "d_pitch": float(kf.x[3, 0]),
                 "lost": angle is None,
                 "lost_count": lost_count,
             })

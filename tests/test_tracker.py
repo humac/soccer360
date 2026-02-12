@@ -61,7 +61,7 @@ class TestByteTrackInstance:
 
         # Low confidence detection
         bt2 = ByteTrackInstance()
-        dets_low = np.array([[10, 10, 20, 20, 0.15]])
+        dets_low = np.array([[10, 10, 20, 20, 0.30]])
         result_low = bt2.update(dets_low)
         assert len(result_low) == 1
         assert result_low[0]["score"] < result[0]["score"]

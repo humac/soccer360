@@ -19,7 +19,7 @@ COPY configs/ configs/
 COPY scripts/ scripts/
 COPY models/ models/
 
-RUN pip install --no-cache-dir -e ".[dev]"
+RUN pip install --no-cache-dir ".[dev]"
 
 ENTRYPOINT ["soccer360"]
 CMD ["watch"]
