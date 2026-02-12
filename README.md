@@ -234,6 +234,10 @@ Watcher dedupe state settings:
 | `processed_state_file` | `watcher_processed_ingest.json` | JSON state filename/path; relative values resolve under `<paths.processed>/.state/` |
 | `processed_state_max_entries` | `50000` | Retention cap for state entries (latest N records kept, `0` = unlimited) |
 
+Tune `processed_state_max_entries` based on ingest volume and startup latency.
+Higher values retain longer dedupe history but increase state file size/load time.
+Lower values reduce startup overhead for high-volume deployments.
+
 **Post-success archival** is configured in `configs/pipeline.yaml` under `ingest`:
 
 | Key | Default | Description |
@@ -246,6 +250,35 @@ Watcher dedupe state settings:
 
 If archival fails (e.g. permissions), the pipeline still succeeds -- processed outputs are preserved, the ingest file stays in place, and `metadata.json` records `ingest_archive_status: "failed"`.
 This also applies to `archive_mode: copy` / `leave` and `archive_collision: skip`: persistent watcher dedupe prevents restart loops even when the ingest file remains present.
+
+### Reset Dedupe State (Force Reprocess)
+
+If you intentionally want the watcher to process previously completed ingest files again:
+
+```bash
+# 1) Stop watcher
+docker compose stop worker
+
+# 2) Reset dedupe state
+rm -f /tank/processed/.state/watcher_processed_ingest.json
+rm -f /tank/processed/.state/watcher_processed_ingest.json.corrupt.*
+
+# Alternative: point watcher.processed_state_file to a new filename in config
+
+# 3) Restart watcher
+docker compose up -d worker
+```
+
+If model/config changes and you want reruns, reset dedupe state first.
+Automatic signature-based rerun is intentionally deferred.
+
+### Restart Smoke Script
+
+Run the objective restart-loop smoke matrix (copy / leave / deterministic collision=skip):
+
+```bash
+scripts/smoke_dedupe_restart.sh /path/to/sample.mp4
+```
 
 ### Hard Frame Export
 

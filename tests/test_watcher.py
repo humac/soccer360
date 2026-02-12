@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -263,6 +264,74 @@ def test_create_handler_uses_configured_limits(test_config):
     assert ".ignore" in handler.ignore_suffixes
     assert handler._executor._max_workers == 4
     handler.close()
+
+
+def test_startup_logs_processed_state_status_once(test_config, tmp_path: Path, caplog):
+    cfg = {
+        **test_config,
+        "paths": {
+            **test_config["paths"],
+            "processed": str(tmp_path / "processed"),
+            "scratch": str(tmp_path / "scratch"),
+        },
+    }
+
+    caplog.set_level("INFO", logger="soccer360.watcher")
+    daemon = WatcherDaemon(cfg)
+
+    pattern = re.compile(
+        r"ingest_dedupe_state .*processed_state_file=.* persistence=enabled"
+    )
+    matches = [r for r in caplog.records if pattern.search(r.getMessage())]
+    assert len(matches) == 1
+    assert str(daemon.processed_store.state_file) in matches[0].getMessage()
+
+
+def test_startup_logs_degraded_when_state_dir_unwritable(
+    test_config, tmp_path: Path, monkeypatch, caplog
+):
+    cfg = {
+        **test_config,
+        "paths": {
+            **test_config["paths"],
+            "processed": str(tmp_path / "processed"),
+            "scratch": str(tmp_path / "scratch"),
+            "ingest": str(tmp_path / "ingest"),
+        },
+        "watcher": {
+            **test_config["watcher"],
+        },
+    }
+    cfg["watcher"].pop("processed_state_file", None)
+
+    state_dir = Path(cfg["paths"]["processed"]) / ".state"
+    original_mkdir = Path.mkdir
+
+    def fail_state_dir_mkdir(self: Path, *args, **kwargs):
+        if self == state_dir:
+            raise PermissionError("read-only state dir")
+        return original_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", fail_state_dir_mkdir, raising=True)
+
+    caplog.set_level("INFO", logger="soccer360.watcher")
+    daemon = WatcherDaemon(cfg)
+
+    pattern = re.compile(
+        r"ingest_dedupe_state .*processed_state_file=.* persistence=degraded reason="
+    )
+    matches = [r for r in caplog.records if pattern.search(r.getMessage())]
+    assert len(matches) == 1
+
+    ingest_file = Path(cfg["paths"]["ingest"]) / "match.mp4"
+    ingest_file.parent.mkdir(parents=True, exist_ok=True)
+    ingest_file.write_bytes(b"video")
+    fp = _file_fingerprint(ingest_file)
+    assert fp is not None
+
+    # Degraded persistence must not crash normal processing flow.
+    daemon._record_processed_ingest(str(ingest_file), fp, job_path="job/match.mp4")
+    assert not daemon.processed_store.state_file.exists()
 
 
 def test_processed_state_default_is_under_processed_root(test_config, tmp_path: Path):

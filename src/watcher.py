@@ -366,6 +366,28 @@ class IngestStateStore:
 ProcessedIngestStore = IngestStateStore
 
 
+class _NoopIngestStateStore:
+    """Fallback store when persistent dedupe state is unavailable."""
+
+    def __init__(self, state_file: Path):
+        self.state_file = state_file
+
+    def is_processed(
+        self, path: Path, fingerprint: Mapping[str, object] | None = None
+    ) -> bool:
+        return False
+
+    def mark_processed(
+        self,
+        path: Path,
+        fingerprint: Mapping[str, object],
+        *,
+        job_path: str | None = None,
+    ):
+        # Persistence degraded; intentionally no-op.
+        return
+
+
 class VideoFileHandler(FileSystemEventHandler):
     """Watchdog handler that queues new video files for processing."""
 
@@ -534,12 +556,29 @@ class WatcherDaemon:
                 state_path = state_base / state_path
         else:
             state_path = state_base / "watcher_processed_ingest.json"
-        self.processed_store = IngestStateStore(
+        self.processed_store = self._create_processed_store(state_path)
+
+        self.job_queue: queue.Queue = queue.Queue()
+
+    def _create_processed_store(self, state_path: Path) -> IngestStateStore | _NoopIngestStateStore:
+        try:
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.warning(
+                "ingest_dedupe_state processed_state_file=%s persistence=degraded reason=%s",
+                state_path,
+                exc,
+            )
+            return _NoopIngestStateStore(state_path)
+
+        logger.info(
+            "ingest_dedupe_state processed_state_file=%s persistence=enabled",
+            state_path,
+        )
+        return IngestStateStore(
             state_path,
             max_entries=self.processed_state_max_entries,
         )
-
-        self.job_queue: queue.Queue = queue.Queue()
 
     def _create_handler(self) -> VideoFileHandler:
         return VideoFileHandler(
