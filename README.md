@@ -147,7 +147,8 @@ All parameters are in `configs/pipeline.yaml`:
 - **reframer** -- output resolution, source downscale, worker count, segment overlap, tactical view (FOV 120)
 - **highlights** -- speed percentile, direction change threshold, goal-box regions, clip margins
 - **exporter** -- codec, CRF quality, encoder (cpu/nvenc), raw file handling
-- **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s), dotfile filtering
+- **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s), dotfile filtering, persistent processed-state dedupe file
+- **ingest** -- post-success archival (archive mode, collision handling, name template)
 - **active_learning** -- hard frame export thresholds (confidence, gap frames, position jump), max export count
 
 ## Camera Smoothing
@@ -201,9 +202,11 @@ bash scripts/train_ball.sh 50
 docker compose run --rm worker soccer360 process /tank/ingest/match.mp4
 ```
 
-### Safe Ingest
+### Ingest Queue and Archival
 
-When copying files to `/tank/ingest/`, use atomic copy to avoid processing partial files:
+`/tank/ingest/` is a **queue folder**: drop raw 360 videos here for processing. After a successful run, the original file is automatically archived to `/tank/archive_raw/` (when enabled), keeping the ingest folder clean with only pending jobs.
+
+**Safe ingest:** Use atomic copy to avoid processing partial files:
 
 ```bash
 # Recommended: copy to .part then rename
@@ -213,6 +216,69 @@ mv /tank/ingest/match.mp4.part /tank/ingest/match.mp4
 
 The watcher ignores `.part`, `.tmp`, `.uploading` suffixes and hidden files (dotfiles).
 Files must have a stable size for 50 seconds (configurable) before processing begins.
+The watcher also persists successful ingest fingerprints in
+`watcher.processed_state_file` (default
+`/tank/processed/.state/watcher_processed_ingest.json`) to prevent reprocessing
+loops after daemon restarts. Relative `watcher.processed_state_file` values
+resolve under `<paths.processed>/.state/` (persistent storage, not scratch).
+
+The persisted dedupe marker is written when processing completes successfully
+(`done` means export completed). Archival bookkeeping failures do not cause
+reprocessing loops: even if ingest archival fails, dedupe still marks the run
+as processed and `metadata.json` records the archival failure details.
+
+Watcher dedupe state settings:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `processed_state_file` | `watcher_processed_ingest.json` | JSON state filename/path; relative values resolve under `<paths.processed>/.state/` |
+| `processed_state_max_entries` | `50000` | Retention cap for state entries (latest N records kept, `0` = unlimited) |
+
+Tune `processed_state_max_entries` based on ingest volume and startup latency.
+Higher values retain longer dedupe history but increase state file size/load time.
+Lower values reduce startup overhead for high-volume deployments.
+
+**Post-success archival** is configured in `configs/pipeline.yaml` under `ingest`:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `archive_on_success` | `true` | Enable archival after successful processing |
+| `archive_dir` | `/tank/archive_raw` | Destination directory for archived originals |
+| `archive_mode` | `move` | `move` (relocate), `copy` (keep original too), or `leave` (disable) |
+| `archive_name_template` | `{match}_{job_id}{ext}` | Filename template (`{match}` = input stem, `{job_id}` = pipeline job id, `{ext}` = `.mp4`) |
+| `archive_collision` | `suffix` | `suffix` (append `_01`, `_02`), `skip` (leave in ingest), or `overwrite` |
+
+If archival fails (e.g. permissions), the pipeline still succeeds -- processed outputs are preserved, the ingest file stays in place, and `metadata.json` records `ingest_archive_status: "failed"`.
+This also applies to `archive_mode: copy` / `leave` and `archive_collision: skip`: persistent watcher dedupe prevents restart loops even when the ingest file remains present.
+
+### Reset Dedupe State (Force Reprocess)
+
+If you intentionally want the watcher to process previously completed ingest files again:
+
+```bash
+# 1) Stop watcher
+docker compose stop worker
+
+# 2) Reset dedupe state
+rm -f /tank/processed/.state/watcher_processed_ingest.json
+rm -f /tank/processed/.state/watcher_processed_ingest.json.corrupt.*
+
+# Alternative: point watcher.processed_state_file to a new filename in config
+
+# 3) Restart watcher
+docker compose up -d worker
+```
+
+If model/config changes and you want reruns, reset dedupe state first.
+Automatic signature-based rerun is intentionally deferred.
+
+### Restart Smoke Script
+
+Run the objective restart-loop smoke matrix (copy / leave / deterministic collision=skip):
+
+```bash
+scripts/smoke_dedupe_restart.sh /path/to/sample.mp4
+```
 
 ### Hard Frame Export
 

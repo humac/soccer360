@@ -119,6 +119,25 @@ watcher:
   # Default: 5 * 10s = 50 seconds of stable size before processing
   stability_checks: 5
   stability_interval_sec: 10.0
+  # Persisted dedupe state file.
+  # Relative paths resolve under: <paths.processed>/.state/
+  processed_state_file: watcher_processed_ingest.json
+  # Cap persisted dedupe records to bound on-disk growth (0 = unlimited)
+  processed_state_max_entries: 50000
+
+ingest:
+  archive_on_success: true
+  archive_dir: /tank/archive_raw
+  # move: relocate original out of ingest (atomic rename or copy+delete)
+  # copy: keep original in ingest, place a copy in archive_dir
+  # leave: do nothing (disable archival regardless of archive_on_success)
+  archive_mode: move
+  # Available placeholders: {match} = input stem, {job_id} = pipeline job id, {ext} = .mp4 etc.
+  archive_name_template: "{match}_{job_id}{ext}"
+  # suffix: append _01, _02, ... if destination exists
+  # skip: leave source in ingest and log warning
+  # overwrite: replace destination (log warning)
+  archive_collision: suffix
 
 active_learning:
   enabled: true

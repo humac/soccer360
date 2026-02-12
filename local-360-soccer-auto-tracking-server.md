@@ -42,7 +42,7 @@ This server functions as a fully automated local sports video processing system 
 ```text
 /scratch                    ← active processing only (auto cleaned)
 /tank
-  ├── ingest/               ← drop new raw videos here
+  ├── ingest/               ← drop queue: raw videos auto-archived on success
   ├── processing/           ← temp working (optional)
   ├── processed/            ← final broadcast videos
   ├── highlights/           ← highlight clips
@@ -105,12 +105,15 @@ Install:
 ## Processing Pipeline Design
 
 ### Step 1 — Ingest
-Watch folder:
-- `/tank/ingest`
+Watch folder (queue):
+- `/tank/ingest` — drop raw `.mp4`/`.insv`/`.mov` files here
+- Use `.part` suffix during upload, rename when complete (atomic ingest)
+- Watcher ignores `.part`, `.tmp`, `.uploading` and dotfiles
 
 When a new file appears:
 - Copy → `/scratch`
 - Start pipeline automatically
+- On success, original is archived to `/tank/archive_raw/` (configurable)
 
 ### Step 2 — Ball Detection
 Use:

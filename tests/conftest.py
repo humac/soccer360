@@ -109,6 +109,15 @@ def test_config() -> dict:
                 "extensions": [".mp4"],
                 "stability_checks": 2,
                 "stability_interval_sec": 0.5,
+                "processed_state_file": "watcher_processed_ingest.json",
+                "processed_state_max_entries": 50000,
+            },
+            "ingest": {
+                "archive_on_success": False,
+                "archive_dir": f"{tmpdir}/archive_raw",
+                "archive_mode": "leave",
+                "archive_name_template": "{match}_{job_id}{ext}",
+                "archive_collision": "suffix",
             },
             "active_learning": {
                 "enabled": True,
