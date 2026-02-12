@@ -51,12 +51,18 @@ class Pipeline:
         self.highlights = HighlightDetector(config)
         self.exporter = Exporter(config)
 
-    def run(self, input_path: str | Path, cleanup: bool = True):
+    def run(
+        self,
+        input_path: str | Path,
+        cleanup: bool = True,
+        ingest_source: str | Path | None = None,
+    ):
         """Run the full processing pipeline on a single video.
 
         Args:
             input_path: Path to the 360 video file.
             cleanup: Remove scratch working directory after success.
+            ingest_source: Original ingest file path (for post-success archival).
         """
         input_path = Path(input_path)
         start_time = datetime.now()
@@ -138,6 +144,8 @@ class Pipeline:
                 work_dir, str(input_path), meta,
                 processing_start=start_time,
                 mode=self.mode,
+                ingest_source=str(ingest_source) if ingest_source else None,
+                job_id=job_id,
             )
 
             elapsed = (datetime.now() - start_time).total_seconds()

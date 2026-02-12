@@ -6,12 +6,15 @@ Processes one job at a time to avoid GPU contention.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import queue
 import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
@@ -25,6 +28,105 @@ VIDEO_EXTENSIONS = {".mp4", ".insv", ".mov"}
 STAGING_SUFFIXES = {".uploading", ".tmp", ".part"}
 
 
+def _path_key(path: Path) -> str:
+    return str(path.resolve(strict=False))
+
+
+def _file_fingerprint(path: Path) -> dict[str, int] | None:
+    """Stable-ish identity for dedupe across restarts and same-name replacements."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+
+    return {
+        "size": int(st.st_size),
+        "mtime_ns": int(st.st_mtime_ns),
+        "ctime_ns": int(st.st_ctime_ns),
+        "ino": int(st.st_ino),
+        "dev": int(st.st_dev),
+    }
+
+
+class ProcessedIngestStore:
+    """Persistent map of ingest file path -> fingerprint for successful jobs."""
+
+    def __init__(self, state_file: Path):
+        self.state_file = state_file
+        self._lock = threading.Lock()
+        self._entries: dict[str, dict] = {}
+        self._load()
+
+    def is_processed(
+        self, path: Path, fingerprint: dict[str, int] | None = None
+    ) -> bool:
+        key = _path_key(path)
+        fp = fingerprint or _file_fingerprint(path)
+        if fp is None:
+            return False
+
+        with self._lock:
+            record = self._entries.get(key)
+            return bool(record and record.get("fingerprint") == fp)
+
+    def mark_processed(
+        self,
+        path: Path,
+        fingerprint: dict[str, int],
+        *,
+        job_path: str | None = None,
+    ):
+        key = _path_key(path)
+        entry = {
+            "fingerprint": fingerprint,
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+            "job_path": job_path,
+        }
+        with self._lock:
+            self._entries[key] = entry
+            self._persist_locked()
+
+    def _load(self):
+        if not self.state_file.exists():
+            return
+
+        try:
+            payload = json.loads(self.state_file.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return
+            entries = payload.get("entries", {})
+            if isinstance(entries, dict):
+                self._entries = entries
+        except Exception:
+            logger.exception("Failed to load watcher processed-state file: %s", self.state_file)
+
+    def _persist_locked(self):
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": 1,
+            "entries": self._entries,
+        }
+        tmp = self.state_file.parent / (
+            f".{self.state_file.name}.tmp-{os.getpid()}-{time.time_ns()}"
+        )
+
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, sort_keys=True)
+                f.flush()
+                os.fsync(f.fileno())
+
+            os.replace(tmp, self.state_file)
+            dir_fd = os.open(str(self.state_file.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+
+
 class VideoFileHandler(FileSystemEventHandler):
     """Watchdog handler that queues new video files for processing."""
 
@@ -36,6 +138,7 @@ class VideoFileHandler(FileSystemEventHandler):
         stability_interval: float = 10.0,
         ignore_suffixes: set[str] | None = None,
         max_copy_workers: int = 4,
+        processed_store: ProcessedIngestStore | None = None,
     ):
         super().__init__()
         self.job_queue = job_queue
@@ -43,6 +146,7 @@ class VideoFileHandler(FileSystemEventHandler):
         self.stability_checks = stability_checks
         self.stability_interval = stability_interval
         self.ignore_suffixes = ignore_suffixes or STAGING_SUFFIXES
+        self.processed_store = processed_store
         self._processing: set[str] = set()
         self._processing_lock = threading.Lock()
         self._copy_pool = ThreadPoolExecutor(max_workers=max_copy_workers)
@@ -69,6 +173,10 @@ class VideoFileHandler(FileSystemEventHandler):
         if path.suffix.lower() not in VIDEO_EXTENSIONS:
             return
 
+        if self.processed_store and self.processed_store.is_processed(path):
+            logger.info("Skipping already processed ingest file: %s", path)
+            return
+
         path_key = str(path)
         with self._processing_lock:
             if path_key in self._processing:
@@ -93,10 +201,19 @@ class VideoFileHandler(FileSystemEventHandler):
                 logger.warning("File did not stabilize: %s", path)
                 return
 
+            fingerprint = _file_fingerprint(path)
+            if fingerprint is None:
+                logger.warning("File missing before scratch copy, skipping: %s", path)
+                return
+
+            if self.processed_store and self.processed_store.is_processed(path, fingerprint):
+                logger.info("Skipping already processed ingest file (post-stable): %s", path)
+                return
+
             # Copy to scratch
             job_dir = self._copy_to_scratch(path)
             logger.info("Queued job: %s -> %s", path.name, job_dir)
-            self.job_queue.put(str(job_dir))
+            self.job_queue.put((str(job_dir), str(path), fingerprint))
 
         except Exception:
             logger.exception("Error handling new file: %s", path)
@@ -158,6 +275,14 @@ class WatcherDaemon:
         ignore = watcher_cfg.get("ignore_suffixes", [".uploading", ".tmp", ".part"])
         self.ignore_suffixes = set(ignore)
         self.max_copy_workers = watcher_cfg.get("max_copy_workers", 4)
+        processed_state_cfg = watcher_cfg.get("processed_state_file")
+        if processed_state_cfg:
+            state_path = Path(processed_state_cfg)
+            if not state_path.is_absolute():
+                state_path = self.scratch_dir / state_path
+        else:
+            state_path = self.scratch_dir / "watcher_processed_ingest.json"
+        self.processed_store = ProcessedIngestStore(state_path)
 
         self.job_queue: queue.Queue = queue.Queue()
 
@@ -169,6 +294,7 @@ class WatcherDaemon:
             stability_interval=self.stability_interval,
             ignore_suffixes=self.ignore_suffixes,
             max_copy_workers=self.max_copy_workers,
+            processed_store=self.processed_store,
         )
 
     def run(self):
@@ -216,13 +342,63 @@ class WatcherDaemon:
     def _process_loop(self):
         """Worker loop: process jobs sequentially from the queue."""
         while True:
-            job_path = self.job_queue.get()
+            job = self.job_queue.get()
+            if isinstance(job, tuple) and len(job) == 3:
+                job_path, ingest_source, ingest_fingerprint = job
+            elif isinstance(job, tuple) and len(job) == 2:
+                job_path, ingest_source = job
+                ingest_fingerprint = None
+            else:
+                job_path = str(job)
+                ingest_source = None
+                ingest_fingerprint = None
+
             logger.info("Processing job: %s", job_path)
+            succeeded = False
 
             try:
                 pipe = Pipeline(self.config)
-                pipe.run(job_path, cleanup=True)
+                pipe.run(job_path, cleanup=True, ingest_source=ingest_source)
+                succeeded = True
             except Exception:
                 logger.exception("Pipeline failed for %s", job_path)
             finally:
+                if succeeded:
+                    self._record_processed_ingest(
+                        ingest_source,
+                        ingest_fingerprint,
+                        job_path=job_path,
+                    )
                 self.job_queue.task_done()
+
+    def _record_processed_ingest(
+        self,
+        ingest_source: str | None,
+        ingest_fingerprint: dict[str, int] | None,
+        *,
+        job_path: str | None = None,
+    ):
+        """Persist ingest completion marker to avoid restart reprocessing loops."""
+        if not ingest_source:
+            return
+
+        source_path = Path(ingest_source)
+        fingerprint = ingest_fingerprint or _file_fingerprint(source_path)
+        if fingerprint is None:
+            logger.warning(
+                "Unable to fingerprint completed ingest source for dedupe: %s",
+                ingest_source,
+            )
+            return
+
+        try:
+            self.processed_store.mark_processed(
+                source_path,
+                fingerprint,
+                job_path=job_path,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist watcher dedupe marker for completed ingest: %s",
+                ingest_source,
+            )
