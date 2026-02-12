@@ -19,7 +19,9 @@ COPY configs/ configs/
 COPY scripts/ scripts/
 COPY models/ models/
 
-RUN pip install --no-cache-dir ".[dev]"
+RUN python -m pip install --upgrade pip
+RUN pip install --no-cache-dir .
+RUN which soccer360
 
 ENTRYPOINT ["soccer360"]
 CMD ["watch"]

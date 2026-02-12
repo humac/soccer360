@@ -100,3 +100,7 @@ def export_hard_frames(
         threshold=threshold,
         output_dir=Path(out),
     )
+
+
+if __name__ == "__main__":
+    cli()
