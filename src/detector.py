@@ -58,6 +58,61 @@ def resolve_model_path(config: dict) -> tuple[str | None, str]:
     return None, "no_detect"
 
 
+def resolve_model_path_v1(
+    config: dict,
+    models_dir: str = "/app/models",
+    base_model_path: str = "/app/yolov8s.pt",
+) -> tuple[str | None, str]:
+    """Resolve model for V1 bootstrap detection.
+
+    Priority (when detection.path is the default "yolov8s.pt"):
+      1. {models_dir}/ball_best.pt  (fine-tuned model)
+      2. {base_model_path}          (baked canonical yolov8s.pt)
+      3. None -> NO_DETECT (if mode.allow_no_model)
+      4. RuntimeError (if allow_no_model is false)
+
+    When detection.path is explicitly overridden to a non-default value,
+    that path is tried first (absolute, then relative to /app).
+    """
+    det_cfg = config.get("detection", {})
+    det_path = det_cfg.get("path", "yolov8s.pt")
+    allow_no_model = config.get("mode", {}).get("allow_no_model", False)
+
+    fine_tuned = Path(models_dir) / "ball_best.pt"
+
+    # Non-default explicit path: user override
+    if det_path != "yolov8s.pt":
+        if Path(det_path).exists():
+            logger.info("Model resolved: %s (explicit path)", det_path)
+            return str(det_path), "normal"
+        relative = Path("/app") / det_path
+        if relative.exists():
+            logger.info("Model resolved: %s (explicit path, resolved under /app)", relative)
+            return str(relative), "normal"
+        # Fall through to baked model
+        logger.warning("Explicit model %s not found, trying baked model", det_path)
+
+    # Step 1: fine-tuned model
+    if fine_tuned.exists():
+        logger.info("Model resolved: %s (fine-tuned)", fine_tuned)
+        return str(fine_tuned), "normal"
+
+    # Step 2: baked canonical model
+    if Path(base_model_path).exists():
+        logger.info("Model resolved: %s (baked)", base_model_path)
+        return str(base_model_path), "normal"
+
+    # Step 3/4: NO_DETECT or error
+    if allow_no_model:
+        logger.warning("No model found -- entering NO_DETECT mode")
+        return None, "no_detect"
+
+    raise RuntimeError(
+        f"No ball detection model found (checked {fine_tuned}, {base_model_path}) "
+        "and mode.allow_no_model is false"
+    )
+
+
 class Detector:
     """Streaming ball detector using Ultralytics YOLO.
 
@@ -67,24 +122,49 @@ class Detector:
     """
 
     def __init__(self, config: dict):
-        model_cfg = config.get("model", {})
-        det_cfg = config.get("detector", {})
+        self._v1_mode = "detection" in config
 
-        self.model_path = model_cfg.get("path", "yolov8s.pt")
-        self.backend = model_cfg.get("backend", "fp32")
-        self.tensorrt_path = model_cfg.get("tensorrt_path")
+        if self._v1_mode:
+            v1_cfg = config["detection"]
+            filt_cfg = config.get("filters", {})
+            self.model_path = v1_cfg.get("path", "yolov8s.pt")
+            self.device = v1_cfg.get("device", "cuda:0")
+            img_size = v1_cfg.get("img_size", 960)
+            self.det_resolution = [img_size * 2, img_size]
+            self.confidence_threshold = v1_cfg.get("conf", 0.35)
+            self.nms_iou = v1_cfg.get("iou", 0.5)
+            self.classes = v1_cfg.get("classes", [32])
+            self.max_det = v1_cfg.get("max_det", 20)
+            self.half = v1_cfg.get("half", True)
+            self.batch_size = 1
+            self.batch_size_trt = 1
+            self.process_every_n = 1
+            self.tiling_enabled = False
+            self.backend = "fp32"
+            self.tensorrt_path = None
+            # Y-range filter
+            self.min_y_frac = filt_cfg.get("min_y_frac", 0.20)
+            self.max_y_frac = filt_cfg.get("max_y_frac", 0.98)
+        else:
+            # Legacy init (existing code unchanged)
+            model_cfg = config.get("model", {})
+            det_cfg = config.get("detector", {})
 
-        self.batch_size = det_cfg.get("batch_size", 16)
-        self.batch_size_trt = det_cfg.get("batch_size_tensorrt", 32)
-        self.det_resolution = det_cfg.get("resolution", [1920, 960])
-        self.confidence_threshold = det_cfg.get("confidence_threshold", 0.25)
-        self.nms_iou = det_cfg.get("nms_iou_threshold", 0.45)
-        self.process_every_n = det_cfg.get("process_every_n_frames", 1)
+            self.model_path = model_cfg.get("path", "yolov8s.pt")
+            self.backend = model_cfg.get("backend", "fp32")
+            self.tensorrt_path = model_cfg.get("tensorrt_path")
 
-        self.tiling = det_cfg.get("tiling", {})
-        self.tiling_enabled = self.tiling.get("enabled", False)
-        self.tile_count = self.tiling.get("tiles", 4)  # 2x2
-        self.tile_overlap = self.tiling.get("overlap", 0.1)
+            self.batch_size = det_cfg.get("batch_size", 16)
+            self.batch_size_trt = det_cfg.get("batch_size_tensorrt", 32)
+            self.det_resolution = det_cfg.get("resolution", [1920, 960])
+            self.confidence_threshold = det_cfg.get("confidence_threshold", 0.25)
+            self.nms_iou = det_cfg.get("nms_iou_threshold", 0.45)
+            self.process_every_n = det_cfg.get("process_every_n_frames", 1)
+
+            self.tiling = det_cfg.get("tiling", {})
+            self.tiling_enabled = self.tiling.get("enabled", False)
+            self.tile_count = self.tiling.get("tiles", 4)  # 2x2
+            self.tile_overlap = self.tiling.get("overlap", 0.1)
 
         # Field-of-Interest filtering
         foi_cfg = config.get("field_of_interest", {})
@@ -98,11 +178,21 @@ class Detector:
         self.foi_auto_min_conf = foi_cfg.get("auto_min_conf", 0.25)
         self._effective_center_yaw: float | None = None
 
-        self.device = "cuda:0"
+        self.device = getattr(self, "device", "cuda:0")
         self._model = None
 
     def _load_model(self):
         from ultralytics import YOLO
+
+        # V1: auto-disable half precision if no CUDA
+        if self._v1_mode and self.half:
+            try:
+                import torch
+                if not torch.cuda.is_available():
+                    logger.info("CUDA not available, disabling FP16")
+                    self.half = False
+            except ImportError:
+                self.half = False
 
         use_trt = self.backend == "tensorrt_int8"
         path = self.tensorrt_path if use_trt else self.model_path
@@ -191,6 +281,25 @@ class Detector:
         all_detections = self._filter_foi(
             all_detections, det_w, det_h, meta.fps, output_path.parent,
         )
+
+        # V1: y-range filter + best-per-frame selection
+        if self._v1_mode:
+            all_detections = self._filter_y_range(
+                all_detections, det_h, self.min_y_frac, self.max_y_frac
+            )
+            all_detections = self._select_best_per_frame(all_detections)
+            # Rewrite to V1 canonical field names
+            v1_detections = []
+            for det in all_detections:
+                frame = det.get("frame", det.get("frame_index", 0))
+                v1_detections.append({
+                    "frame_index": frame,
+                    "time_sec": round(frame / meta.fps, 4) if meta.fps > 0 else 0.0,
+                    "bbox_xyxy": det.get("bbox", det.get("bbox_xyxy")),
+                    "conf": det.get("confidence", det.get("conf", 0.0)),
+                    "class_id": det.get("class", det.get("class_id", 32)),
+                })
+            all_detections = v1_detections
 
         logger.info(
             "Detection complete: %d frames processed, %d detected, %d total detections",
@@ -400,13 +509,17 @@ class Detector:
         if self.tiling_enabled:
             return self._detect_batch_tiled(frames, indices)
 
-        results = self._model.predict(
-            frames,
-            device=self.device,
-            conf=self.confidence_threshold,
-            iou=self.nms_iou,
-            verbose=False,
-        )
+        predict_kwargs = {
+            "device": self.device,
+            "conf": self.confidence_threshold,
+            "iou": self.nms_iou,
+            "verbose": False,
+        }
+        if self._v1_mode:
+            predict_kwargs["classes"] = self.classes
+            predict_kwargs["max_det"] = self.max_det
+            predict_kwargs["half"] = self.half
+        results = self._model.predict(frames, **predict_kwargs)
 
         detections = []
         for idx, result in zip(indices, results):
@@ -520,3 +633,32 @@ class Detector:
             order = order[remaining + 1]
 
         return keep
+
+    @staticmethod
+    def _filter_y_range(
+        detections: list[dict], height: int, min_y_frac: float, max_y_frac: float
+    ) -> list[dict]:
+        """Reject detections outside vertical band [min_y_frac, max_y_frac]."""
+        kept = []
+        for det in detections:
+            bbox = det.get("bbox", det.get("bbox_xyxy", [0, 0, 0, 0]))
+            cy = (bbox[1] + bbox[3]) / 2.0
+            y_frac = cy / height if height > 0 else 0.0
+            if min_y_frac <= y_frac <= max_y_frac:
+                kept.append(det)
+        return kept
+
+    @staticmethod
+    def _select_best_per_frame(detections: list[dict]) -> list[dict]:
+        """Keep only highest-confidence detection per frame."""
+        by_frame: dict[int, dict] = {}
+        for det in detections:
+            frame = det.get("frame", det.get("frame_index", -1))
+            conf = det.get("confidence", det.get("conf", 0.0))
+            if frame not in by_frame or conf > by_frame[frame].get(
+                "confidence", by_frame[frame].get("conf", 0.0)
+            ):
+                by_frame[frame] = det
+        return sorted(
+            by_frame.values(), key=lambda d: d.get("frame", d.get("frame_index", 0))
+        )

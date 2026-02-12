@@ -395,3 +395,166 @@ class Tracker:
                 "track_id": trk["track_id"],
             },
         }
+
+
+# ---------------------------------------------------------------------------
+# V1 Bootstrap ball stabilizer
+# ---------------------------------------------------------------------------
+
+class BallStabilizer:
+    """V1 bootstrap ball tracking: persistence gate + jump rejection + EMA.
+
+    Simpler than ByteTrack -- designed for single-ball tracking from
+    per-frame best detections (already selected by Detector V1).
+    """
+
+    def __init__(self, config: dict):
+        trk_cfg = config.get("tracking", {})
+        filt_cfg = config.get("filters", {})
+
+        self.ema_alpha = trk_cfg.get("ema_alpha", 0.35)
+        self.require_persistence = trk_cfg.get("require_persistence", 2)
+        self.window = trk_cfg.get("window", 3)
+
+        self.max_jump_px = filt_cfg.get("max_jump_px", 250)
+        self.max_speed_px_per_s = filt_cfg.get("max_speed_px_per_s", 2500)
+
+    def run(self, detections_path: Path, output_path: Path, fps: float) -> list[dict]:
+        """Process per-frame best detections and produce tracks.json.
+
+        Returns list of tracking events for active learning triggers.
+        """
+        detections = load_detections_jsonl(detections_path)
+
+        # Build per-frame lookup (V1 detections use frame_index key)
+        by_frame: dict[int, dict] = {}
+        for det in detections:
+            frame = det.get("frame_index", det.get("frame", -1))
+            by_frame[frame] = det
+
+        max_frame = max(by_frame.keys(), default=-1)
+
+        # State
+        window_buf: list[bool] = []
+        ema_x: float | None = None
+        ema_y: float | None = None
+        prev_accepted_frame: int | None = None
+        prev_accepted_x: float | None = None
+        prev_accepted_y: float | None = None
+        lost_streak = 0
+
+        tracks: list[dict] = []
+        events: list[dict] = []
+
+        for frame_idx in range(max_frame + 1):
+            det = by_frame.get(frame_idx)
+            has_det = det is not None
+
+            if has_det:
+                bbox = det.get("bbox_xyxy", det.get("bbox", [0, 0, 0, 0]))
+                cx = (bbox[0] + bbox[2]) / 2.0
+                cy = (bbox[1] + bbox[3]) / 2.0
+                conf = det.get("conf", det.get("confidence", 0.0))
+                raw_det = {"bbox": bbox, "conf": conf}
+            else:
+                cx = cy = conf = 0.0
+                bbox = None
+                raw_det = None
+
+            # Persistence gate: rolling window
+            window_buf.append(has_det)
+            if len(window_buf) > self.window:
+                window_buf.pop(0)
+
+            det_count = sum(window_buf)
+            persistent = det_count >= self.require_persistence
+
+            accepted = False
+            status = "lost"
+            reason = None
+
+            if has_det:
+                if not persistent:
+                    # Detection exists but not enough persistence
+                    status = "rejected"
+                    reason = "persistence"
+                elif prev_accepted_x is not None:
+                    # Check jump/speed sanity
+                    dx = cx - prev_accepted_x
+                    dy = cy - prev_accepted_y
+                    dist = (dx * dx + dy * dy) ** 0.5
+
+                    frame_gap = frame_idx - prev_accepted_frame
+                    time_gap = frame_gap / fps if fps > 0 else 1.0
+                    speed = dist / time_gap if time_gap > 0 else 0.0
+
+                    if dist > self.max_jump_px:
+                        status = "rejected"
+                        reason = "jump"
+                        events.append({
+                            "frame": frame_idx,
+                            "trigger": "jump_reject",
+                            "distance_px": round(dist, 1),
+                        })
+                    elif speed > self.max_speed_px_per_s:
+                        status = "rejected"
+                        reason = "speed"
+                        events.append({
+                            "frame": frame_idx,
+                            "trigger": "speed_reject",
+                            "speed_px_s": round(speed, 1),
+                            "distance_px": round(dist, 1),
+                        })
+                    else:
+                        accepted = True
+                else:
+                    # First accepted detection (no previous to compare)
+                    accepted = True
+
+            if accepted:
+                # EMA smoothing
+                if ema_x is None:
+                    ema_x = cx
+                    ema_y = cy
+                else:
+                    ema_x = self.ema_alpha * cx + (1 - self.ema_alpha) * ema_x
+                    ema_y = self.ema_alpha * cy + (1 - self.ema_alpha) * ema_y
+
+                prev_accepted_frame = frame_idx
+                prev_accepted_x = ema_x
+                prev_accepted_y = ema_y
+                lost_streak = 0
+                status = "accepted"
+
+                tracks.append({
+                    "frame": frame_idx,
+                    "ball": {
+                        "x": round(ema_x, 2),
+                        "y": round(ema_y, 2),
+                        "bbox": bbox,
+                        "confidence": conf,
+                        "track_id": 1,
+                    },
+                    "status": status,
+                    "reason": None,
+                    "raw_det": raw_det,
+                })
+            else:
+                lost_streak += 1
+                tracks.append({
+                    "frame": frame_idx,
+                    "ball": None,
+                    "status": status,
+                    "reason": reason,
+                    "raw_det": raw_det,
+                })
+
+        logger.info(
+            "Stabilizer complete: %d frames, accepted=%d, rejected=%d, lost=%d",
+            len(tracks),
+            sum(1 for t in tracks if t["status"] == "accepted"),
+            sum(1 for t in tracks if t["status"] == "rejected"),
+            sum(1 for t in tracks if t["status"] == "lost"),
+        )
+        write_json(tracks, output_path)
+        return events

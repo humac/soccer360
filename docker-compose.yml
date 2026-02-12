@@ -17,6 +17,8 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=1
       - SOCCER360_CONFIG=/app/configs/pipeline.yaml
+      - ULTRALYTICS_HOME=/app/.ultralytics
+      - YOLO_CONFIG_DIR=/app/.ultralytics
     user: "1000:1000"
     shm_size: "16gb"
     ulimits:

@@ -59,6 +59,42 @@ Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 
 | 7 | Output organization | I/O |
 | 8 | Scratch cleanup | I/O |
 
+### V1 Bootstrap Detection
+
+The V1 pipeline uses a COCO-pretrained YOLOv8s (sports ball, class 32) with conservative filtering and temporal stabilization. This enables a train-then-upgrade cycle:
+
+1. **Detect** -- YOLOv8s detects sports balls with class filter + y-range filter + best-per-frame selection
+2. **Stabilize** -- BallStabilizer applies persistence gate (require N of M frames), jump/speed rejection, and EMA smoothing
+3. **Export hard frames** -- ActiveLearningExporter flags low-confidence detections, lost ball runs, and jump rejections for labeling
+4. **Label** -- Annotate exported frames in Label Studio
+5. **Train** -- Fine-tune with `soccer360 train`, producing `ball_best.pt`
+6. **Upgrade** -- Drop `ball_best.pt` in `/tank/models/`; next run auto-uses it
+
+**Temporal stabilization** prevents false positives from reaching the camera path:
+- **Persistence gate**: Requires N detections within a sliding window of M frames before accepting
+- **Jump rejection**: Rejects detections that teleport beyond `max_jump_px` pixels
+- **Speed rejection**: Rejects detections moving faster than `max_speed_px_per_s`
+- **EMA smoothing**: Exponential moving average on accepted ball positions
+
+**Active learning triggers** (three types of hard frames exported):
+- **Low confidence**: Detection confidence in configurable range `[low_conf_min, low_conf_max]`
+- **Lost ball runs**: ONE representative frame per streak of `lost_run_frames` consecutive lost frames
+- **Jump rejections**: Tracking events where distance exceeds `jump_trigger_px`
+
+### Model Resolution
+
+**V1 mode** (when `detection` section present in config):
+1. `/tank/models/ball_best.pt` (fine-tuned model via volume mount)
+2. `/app/yolov8s.pt` (baked into Docker image at build time)
+3. `mode.allow_no_model: true` -- NO_DETECT fallback
+4. Otherwise -- build error
+
+**Legacy mode** (no `detection` section):
+1. `/tank/models/ball_best.pt` (fine-tuned model)
+2. Config `model.path` (`/app/models/ball_best.pt`)
+3. `/app/models/ball_base.pt` (base model, auto-copied to tank)
+4. No model found -- NO_DETECT mode
+
 ### Model Fallback (NO_DETECT mode)
 
 If no ball detection model is available, the pipeline runs in **NO_DETECT mode**:
@@ -66,12 +102,6 @@ If no ball detection model is available, the pipeline runs in **NO_DETECT mode**
 - Generates a static camera path at field center with default FOV
 - Still produces `broadcast.mp4` (fixed framing) and `tactical_wide.mp4`
 - `metadata.json` includes `"mode": "no_detect"` to indicate degraded output
-
-Model resolution priority:
-1. `/tank/models/ball_best.pt` (fine-tuned model)
-2. Config `model.path` (`/app/models/ball_best.pt`)
-3. `/app/models/ball_base.pt` (base model, auto-copied to tank)
-4. No model found -- NO_DETECT mode
 
 ## Field-of-Interest (FoI) Filtering
 
@@ -149,7 +179,11 @@ All parameters are in `configs/pipeline.yaml`:
 - **exporter** -- codec, CRF quality, encoder (cpu/nvenc), raw file handling
 - **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s), dotfile filtering, persistent processed-state dedupe file
 - **ingest** -- post-success archival (archive mode, collision handling, name template)
-- **active_learning** -- hard frame export thresholds (confidence, gap frames, position jump), max export count
+- **active_learning** -- V1: three-trigger hard frame export (low confidence range, lost ball runs, jump rejections), gating (every_n, max cap)
+- **detection** -- V1 bootstrap: YOLO model path, COCO class filter, confidence/IOU, image size, half precision, device
+- **filters** -- V1: y-range vertical band filter, max jump/speed sanity limits
+- **tracking** -- V1: EMA alpha, persistence gate (require_persistence, window size)
+- **mode** -- allow_no_model toggle for graceful degradation
 
 ## Camera Smoothing
 
@@ -327,9 +361,10 @@ src/
   reframer.py     360-to-perspective rendering (parallel segments, overlap warmup)
   highlights.py   Heuristic highlight detection (speed, direction, goal-box events)
   exporter.py     Output organization + metadata + artifact preservation
-  hard_frames.py  Automatic hard-frame export for active learning
-  trainer.py      YOLO fine-tuning + TensorRT export
-  utils.py        FFmpeg streaming I/O, config, equirectangular angle helpers
+  hard_frames.py       Automatic hard-frame export for active learning (legacy)
+  active_learning.py   V1 active learning export (three-trigger identification)
+  trainer.py           YOLO fine-tuning + TensorRT export
+  utils.py             FFmpeg streaming I/O, config, equirectangular angle helpers
 
 configs/
   pipeline.yaml       Main processing configuration
@@ -350,8 +385,11 @@ tests/
   test_camera.py           Camera path smoothing + angle conversion tests
   test_reframer.py         Vertical FOV math + e2p integration tests
   test_highlights.py       Highlight detection tests
-  test_hard_frames.py      Hard frame identification + export tests
-  test_model_resolution.py Model resolution + NO_DETECT mode tests
+  test_hard_frames.py           Hard frame identification + export tests
+  test_bootstrap_detection.py  V1 model resolution + y-range + best-per-frame tests
+  test_ball_stabilizer.py      V1 persistence gate + jump/speed rejection + EMA tests
+  test_active_learning.py      V1 three-trigger export + gating tests
+  test_model_resolution.py     Model resolution + NO_DETECT mode tests
   test_watcher.py          Watcher ingest handling + safety tests
   test_exporter.py         Output organization tests
 ```

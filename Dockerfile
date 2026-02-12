@@ -2,6 +2,8 @@ FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
+ENV ULTRALYTICS_HOME=/app/.ultralytics
+ENV YOLO_CONFIG_DIR=/app/.ultralytics
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 python3.11-dev python3.11-venv python3-pip \
@@ -22,6 +24,17 @@ COPY models/ models/
 RUN python -m pip install --upgrade pip
 RUN pip install --no-cache-dir .
 RUN which soccer360
+
+# Bake yolov8s.pt at a canonical path for V1 bootstrap detection
+RUN mkdir -p /app/.ultralytics \
+    && python -c "from ultralytics import YOLO; YOLO('yolov8s.pt')" \
+    && MATCHES="$(find /app/.ultralytics -name 'yolov8s.pt' -type f -print)" \
+    && COUNT="$(printf '%s\n' "$MATCHES" | grep -c .)" \
+    && test "$COUNT" -eq 1 \
+    && cp "$MATCHES" /app/yolov8s.pt \
+    && test -s /app/yolov8s.pt \
+    && echo "yolov8s.pt baked at /app/yolov8s.pt ($(stat -c%s /app/yolov8s.pt) bytes)" \
+    || (echo "FATAL: expected exactly 1 yolov8s.pt under ULTRALYTICS_HOME, found: $MATCHES" && exit 1)
 
 ENTRYPOINT ["soccer360"]
 CMD ["watch"]

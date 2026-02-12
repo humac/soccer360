@@ -13,13 +13,14 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+from .active_learning import ActiveLearningExporter
 from .camera import CameraPathGenerator
-from .detector import Detector, resolve_model_path
+from .detector import Detector, resolve_model_path, resolve_model_path_v1
 from .exporter import Exporter
 from .hard_frames import HardFrameExporter
 from .highlights import HighlightDetector
 from .reframer import Reframer
-from .tracker import Tracker
+from .tracker import BallStabilizer, Tracker
 from .utils import VideoMeta, probe_video
 
 logger = logging.getLogger("soccer360.pipeline")
@@ -31,20 +32,39 @@ class Pipeline:
     def __init__(self, config: dict):
         self.config = config
         self.scratch_base = Path(config["paths"]["scratch"])
+        self._v1_mode = "detection" in config
 
         # Resolve model and determine operating mode
-        resolved_path, self.mode = resolve_model_path(config)
+        if self._v1_mode:
+            resolved_path, self.mode = resolve_model_path_v1(config)
+        else:
+            resolved_path, self.mode = resolve_model_path(config)
 
         if self.mode == "normal":
-            config.setdefault("model", {})["path"] = resolved_path
+            if self._v1_mode:
+                config.setdefault("detection", {})["path"] = resolved_path
+            else:
+                config.setdefault("model", {})["path"] = resolved_path
+
             self.detector = Detector(config)
-            self.tracker = Tracker(config)
-            self.hard_frame_exporter = HardFrameExporter(config)
+
+            if self._v1_mode:
+                self.stabilizer = BallStabilizer(config)
+                self.active_learner = ActiveLearningExporter(config)
+                self.tracker = None
+                self.hard_frame_exporter = None
+            else:
+                self.tracker = Tracker(config)
+                self.hard_frame_exporter = HardFrameExporter(config)
+                self.stabilizer = None
+                self.active_learner = None
         else:
             logger.warning("NO_DETECT mode: no ball detection model found")
             self.detector = None
             self.tracker = None
             self.hard_frame_exporter = None
+            self.stabilizer = None
+            self.active_learner = None
 
         self.camera = CameraPathGenerator(config)
         self.reframer = Reframer(config)
@@ -96,16 +116,31 @@ class Pipeline:
                 detections_path = work_dir / "detections.jsonl"
                 self.detector.run_streaming(str(input_path), meta, detections_path)
 
-                # Phase 2: Ball tracking (CPU)
-                logger.info("--- Phase 2: Ball Tracking ---")
                 tracks_path = work_dir / "tracks.json"
-                self.tracker.run(detections_path, tracks_path)
 
-                # Phase 2.5: Hard frame export (active learning)
-                logger.info("--- Phase 2.5: Hard Frame Export ---")
-                self.hard_frame_exporter.run(
-                    str(input_path), meta, detections_path, tracks_path, work_dir
-                )
+                if self._v1_mode:
+                    # Phase 2: Ball stabilization (V1)
+                    logger.info("--- Phase 2: Ball Stabilization (V1) ---")
+                    tracking_events = self.stabilizer.run(
+                        detections_path, tracks_path, meta.fps
+                    )
+
+                    # Phase 2.5: Active learning export (V1)
+                    logger.info("--- Phase 2.5: Active Learning Export (V1) ---")
+                    self.active_learner.run(
+                        str(input_path), meta, detections_path, tracks_path,
+                        work_dir, tracking_events=tracking_events, mode=self.mode,
+                    )
+                else:
+                    # Phase 2: Ball tracking (legacy ByteTrack)
+                    logger.info("--- Phase 2: Ball Tracking ---")
+                    self.tracker.run(detections_path, tracks_path)
+
+                    # Phase 2.5: Hard frame export (legacy)
+                    logger.info("--- Phase 2.5: Hard Frame Export ---")
+                    self.hard_frame_exporter.run(
+                        str(input_path), meta, detections_path, tracks_path, work_dir
+                    )
 
                 # Phase 3: Camera path generation (CPU)
                 logger.info("--- Phase 3: Camera Path Generation ---")
