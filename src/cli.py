@@ -21,9 +21,27 @@ def cli(ctx: click.Context, config: str):
     """Soccer360 -- Automated 360 soccer video processing."""
     ctx.ensure_object(dict)
     cfg = load_config(config)
+
+    paths = cfg.setdefault("paths", {})
+    paths.setdefault("ingest", "/tank/ingest")
+    paths.setdefault("scratch", "/scratch/work")
+    paths.setdefault("processed", "/tank/processed")
+    paths.setdefault("highlights", "/tank/highlights")
+    paths.setdefault("models", "/tank/models")
+    paths.setdefault("labeling", "/tank/labeling")
+    paths.setdefault("archive_raw", "/tank/archive_raw")
+    paths.setdefault("logs", "/tank/logs")
+
+    Path("/scratch/work").mkdir(parents=True, exist_ok=True)
+    log_dir = Path("/tank/logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    paths["logs"] = str(log_dir)
+
     ctx.obj["config"] = cfg
     log_cfg = cfg.get("logging", {})
-    setup_logging(level=log_cfg.get("level", "INFO"), log_file=log_cfg.get("file"))
+    log_name = Path(log_cfg.get("file") or "soccer360.log").name
+    log_file = str(log_dir / log_name)
+    setup_logging(level=log_cfg.get("level", "INFO"), log_file=log_file)
 
 
 @cli.command()

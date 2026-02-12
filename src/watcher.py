@@ -169,6 +169,7 @@ class WatcherDaemon:
 
     def run(self):
         """Start the watcher daemon. Blocks forever."""
+        Path("/scratch/work").mkdir(parents=True, exist_ok=True)
         self.ingest_dir.mkdir(parents=True, exist_ok=True)
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
 

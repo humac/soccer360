@@ -7,6 +7,7 @@ import logging
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Generator
 
@@ -357,9 +358,15 @@ def setup_logging(level: str = "INFO", log_file: str | None = None):
     fmt = "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
     handlers: list[logging.Handler] = [logging.StreamHandler()]
 
-    if log_file:
-        log_path = Path(log_file)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(log_file))
+    resolved_log = log_file or "/tank/logs/soccer360.log"
+    log_path = Path(resolved_log)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handlers.append(
+        RotatingFileHandler(
+            log_path,
+            maxBytes=20 * 1024 * 1024,
+            backupCount=10,
+        )
+    )
 
     logging.basicConfig(level=getattr(logging, level.upper()), format=fmt, handlers=handlers)

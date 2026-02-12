@@ -122,4 +122,4 @@ watcher:
 
 logging:
   level: INFO
-  file: null
+  file: /tank/logs/soccer360.log

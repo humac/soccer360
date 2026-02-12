@@ -7,6 +7,7 @@ services:
       dockerfile: Dockerfile
     container_name: soccer360-worker
     restart: unless-stopped
+    runtime: nvidia
     command: ["soccer360", "watch"]
     deploy:
       resources:
@@ -21,7 +22,7 @@ services:
       - ./configs:/app/configs:ro
       - ./models:/app/models
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_VISIBLE_DEVICES=1
       - SOCCER360_CONFIG=/app/configs/pipeline.yaml
     shm_size: "16gb"
     ulimits:
