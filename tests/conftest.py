@@ -110,6 +110,7 @@ def test_config() -> dict:
                 "stability_checks": 2,
                 "stability_interval_sec": 0.5,
                 "processed_state_file": "watcher_processed_ingest.json",
+                "processed_state_max_entries": 50000,
             },
             "ingest": {
                 "archive_on_success": False,

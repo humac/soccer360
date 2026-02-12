@@ -432,10 +432,23 @@ class Exporter:
                 except OSError as exc:
                     if exc.errno not in {errno.EPERM, errno.EOPNOTSUPP, errno.ENOTSUP}:
                         raise
-                    if dst.exists():
-                        raise FileExistsError(str(dst))
                     # Fallback for filesystems that do not support hard-links.
-                    os.replace(str(tmp), str(dst))
+                    # Use exclusive create to avoid TOCTOU clobbering.
+                    try:
+                        with tmp.open("rb") as src_f:
+                            with dst.open("xb") as dst_f:
+                                shutil.copyfileobj(src_f, dst_f)
+                                dst_f.flush()
+                                os.fsync(dst_f.fileno())
+                    except FileExistsError:
+                        raise
+                    except Exception:
+                        # Remove partial destination if publish failed mid-copy.
+                        try:
+                            dst.unlink()
+                        except FileNotFoundError:
+                            pass
+                        raise
 
             cls._fsync_path(dst)
             cls._fsync_dir(dst.parent)

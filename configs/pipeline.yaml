@@ -119,8 +119,11 @@ watcher:
   # Default: 5 * 10s = 50 seconds of stable size before processing
   stability_checks: 5
   stability_interval_sec: 10.0
-  # Persisted dedupe state file (relative paths resolve under scratch dir)
+  # Persisted dedupe state file.
+  # Relative paths resolve under: <paths.processed>/.state/
   processed_state_file: watcher_processed_ingest.json
+  # Cap persisted dedupe records to bound on-disk growth (0 = unlimited)
+  processed_state_max_entries: 50000
 
 ingest:
   archive_on_success: true

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import errno
 from pathlib import Path
 from unittest.mock import patch
 
@@ -401,3 +402,34 @@ def test_ingest_archive_no_source_skipped(tmp_path: Path):
     meta = json.loads((out / "metadata.json").read_text())
     assert meta["ingest_archive_status"] == "skipped"
     assert meta["ingest_source_path"] is None
+
+
+def test_safe_copy_fallback_no_overwrite_race_does_not_clobber(tmp_path: Path):
+    """If destination appears during fallback publish, raise without overwrite."""
+    src = tmp_path / "ingest.mp4"
+    dst = tmp_path / "archive.mp4"
+    src.write_bytes(b"new-video")
+
+    original_open = Path.open
+    race_triggered = {"done": False}
+
+    def no_link(*_args, **_kwargs):
+        raise OSError(errno.EOPNOTSUPP, "link unsupported")
+
+    def race_open(self, mode="r", *args, **kwargs):
+        if self == dst and mode == "xb" and not race_triggered["done"]:
+            dst.write_bytes(b"existing-video")
+            race_triggered["done"] = True
+        return original_open(self, mode, *args, **kwargs)
+
+    with (
+        patch("src.exporter.os.link", side_effect=no_link),
+        patch.object(Path, "open", autospec=True, side_effect=race_open),
+        patch("src.exporter.os.replace", side_effect=AssertionError("unexpected replace")),
+    ):
+        with pytest.raises(FileExistsError):
+            Exporter._safe_copy(src, dst, overwrite=False)
+
+    assert race_triggered["done"] is True
+    assert dst.read_bytes() == b"existing-video"
+    assert not list(tmp_path.glob(".archive.mp4.tmp-*"))

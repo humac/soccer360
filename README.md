@@ -147,7 +147,7 @@ All parameters are in `configs/pipeline.yaml`:
 - **reframer** -- output resolution, source downscale, worker count, segment overlap, tactical view (FOV 120)
 - **highlights** -- speed percentile, direction change threshold, goal-box regions, clip margins
 - **exporter** -- codec, CRF quality, encoder (cpu/nvenc), raw file handling
-- **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s), dotfile filtering, processed-state dedupe file
+- **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s), dotfile filtering, persistent processed-state dedupe file
 - **ingest** -- post-success archival (archive mode, collision handling, name template)
 - **active_learning** -- hard frame export thresholds (confidence, gap frames, position jump), max export count
 
@@ -217,8 +217,22 @@ mv /tank/ingest/match.mp4.part /tank/ingest/match.mp4
 The watcher ignores `.part`, `.tmp`, `.uploading` suffixes and hidden files (dotfiles).
 Files must have a stable size for 50 seconds (configurable) before processing begins.
 The watcher also persists successful ingest fingerprints in
-`watcher.processed_state_file` (default `watcher_processed_ingest.json` under
-scratch) to prevent reprocessing loops after daemon restarts.
+`watcher.processed_state_file` (default
+`/tank/processed/.state/watcher_processed_ingest.json`) to prevent reprocessing
+loops after daemon restarts. Relative `watcher.processed_state_file` values
+resolve under `<paths.processed>/.state/` (persistent storage, not scratch).
+
+The persisted dedupe marker is written when processing completes successfully
+(`done` means export completed). Archival bookkeeping failures do not cause
+reprocessing loops: even if ingest archival fails, dedupe still marks the run
+as processed and `metadata.json` records the archival failure details.
+
+Watcher dedupe state settings:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `processed_state_file` | `watcher_processed_ingest.json` | JSON state filename/path; relative values resolve under `<paths.processed>/.state/` |
+| `processed_state_max_entries` | `50000` | Retention cap for state entries (latest N records kept, `0` = unlimited) |
 
 **Post-success archival** is configured in `configs/pipeline.yaml` under `ingest`:
 
@@ -231,6 +245,7 @@ scratch) to prevent reprocessing loops after daemon restarts.
 | `archive_collision` | `suffix` | `suffix` (append `_01`, `_02`), `skip` (leave in ingest), or `overwrite` |
 
 If archival fails (e.g. permissions), the pipeline still succeeds -- processed outputs are preserved, the ingest file stays in place, and `metadata.json` records `ingest_archive_status: "failed"`.
+This also applies to `archive_mode: copy` / `leave` and `archive_collision: skip`: persistent watcher dedupe prevents restart loops even when the ingest file remains present.
 
 ### Hard Frame Export
 

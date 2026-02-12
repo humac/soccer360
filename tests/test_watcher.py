@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import os
 import queue
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from watchdog.events import FileMovedEvent
 
-from src.watcher import ProcessedIngestStore, VideoFileHandler, WatcherDaemon, _file_fingerprint
+from src.watcher import (
+    ProcessedIngestStore,
+    VideoFileHandler,
+    WatcherDaemon,
+    _file_fingerprint,
+    compute_fingerprint,
+)
 
 
 class _ImmediateFuture:
@@ -254,3 +263,191 @@ def test_create_handler_uses_configured_limits(test_config):
     assert ".ignore" in handler.ignore_suffixes
     assert handler._executor._max_workers == 4
     handler.close()
+
+
+def test_processed_state_default_is_under_processed_root(test_config, tmp_path: Path):
+    cfg = {
+        **test_config,
+        "paths": {
+            **test_config["paths"],
+            "processed": str(tmp_path / "processed"),
+            "scratch": str(tmp_path / "scratch"),
+        },
+        "watcher": {
+            **test_config["watcher"],
+        },
+    }
+    cfg["watcher"].pop("processed_state_file", None)
+
+    daemon = WatcherDaemon(cfg)
+    assert daemon.processed_store.state_file == (
+        Path(cfg["paths"]["processed"]) / ".state" / "watcher_processed_ingest.json"
+    )
+
+
+def test_processed_state_relative_path_resolves_under_processed_root(
+    test_config, tmp_path: Path
+):
+    cfg = {
+        **test_config,
+        "paths": {
+            **test_config["paths"],
+            "processed": str(tmp_path / "processed"),
+            "scratch": str(tmp_path / "scratch"),
+        },
+        "watcher": {
+            **test_config["watcher"],
+            "processed_state_file": "custom/subdir/state.json",
+        },
+    }
+    daemon = WatcherDaemon(cfg)
+    assert daemon.processed_store.state_file == (
+        Path(cfg["paths"]["processed"]) / ".state" / "custom" / "subdir" / "state.json"
+    )
+
+
+def test_processed_state_atomic_publish_uses_replace(tmp_path: Path, monkeypatch):
+    state_file = tmp_path / "state.json"
+    store = ProcessedIngestStore(state_file)
+    source = tmp_path / "match.mp4"
+    source.write_bytes(b"video")
+    fp = _file_fingerprint(source)
+    assert fp is not None
+
+    replace_calls: list[tuple[Path, Path]] = []
+    original_replace = os.replace
+
+    def tracking_replace(src: str | os.PathLike, dst: str | os.PathLike):
+        replace_calls.append((Path(src), Path(dst)))
+        return original_replace(src, dst)
+
+    monkeypatch.setattr("src.watcher.os.replace", tracking_replace)
+    store.mark_processed(source, fp, job_path="job/match.mp4")
+
+    assert any(
+        dst == state_file
+        and src.parent == state_file.parent
+        and src.name.startswith(f".{state_file.name}.tmp-")
+        for src, dst in replace_calls
+    )
+
+
+def test_processed_state_corruption_is_quarantined(tmp_path: Path):
+    state_file = tmp_path / "processed_state.json"
+    state_file.write_text("{not valid json", encoding="utf-8")
+
+    store = ProcessedIngestStore(state_file)
+    assert store._entries == {}
+    assert not state_file.exists()
+
+    quarantined = list(tmp_path.glob("processed_state.json.corrupt.*"))
+    assert len(quarantined) == 1
+
+    source = tmp_path / "match.mp4"
+    source.write_bytes(b"video")
+    fp = _file_fingerprint(source)
+    assert fp is not None
+    store.mark_processed(source, fp, job_path="job/match.mp4")
+
+    reloaded = ProcessedIngestStore(state_file)
+    assert reloaded.is_processed(source, fp)
+
+
+def test_processed_state_prunes_to_max_entries(tmp_path: Path):
+    state_file = tmp_path / "processed_state.json"
+    store = ProcessedIngestStore(state_file, max_entries=2)
+
+    files = []
+    for idx in range(3):
+        source = tmp_path / f"match_{idx}.mp4"
+        source.write_bytes(f"video-{idx}".encode("utf-8"))
+        fp = _file_fingerprint(source)
+        assert fp is not None
+        store.mark_processed(source, fp, job_path=f"job{idx}/match.mp4")
+        files.append((source, fp))
+        time.sleep(0.002)
+
+    reloaded = ProcessedIngestStore(state_file, max_entries=2)
+    assert len(reloaded._entries) == 2
+    assert not reloaded.is_processed(files[0][0], files[0][1])
+    assert reloaded.is_processed(files[1][0], files[1][1])
+    assert reloaded.is_processed(files[2][0], files[2][1])
+
+
+def test_fingerprint_ignores_zero_dev_ino(tmp_path: Path, monkeypatch):
+    source = tmp_path / "match.mp4"
+    source.write_bytes(b"video")
+
+    original_stat = Path.stat
+
+    def fake_stat(self: Path, *args, **kwargs):
+        if self == source:
+            return SimpleNamespace(
+                st_size=123,
+                st_mtime_ns=456,
+                st_ctime_ns=789,
+                st_ino=0,
+                st_dev=0,
+            )
+        return original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fake_stat, raising=True)
+
+    fp = compute_fingerprint(source)
+    assert fp is not None
+    assert fp["size"] == 123
+    assert fp["mtime_ns"] == 456
+    assert fp["ctime_ns"] == 789
+    assert "ino" not in fp
+    assert "dev" not in fp
+
+    state = ProcessedIngestStore(tmp_path / "state.json")
+    state.mark_processed(source, fp, job_path="job/match.mp4")
+    assert state.is_processed(source, fp)
+
+
+def test_process_job_revalidates_fingerprint_and_requeues_once(
+    test_config, tmp_path: Path, monkeypatch
+):
+    cfg = {
+        **test_config,
+        "paths": {
+            **test_config["paths"],
+            "ingest": str(tmp_path / "ingest"),
+            "scratch": str(tmp_path / "scratch"),
+            "processed": str(tmp_path / "processed"),
+        },
+    }
+    daemon = WatcherDaemon(cfg)
+
+    ingest_file = tmp_path / "ingest" / "match.mp4"
+    ingest_file.parent.mkdir(parents=True, exist_ok=True)
+    ingest_file.write_bytes(b"video-v1")
+    queued_fp = _file_fingerprint(ingest_file)
+    assert queued_fp is not None
+
+    ingest_file.write_bytes(b"video-v2-updated")
+
+    pipeline_calls: list[tuple] = []
+
+    class _FakePipeline:
+        def __init__(self, _cfg: dict):
+            self.cfg = _cfg
+
+        def run(self, *args, **kwargs):
+            pipeline_calls.append((args, kwargs))
+
+    monkeypatch.setattr("src.watcher.Pipeline", _FakePipeline)
+
+    requeued: list[tuple] = []
+    monkeypatch.setattr(daemon.job_queue, "put", lambda item: requeued.append(item))
+
+    daemon._process_job(("job_1/match.mp4", str(ingest_file), queued_fp, 0))
+    assert not pipeline_calls
+    assert len(requeued) == 1
+    assert requeued[0][3] == 1
+
+    ingest_file.write_bytes(b"video-v3-updated-again")
+    daemon._process_job(requeued[0])
+    assert not pipeline_calls
+    assert len(requeued) == 1
