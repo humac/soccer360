@@ -17,6 +17,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=1
       - SOCCER360_CONFIG=/app/configs/pipeline.yaml
+    user: "1000:1000"
     shm_size: "16gb"
     ulimits:
       memlock: -1
