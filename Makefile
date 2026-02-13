@@ -10,7 +10,7 @@ logs:
 	docker compose logs -f worker
 
 rebuild:
-	docker compose build --no-cache worker
+	DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose build --no-cache worker
 
 test-gpu:
 	docker run --rm --gpus device=1 nvidia/cuda:12.2.0-runtime-ubuntu22.04 nvidia-smi

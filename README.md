@@ -349,6 +349,13 @@ Worker image policy:
 - With both `build` and `image`, compose builds and tags the local result as `soccer360-worker:local`.
 - `pull_policy: never` may not be honored on every Compose version; the verifier script is the source of truth.
 
+**BuildKit required:** The Dockerfile uses BuildKit cache mounts (`RUN --mount=type=cache`).
+The verifier script sets `DOCKER_BUILDKIT=1` automatically. For manual builds outside the verifier:
+
+```bash
+DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -p soccer360 build worker
+```
+
 **Fast dev check** (cached build, does NOT stop running services):
 
 ```bash
@@ -361,27 +368,30 @@ make verify-container-assets
 make verify-container-assets-clean
 ```
 
-Both modes assert: rebuilt image SHA == ephemeral container SHA, `/app/yolov8s.pt` non-empty, `/app/.ultralytics` writable, both owned by `1000:1000`.
+Both modes:
+- Verify `requirements-docker.txt` matches `pyproject.toml` before building (auto docker fallback if host lacks Python 3.11/tomli).
+- Assert rebuilt image SHA == ephemeral container SHA.
+- Validate `/app/yolov8s.pt` non-empty, `/app/.ultralytics` writable, both owned by `1000:1000`.
 
-Compose project drift warning:
-- Running compose from a different directory or with a different `-p` project name can target another image namespace.
-- Use an explicit project for deterministic behavior:
+**Environment variable overrides:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROJECT` | `soccer360` | Compose project name |
+| `IMAGE_TAG` | `soccer360-worker:local` | Image tag to verify |
+| `NO_CACHE` | `0` | Set `1` for `--no-cache` build |
+| `RESET` | `0` | Set `1` to run `compose down` before build |
+| `SKIP_DEPS_SYNC` | `0` | Set `1` to skip deps sync check |
+
+Example with overrides:
 
 ```bash
-PROJECT=soccer360 bash scripts/verify_container_assets.sh
+PROJECT=soccer360 IMAGE_TAG=mytag:local bash scripts/verify_container_assets.sh
 ```
 
-Image tag override (if needed):
+**Dependency sync check** (standalone):
 
-```bash
-IMAGE_TAG=mytag:local PROJECT=soccer360 bash scripts/verify_container_assets.sh
-```
-
-BuildKit is required for the Dockerfile cache mounts. It is the default engine in modern Docker; set `DOCKER_BUILDKIT=1` if your installation still defaults to the legacy builder.
-
-**Dependency sync check:**
-
-`requirements-docker.txt` mirrors `pyproject.toml` dependencies for Docker layer caching. Verify they stay in sync:
+`requirements-docker.txt` mirrors `pyproject.toml` dependencies for Docker layer caching. The verifier runs this automatically; to run it standalone:
 
 ```bash
 make check-deps-sync

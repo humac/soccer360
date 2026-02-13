@@ -51,7 +51,7 @@ done
 echo ""
 echo "Building Docker image..."
 cd "$REPO_DIR"
-docker compose build worker
+DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose build worker
 
 echo ""
 echo "Pulling Label Studio image..."
