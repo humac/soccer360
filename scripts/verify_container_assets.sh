@@ -21,6 +21,24 @@ fail() {
   exit 1
 }
 
+run_deps_sync_in_docker() {
+  local docker_rc=0
+  local docker_output
+
+  docker_output="$(docker run --rm -v "$REPO_DIR":/repo -w /repo python:3.11-slim \
+    python scripts/check_deps_sync.py 2>&1)" || docker_rc=$?
+  if [ "$docker_rc" -eq 0 ]; then
+    return 0
+  fi
+  if [ -n "$docker_output" ]; then
+    echo "$docker_output" >&2
+  fi
+  if [ "$docker_rc" -eq 1 ]; then
+    fail "requirements-docker.txt is out of sync with pyproject.toml"
+  fi
+  fail "deps sync docker fallback failed (exit $docker_rc)"
+}
+
 cleanup() {
   if [ -n "${cid:-}" ]; then
     docker rm -f "$cid" >/dev/null 2>&1 || true
@@ -30,17 +48,25 @@ trap cleanup EXIT INT TERM
 
 cd "$REPO_DIR"
 
+# --- Docker preflight ---
+if ! command -v docker >/dev/null 2>&1; then
+  fail "docker CLI not found in PATH"
+fi
+if ! docker info >/dev/null 2>&1; then
+  fail "docker daemon unavailable or insufficient permissions"
+fi
+
 # --- Mode selection ---
 build_args=()
 if [ "$NO_CACHE" = "1" ]; then
   log "Mode: CLEAN (no-cache rebuild)"
   build_args+=(--no-cache)
-  if [ "$RESET" = "1" ]; then
-    log "Reset compose state (project=$PROJECT)"
-    docker compose -p "$PROJECT" down --remove-orphans
-  fi
 else
   log "Mode: FAST (cached build, no service disruption)"
+fi
+if [ "$RESET" = "1" ]; then
+  log "Reset compose state before build (project=$PROJECT)"
+  docker compose -p "$PROJECT" down --remove-orphans
 fi
 
 # --- Deps sync guard ---
@@ -49,17 +75,22 @@ if [ "$SKIP_DEPS_SYNC" = "1" ]; then
 else
   log "Deps sync check: verifying requirements-docker.txt matches pyproject.toml"
   sync_rc=0
-  if python3 "$REPO_DIR/scripts/check_deps_sync.py" 2>/dev/null; then
+  sync_output="$(python3 "$REPO_DIR/scripts/check_deps_sync.py" 2>&1)" || sync_rc=$?
+  if [ "$sync_rc" -eq 0 ]; then
     log "Deps sync check: OK (host python3)"
   else
-    sync_rc=$?
     if [ "$sync_rc" -eq 2 ]; then
       log "Deps sync check: host python3 missing tomllib/tomli, falling back to docker"
-      docker run --rm -v "$REPO_DIR":/repo -w /repo python:3.11-slim \
-        python scripts/check_deps_sync.py \
-        || fail "requirements-docker.txt is out of sync with pyproject.toml"
+      run_deps_sync_in_docker
+      log "Deps sync check: OK (docker fallback)"
+    elif [ "$sync_rc" -eq 127 ]; then
+      log "Deps sync check: host python3 not available, falling back to docker"
+      run_deps_sync_in_docker
       log "Deps sync check: OK (docker fallback)"
     else
+      if [ -n "$sync_output" ]; then
+        echo "$sync_output" >&2
+      fi
       fail "requirements-docker.txt is out of sync with pyproject.toml"
     fi
   fi

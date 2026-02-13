@@ -6,6 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT="${PROJECT:-soccer360}"
+IMAGE_TAG="${IMAGE_TAG:-soccer360-worker:local}"
 
 echo "================================================"
 echo "Soccer360 Installation"
@@ -49,29 +51,29 @@ done
 
 # Build Docker image
 echo ""
-echo "Building Docker image..."
+echo "Building and verifying worker image (canonical verifier path)..."
 cd "$REPO_DIR"
-DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose build worker
+PROJECT="$PROJECT" IMAGE_TAG="$IMAGE_TAG" bash "$REPO_DIR/scripts/verify_container_assets.sh"
 
 echo ""
 echo "Pulling Label Studio image..."
-docker compose pull labelstudio
+docker compose -p "$PROJECT" pull labelstudio
 
 # Verify
 echo ""
 echo "Verifying installation..."
-docker compose run --rm worker soccer360 --help
+docker compose -p "$PROJECT" run --rm worker soccer360 --help
 
 echo ""
 echo "================================================"
 echo "Installation complete!"
 echo ""
 echo "Usage:"
-echo "  Start watcher daemon:  docker compose up -d worker"
-echo "  Start Label Studio:    docker compose up -d labelstudio"
-echo "  Process single file:   docker compose run --rm worker soccer360 process /tank/ingest/match.mp4"
-echo "  View logs:             docker compose logs -f worker"
-echo "  Stop all:              docker compose down"
+echo "  Start watcher daemon:  docker compose -p $PROJECT up -d worker"
+echo "  Start Label Studio:    docker compose -p $PROJECT up -d labelstudio"
+echo "  Process single file:   docker compose -p $PROJECT run --rm worker soccer360 process /tank/ingest/match.mp4"
+echo "  View logs:             docker compose -p $PROJECT logs -f worker"
+echo "  Stop all:              docker compose -p $PROJECT down"
 echo ""
 echo "Drop 360 video files into /tank/ingest/ to begin processing."
 echo "================================================"

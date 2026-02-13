@@ -369,7 +369,8 @@ make verify-container-assets-clean
 ```
 
 Both modes:
-- Verify `requirements-docker.txt` matches `pyproject.toml` before building (auto docker fallback if host lacks Python 3.11/tomli).
+- Verify `requirements-docker.txt` matches `pyproject.toml` before building (auto docker fallback if host `python3` is missing or lacks `tomllib`/`tomli`).
+- Print dependency mismatch details before failing.
 - Assert rebuilt image SHA == ephemeral container SHA.
 - Validate `/app/yolov8s.pt` non-empty, `/app/.ultralytics` writable, both owned by `1000:1000`.
 
@@ -380,7 +381,7 @@ Both modes:
 | `PROJECT` | `soccer360` | Compose project name |
 | `IMAGE_TAG` | `soccer360-worker:local` | Image tag to verify |
 | `NO_CACHE` | `0` | Set `1` for `--no-cache` build |
-| `RESET` | `0` | Set `1` to run `compose down` before build |
+| `RESET` | `0` | Set `1` to run `compose down` before build (applies to both cached and no-cache builds) |
 | `SKIP_DEPS_SYNC` | `0` | Set `1` to skip deps sync check |
 
 Example with overrides:
@@ -396,6 +397,8 @@ PROJECT=soccer360 IMAGE_TAG=mytag:local bash scripts/verify_container_assets.sh
 ```bash
 make check-deps-sync
 ```
+
+If host `python3` cannot import `tomllib`/`tomli`, the verifier falls back to running the check in `python:3.11-slim` (requires Docker CLI + daemon).
 
 ## Tesla P40 Notes
 
