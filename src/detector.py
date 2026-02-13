@@ -158,6 +158,13 @@ def resolve_v1_model_path_and_source(
         configured_source == "detector.model_path"
         and configured_path not in default_aliases
     ):
+        candidate = Path(candidate_path)
+        if not candidate.is_file():
+            raise RuntimeError(
+                "Explicit detector.model_path not found or not a file: "
+                f"{candidate_path}. Update detector.model_path or remove it to "
+                "use default model resolution."
+            )
         return candidate_path, "detector.model_path"
 
     # Legacy explicit detection.path override remains supported.
