@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT="${PROJECT:-soccer360}"
+SERVICE="${SERVICE:-worker}"
+IMAGE_TAG="${IMAGE_TAG:-soccer360-worker:local}"
+cid=""
+
+log() {
+  echo "[verify-container-assets] $*"
+}
+
+fail() {
+  echo "[verify-container-assets] ERROR: $*" >&2
+  exit 1
+}
+
+cleanup() {
+  if [ -n "${cid:-}" ]; then
+    docker rm -f "$cid" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+cd "$REPO_DIR"
+
+log "Reset compose state (project=$PROJECT)"
+docker compose -p "$PROJECT" down --remove-orphans
+
+before_id="$(docker image inspect "$IMAGE_TAG" --format '{{.Id}}' 2>/dev/null || true)"
+log "before_id=${before_id:-<none>}"
+
+log "Build fresh worker image (no cache, pull=false)"
+if ! docker compose -p "$PROJECT" build --no-cache --pull=false "$SERVICE"; then
+  log "Retrying build without --pull=false (compose compatibility fallback)"
+  docker compose -p "$PROJECT" build --no-cache "$SERVICE" \
+    || fail "build failed for service '$SERVICE'"
+fi
+
+after_id="$(docker image inspect "$IMAGE_TAG" --format '{{.Id}}' 2>/dev/null || true)"
+if [ -z "$after_id" ] || [ "$after_id" = "<no value>" ]; then
+  fail "could not resolve rebuilt image SHA for tag '$IMAGE_TAG'"
+fi
+log "project=$PROJECT"
+log "image_tag=$IMAGE_TAG"
+log "rebuilt_sha=$after_id"
+
+log "Compose image mapping"
+if ! docker compose -p "$PROJECT" config --images; then
+  docker compose -p "$PROJECT" images
+fi
+
+log "Start short-lived worker container"
+cid="$(docker compose -p "$PROJECT" run -d --no-TTY --no-deps --entrypoint sleep "$SERVICE" 60)" \
+  || fail "failed to start verifier container"
+
+container_ref="$(docker inspect -f '{{.Config.Image}}' "$cid")" \
+  || fail "failed to inspect container image ref"
+container_sha="$(docker inspect -f '{{.Image}}' "$cid")" \
+  || fail "failed to inspect container image SHA"
+log "container_image_ref=$container_ref"
+log "container_image_sha=$container_sha"
+if [ "$container_sha" != "$after_id" ]; then
+  fail "container image SHA does not match rebuilt image SHA"
+fi
+
+log "Runtime asset checks"
+docker exec "$cid" bash -lc '
+set -euo pipefail
+id
+ls -lah /app/yolov8s.pt
+stat -c "%u:%g %A %n" /app/.ultralytics /app/yolov8s.pt
+test -w /app/.ultralytics
+test -s /app/yolov8s.pt
+' || fail "runtime asset checks failed"
+
+log "verify_container_assets: ok"

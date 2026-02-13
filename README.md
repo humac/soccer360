@@ -335,6 +335,87 @@ docker compose logs -f worker      # Follow logs
 docker compose down                # Stop everything
 ```
 
+### Verify Worker Image Freshness and Runtime Assets
+
+Root causes this workflow catches:
+
+1. Stale container/image reuse after rebuilds.
+2. Compose project/context drift causing a different auto-tagged image.
+3. `build` + `image` + pull behavior mismatches.
+4. Runtime user (`1000:1000`) permission mismatch on baked assets.
+
+Worker image policy:
+- `docker-compose.yml` sets `image: soccer360-worker:local` + `pull_policy: never`.
+- With both `build` and `image`, compose builds and tags the local result as `soccer360-worker:local`.
+- `pull_policy: never` may not be honored on every Compose version; the verifier script is the source of truth.
+
+Recommended pre-merge check:
+
+```bash
+make verify-container-assets
+```
+
+Compose project drift warning:
+- Running compose from a different directory or with a different `-p` project name can target another image namespace.
+- Use an explicit project for deterministic behavior:
+
+```bash
+PROJECT=soccer360 bash scripts/verify_container_assets.sh
+```
+
+Image tag override (if needed):
+
+```bash
+IMAGE_TAG=mytag:local PROJECT=soccer360 bash scripts/verify_container_assets.sh
+```
+
+Force a fresh build and confirm image identity:
+
+```bash
+docker compose -p soccer360 down --remove-orphans
+docker compose -p soccer360 build --no-cache worker
+docker compose -p soccer360 images
+docker image inspect soccer360-worker:local --format '{{.Id}}'
+```
+
+Run runtime checks inside the worker container:
+
+```bash
+docker compose -p soccer360 run --rm --no-deps --entrypoint bash worker -lc '
+set -euo pipefail
+id
+ls -lah /app/yolov8s.pt
+stat -c "%u:%g %A %n" /app/.ultralytics /app/yolov8s.pt
+test -w /app/.ultralytics
+test -s /app/yolov8s.pt
+'
+```
+
+Expected output patterns:
+- `id` contains `uid=1000 gid=1000`.
+- `ls -lah /app/yolov8s.pt` shows non-zero size.
+- `stat` lines include:
+  - `1000:1000 ... /app/.ultralytics`
+  - `1000:1000 ... /app/yolov8s.pt`
+- `test` commands produce no output and exit `0`.
+
+Container/image consistency check:
+
+```bash
+cid="$(docker compose -p soccer360 run -d --no-TTY --no-deps --entrypoint sleep worker 60)"
+docker inspect -f '{{.Image}}' "$cid"
+docker image inspect soccer360-worker:local --format '{{.Id}}'
+docker rm -f "$cid"
+```
+
+Both printed IDs must match.
+
+CI-style one-shot verifier:
+
+```bash
+PROJECT=soccer360 bash scripts/verify_container_assets.sh
+```
+
 ## Tesla P40 Notes
 
 The P40 is a Pascal GP102 GPU with 24GB VRAM. It supports FP16 arithmetic (no Tensor Cores) and has an NVENC hardware encoder.
