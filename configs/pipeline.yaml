@@ -141,14 +141,49 @@ ingest:
 
 active_learning:
   enabled: true
-  # Minimum detection confidence; frames below this are exported for labeling
-  confidence_threshold: 0.3
-  # Consecutive lost-ball frames to trigger export (gap detection)
-  gap_frames: 15
-  # Maximum frames to export per video (sampled if exceeded)
-  max_export_frames: 500
-  # Minimum position jump (pixels in detector resolution) to flag as hard frame
-  position_jump_px: 150
+  export_dir: /tank/labeling
+  export_max_frames: 600
+  # Only export candidate frames whose frame_index % export_every_n_frames == 0
+  export_every_n_frames: 2
+  # Low-confidence band: detections in [low_conf_min, low_conf_max] are hard frames
+  low_conf_min: 0.20
+  low_conf_max: 0.50
+  # Lost-ball run: export one representative frame when streak reaches this many frames
+  lost_run_frames: 15
+  # Jump/speed rejection export threshold (only export if distance >= this)
+  jump_trigger_px: 200
+
+# --- V1 Bootstrap Detection ---
+# COCO-pretrained YOLOv8s for sports ball (class 32) detection
+detection:
+  path: "yolov8s.pt"
+  classes: [32]              # COCO sports ball
+  conf: 0.35
+  iou: 0.5
+  img_size: 960
+  max_det: 20
+  half: true
+  device: "cuda:0"
+
+# Spatial and temporal filters for detection quality
+filters:
+  # Vertical band filter: reject detections outside [min_y_frac, max_y_frac]
+  # Removes sky, scoreboard, and below-pitch false positives
+  min_y_frac: 0.20
+  max_y_frac: 0.98
+  # Jump/speed sanity (used by BallStabilizer for rejection)
+  max_jump_px: 250
+  max_speed_px_per_s: 2500
+  jump_max_gap_frames: 15   # after this accepted-frame gap, reset jump anchor for reacquisition
+
+# V1 ball stabilization: persistence gate + EMA smoothing
+tracking:
+  ema_alpha: 0.35
+  require_persistence: 2     # require N detections in window to accept
+  window: 3                  # rolling window size
+
+mode:
+  allow_no_model: true
 
 logging:
   level: INFO

@@ -121,10 +121,44 @@ def test_config() -> dict:
             },
             "active_learning": {
                 "enabled": True,
+                # Legacy keys (for HardFrameExporter tests)
                 "confidence_threshold": 0.3,
                 "gap_frames": 5,
                 "max_export_frames": 50,
                 "position_jump_px": 150,
+                # V1 keys (for ActiveLearningExporter)
+                "export_dir": f"{tmpdir}/labeling",
+                "export_max_frames": 50,
+                "export_every_n_frames": 2,
+                "low_conf_min": 0.20,
+                "low_conf_max": 0.50,
+                "lost_run_frames": 5,
+                "jump_trigger_px": 200,
+            },
+            "detection": {
+                "path": "yolov8s.pt",
+                "classes": [32],
+                "conf": 0.35,
+                "iou": 0.5,
+                "img_size": 160,
+                "max_det": 20,
+                "half": False,
+                "device": "cpu",
+            },
+            "filters": {
+                "min_y_frac": 0.20,
+                "max_y_frac": 0.98,
+                "max_jump_px": 250,
+                "max_speed_px_per_s": 2500,
+                "jump_max_gap_frames": 15,
+            },
+            "tracking": {
+                "ema_alpha": 0.35,
+                "require_persistence": 2,
+                "window": 3,
+            },
+            "mode": {
+                "allow_no_model": True,
             },
             "logging": {
                 "level": "WARNING",

@@ -1,7 +1,13 @@
+# syntax=docker/dockerfile:1.6
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
+ENV ULTRALYTICS_HOME=/app/.ultralytics
+ENV YOLO_CONFIG_DIR=/app/.ultralytics
+ENV HOME=/home/worker
+ENV USER=worker
+ENV LOGNAME=worker
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 python3.11-dev python3.11-venv python3-pip \
@@ -13,15 +19,63 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
 WORKDIR /app
 
+# Ensure numeric runtime user/group 1000:1000 can resolve identity APIs (getpass/pwd).
+RUN if ! grep -qE '^[^:]+:[^:]*:1000:' /etc/group; then \
+      echo 'worker:x:1000:' >> /etc/group; \
+    fi \
+    && if ! grep -qE '^[^:]+:[^:]*:1000:' /etc/passwd; then \
+      echo 'worker:x:1000:1000:worker:/home/worker:/bin/sh' >> /etc/passwd; \
+    fi \
+    && mkdir -p /home/worker \
+    && chown -R 1000:1000 /home/worker
+
+# Dependencies layer: changes only when requirements-docker.txt changes.
+RUN --mount=type=cache,target=/root/.cache/pip python -m pip install --upgrade pip
+COPY requirements-docker.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+      --index-url https://pypi.org/simple \
+      --extra-index-url https://download.pytorch.org/whl/cu121 \
+      torch==2.4.1+cu121 torchvision==0.19.1+cu121 torchaudio==2.4.1+cu121
+RUN printf '%s\n' \
+    'torch==2.4.1+cu121' \
+    'torchvision==0.19.1+cu121' \
+    'torchaudio==2.4.1+cu121' > /tmp/torch-constraints.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+      --index-url https://pypi.org/simple \
+      --extra-index-url https://download.pytorch.org/whl/cu121 \
+      -c /tmp/torch-constraints.txt \
+      -r requirements-docker.txt
+
+# Bake yolov8s.pt BEFORE copying src/ so code changes don't invalidate this layer.
+RUN MATCHES="" \
+    && mkdir -p /app/.ultralytics \
+    && python -c "from ultralytics import YOLO; YOLO('yolov8s.pt')" \
+    && if [ -s /app/yolov8s.pt ]; then MATCH="/app/yolov8s.pt"; else \
+         MATCHES="$(find /app/.ultralytics -name 'yolov8s.pt' -type f -print)"; \
+         COUNT="$(printf '%s\n' "$MATCHES" | grep -c .)"; \
+         test "$COUNT" -eq 1; \
+         MATCH="$MATCHES"; \
+       fi \
+    && if [ "$MATCH" != "/app/yolov8s.pt" ]; then cp "$MATCH" /app/yolov8s.pt; fi \
+    && test -s /app/yolov8s.pt \
+    && chown -R 1000:1000 /app/.ultralytics /app/yolov8s.pt \
+    && echo "yolov8s.pt baked at /app/yolov8s.pt ($(stat -c%s /app/yolov8s.pt) bytes)" \
+    || (echo "FATAL: expected exactly 1 yolov8s.pt under ULTRALYTICS_HOME, found: $MATCHES" && exit 1)
+
+# Application source: changes often, but deps + model layers stay cached.
 COPY pyproject.toml .
 COPY src/ src/
 COPY configs/ configs/
 COPY scripts/ scripts/
 COPY models/ models/
 
-RUN python -m pip install --upgrade pip
-RUN pip install --no-cache-dir .
+RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps .
 RUN which soccer360
+
+# Safety net: preserve runtime writability if future layers touch these paths.
+RUN chown -R 1000:1000 /app/.ultralytics /app/yolov8s.pt || true
 
 ENTRYPOINT ["soccer360"]
 CMD ["watch"]

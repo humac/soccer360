@@ -1,5 +1,7 @@
 services:
   worker:
+    image: soccer360-worker:local
+    pull_policy: never
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,6 +11,7 @@ services:
     command: ["watch"]
     # Fallback if console script resolution fails:
     # command: ["python", "-m", "src.cli", "watch"]
+    # Intentionally avoid mounts that mask baked /app/yolov8s.pt or /app/.ultralytics.
     volumes:
       - /tank:/tank
       - /scratch:/scratch
@@ -17,6 +20,8 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=1
       - SOCCER360_CONFIG=/app/configs/pipeline.yaml
+      - ULTRALYTICS_HOME=/app/.ultralytics
+      - YOLO_CONFIG_DIR=/app/.ultralytics
     user: "1000:1000"
     shm_size: "16gb"
     ulimits:

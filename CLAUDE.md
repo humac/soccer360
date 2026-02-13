@@ -1,87 +1,65 @@
 # Soccer360 - Claude Code Context
 
-## What This Project Is
+Short, implementation-accurate context for Claude-style agents.
+`AGENTS.md` is the canonical long-form reference.
 
-Automated 360 soccer video processing pipeline. Takes equirectangular 360 match footage and produces broadcast-style auto-follow video, tactical wide-angle view, and highlight clips. Runs on bare-metal Ubuntu 22.04 with Tesla P40 GPU inside Docker.
+## Current Implementation Snapshot
 
-## Tech Stack
+Soccer360 is a two-pass 360 video pipeline producing `broadcast.mp4`, `tactical_wide.mp4`, highlights, and run artifacts.
 
-- **Python 3.11**, packaged via `pyproject.toml`, installed as `soccer360` CLI
-- **YOLO (ultralytics)** for ball detection on GPU
-- **py360convert** for equirectangular-to-perspective projection
-- **filterpy** for Kalman filtering (tracker + camera smoothing)
-- **ffmpeg** for all video I/O (streaming pipes, never raw frames to disk)
-- **Docker** (NVIDIA CUDA 12.2 base image) for deployment
-- No web framework, no database -- pure batch video processing pipeline
+Runtime modes in `src/pipeline.py`:
 
-## Architecture
+- **V1 bootstrap mode** (`detection` section present): `Detector` -> `BallStabilizer` -> `ActiveLearningExporter` -> camera/reframe/highlights/export.
+- **Legacy mode** (`detection` section absent): `Detector` -> `Tracker` (ByteTrack) -> `HardFrameExporter` -> camera/reframe/highlights/export.
+- **NO_DETECT mode**: static camera path + broadcast/tactical only (no detect/track/highlights).
 
-Two-pass streaming pipeline with 8 phases:
+## Key Files
 
-1. **Detector** (`src/detector.py`): GPU YOLO inference + Field-of-Interest filtering
-2. **Tracker** (`src/tracker.py`): ByteTrack two-stage association + ball selection
-3. **Camera** (`src/camera.py`): Kalman + EMA smoothing -> per-frame yaw/pitch/FOV
-4. **Reframer** (`src/reframer.py`): py360convert e2p, 12 parallel segment workers
-5. **Reframer** (tactical): Fixed wide-angle view, same parallel strategy
-6. **Highlights** (`src/highlights.py`): Heuristic event detection + clip export
-7. **Exporter** (`src/exporter.py`): Output organization + metadata
-8. **Pipeline** (`src/pipeline.py`): Orchestrator coordinating all phases
+- `src/pipeline.py`: mode resolution and phase orchestration
+- `src/detector.py`: model resolution, FoI, V1/legacy detection behavior
+- `src/tracker.py`: ByteTrack (legacy) + BallStabilizer (V1)
+- `src/active_learning.py`: V1 hard-frame export triggers/gating
+- `src/watcher.py`: ingest queue daemon + persistent dedupe fingerprints
+- `src/exporter.py`: metadata + ingest archival (`move`/`copy`/`leave`, collision policy)
+- `scripts/verify_container_assets.sh`: canonical container build/runtime verifier
+- `scripts/install.sh`: calls verifier as canonical worker build path
 
-Key data flow: ffmpeg pipe -> numpy arrays -> GPU inference -> JSONL -> JSON -> ffmpeg pipe -> MP4. No intermediate frame files.
+## Recent Operational Fixes Reflected In Repo
 
-## Code Conventions
+- Verifier preflights Docker CLI/daemon before fallback operations.
+- Deps-sync check (`requirements-docker.txt` vs `pyproject.toml`) now:
+  - captures deterministic host exit code
+  - falls back to Docker when host `python3` is missing or missing `tomllib`/`tomli`
+  - prints mismatch output before failing
+  - distinguishes true mismatch from fallback execution failure
+- `RESET=1` now triggers `docker compose down --remove-orphans` regardless of `NO_CACHE`.
+- BuildKit is forced in verifier builds.
+- `install.sh` routes worker-image build through verifier and honors compose project naming.
+- Worker remains numeric `1000:1000`; image provides UID/GID 1000 passwd/group compatibility plus `HOME`/`USER`/`LOGNAME` to avoid torch/getpass crashes.
+- Verifier now asserts `python -c "import getpass; print(getpass.getuser())"` succeeds at runtime.
+- Dockerfile pins Pascal-safe PyTorch from cu121 (`torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121`) and constrains requirements install to that trio.
+- Verifier now prints torch/CUDA + GPU capability diagnostics, treats arch-list mismatch as warning, and uses CUDA conv2d smoke as the authoritative gate (`GPU_SMOKE=1` default, `GPU_SMOKE=0` to skip).
 
-- All source in `src/`, tests in `tests/`
-- Config: `configs/pipeline.yaml` (runtime), `configs/model_config.yaml` (training)
-- Ruff for linting, target Python 3.11, line length 100
-- Type hints with `from __future__ import annotations`
-- Logging via `logging.getLogger("soccer360.<module>")`
-- Detection format: JSONL with `{frame, bbox: [x1,y1,x2,y2], confidence, class}`
-- All pixel-space thresholds are in `detector.resolution` coordinate space (default 1920x960)
+## Non-Negotiable Conventions
 
-## Important Math
+- Angle wrap convention: `(-180, 180]`
+- Equirect mapping: `yaw = (x/W)*360-180`, `pitch = 90-(y/H)*180`
+- Vertical FOV uses tangent formula, never linear approximation
+- Streaming architecture: ffmpeg pipes only, no intermediate frame dumps
+- Pixel thresholds are detector-space pixels
 
-- **Equirectangular mapping**: `yaw = (x/W)*360 - 180`, `pitch = 90 - (y/H)*180`
-- **Angle wrapping**: `(-180, 180]` half-open interval via `a % 360; if a > 180: a -= 360`
-- **Vertical FOV**: Tangent-based `fov_v = degrees(2 * atan(tan(radians(fov_h/2)) * (h/w)))`, NOT linear ratio
-- **FoI auto-center**: Yaw histogram (5-degree bins) -> peak -> circular mean of peak +/- 1 bin
+## Config + Test Workflow
 
-## Running Tests
-
-No local Python environment -- project runs in Docker:
+- Runtime config: `configs/pipeline.yaml`
+- If adding config keys: update config file, module defaults, and `tests/conftest.py`
+- Test in Docker:
 
 ```bash
 docker compose run --rm worker pytest tests/ -v
 ```
 
-For quick syntax checking locally:
+Compose service entrypoint is `soccer360`; for Python checks use:
 
 ```bash
-python3 -c "import ast; ast.parse(open('src/detector.py').read())"
+docker compose run --rm --no-deps --entrypoint python worker -c "import torch; print(torch.__version__)"
 ```
-
-## Key Files to Read First
-
-1. `configs/pipeline.yaml` -- All tunable parameters
-2. `src/pipeline.py` -- Orchestrator, shows the 8-phase flow
-3. `src/detector.py` -- Detection + FoI filtering (most complex module)
-4. `src/camera.py` -- Camera smoothing pipeline (Kalman + EMA + deadband)
-5. `src/utils.py` -- Shared helpers (FFmpeg I/O, angle math, config loading)
-
-## Common Tasks
-
-**Add a new pipeline phase:** Edit `src/pipeline.py` run method, add the phase between existing ones. Each phase reads from the previous phase's output file in the work directory.
-
-**Change detection behavior:** Edit `src/detector.py`. FoI config is in `field_of_interest` section. Detection resolution and confidence thresholds in `detector` section.
-
-**Tune camera smoothing:** Edit `camera` section in `configs/pipeline.yaml`. Key params: `ema_alpha` (lower = smoother), `deadband_deg`, `max_pan_speed_deg_per_sec`.
-
-**Add a new config parameter:** Add to `configs/pipeline.yaml`, read it in the relevant module's `__init__`, add to `tests/conftest.py` test config.
-
-## Do NOT
-
-- Run `pytest` directly (no local venv, use Docker)
-- Modify frame I/O to write intermediate frames to disk (streaming design is intentional)
-- Change the `(-180, 180]` angle convention -- camera.py and detector.py both depend on it
-- Use linear ratio for vertical FOV computation (must use tangent formula)
-- Skip adding new config params to `tests/conftest.py` test config fixture
