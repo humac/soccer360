@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.6
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -15,14 +16,19 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
 WORKDIR /app
 
+# Dependencies layer: changes only when requirements-docker.txt changes.
+RUN --mount=type=cache,target=/root/.cache/pip python -m pip install --upgrade pip
+COPY requirements-docker.txt .
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements-docker.txt
+
+# Application source: changes often, but deps layer stays cached.
 COPY pyproject.toml .
 COPY src/ src/
 COPY configs/ configs/
 COPY scripts/ scripts/
 COPY models/ models/
 
-RUN python -m pip install --upgrade pip
-RUN pip install --no-cache-dir .
+RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps .
 RUN which soccer360
 
 # Bake yolov8s.pt at a canonical path for V1 bootstrap detection

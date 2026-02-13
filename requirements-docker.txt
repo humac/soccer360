@@ -1,0 +1,11 @@
+# Mirrors pyproject.toml [project.dependencies] — keep in sync.
+# Run `make check-deps-sync` to verify.
+click>=8.1
+watchdog>=4.0
+numpy>=1.24
+opencv-python-headless>=4.8
+py360convert>=1.0
+pyyaml>=6.0
+ultralytics>=8.1
+filterpy>=1.4
+scipy>=1.11
