@@ -36,7 +36,10 @@ class Pipeline:
 
         # Resolve model and determine operating mode
         if self._v1_mode:
-            resolved_path, self.mode = resolve_model_path_v1(config)
+            models_dir = config.get("paths", {}).get("models", "/app/models")
+            resolved_path, self.mode = resolve_model_path_v1(
+                config, models_dir=models_dir
+            )
         else:
             resolved_path, self.mode = resolve_model_path(config)
 
