@@ -18,6 +18,8 @@ from .utils import (
 )
 
 logger = logging.getLogger("soccer360.detector")
+DEFAULT_V1_MODEL_PATH = "/app/yolov8s.pt"
+DEFAULT_V1_MODEL_ALIASES = {DEFAULT_V1_MODEL_PATH, "yolov8s.pt"}
 
 
 def resolve_model_path(config: dict) -> tuple[str | None, str]:
@@ -61,7 +63,7 @@ def resolve_model_path(config: dict) -> tuple[str | None, str]:
 def resolve_model_path_v1(
     config: dict,
     models_dir: str = "/app/models",
-    base_model_path: str = "/app/yolov8s.pt",
+    base_model_path: str = DEFAULT_V1_MODEL_PATH,
 ) -> tuple[str | None, str]:
     """Resolve model for V1 bootstrap detection.
 
@@ -74,41 +76,112 @@ def resolve_model_path_v1(
     When detection.path is explicitly overridden to a non-default value,
     that path is tried first (absolute, then relative to /app).
     """
-    det_cfg = config.get("detection", {})
-    det_path = det_cfg.get("path", "yolov8s.pt")
-    allow_no_model = config.get("mode", {}).get("allow_no_model", False)
+    model_path, model_source = resolve_v1_model_path_and_source(
+        config, models_dir=models_dir, base_model_path=base_model_path
+    )
+    config["_v1_model_resolution"] = {"path": model_path, "source": model_source}
 
-    fine_tuned = Path(models_dir) / "ball_best.pt"
-
-    # Non-default explicit path: user override
-    if det_path != "yolov8s.pt":
-        if Path(det_path).exists():
-            logger.info("Model resolved: %s (explicit path)", det_path)
-            return str(det_path), "normal"
-        relative = Path("/app") / det_path
-        if relative.exists():
-            logger.info("Model resolved: %s (explicit path, resolved under /app)", relative)
-            return str(relative), "normal"
-        # Fall through to baked model
-        logger.warning("Explicit model %s not found, trying baked model", det_path)
-
-    # Step 1: fine-tuned model
-    if fine_tuned.exists():
-        logger.info("Model resolved: %s (fine-tuned)", fine_tuned)
-        return str(fine_tuned), "normal"
-
-    # Step 2: baked canonical model
-    if Path(base_model_path).exists():
-        logger.info("Model resolved: %s (baked)", base_model_path)
-        return str(base_model_path), "normal"
-
-    # Step 3/4: NO_DETECT or error
-    if allow_no_model:
+    if model_path is None:
         logger.warning("No model found -- entering NO_DETECT mode")
         return None, "no_detect"
+    return model_path, "normal"
+
+
+def _normalize_model_path(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _resolve_runtime_path(path_value: str) -> str:
+    path_obj = Path(path_value)
+    if path_obj.is_absolute():
+        return str(path_obj)
+    return str(Path("/app") / path_obj)
+
+
+def _v1_default_aliases(base_model_path: str) -> set[str]:
+    aliases = set(DEFAULT_V1_MODEL_ALIASES)
+    normalized = _normalize_model_path(base_model_path)
+    if normalized:
+        aliases.add(normalized)
+        aliases.add(Path(normalized).name)
+    return aliases
+
+
+def _configured_v1_model_candidate(config: dict) -> tuple[str, str]:
+    """Return configured V1 model candidate path and its source enum."""
+    det_cfg = config.get("detector", {})
+    v1_cfg = config.get("detection", {})
+
+    detector_model_path = _normalize_model_path(det_cfg.get("model_path"))
+    legacy_detection_path = _normalize_model_path(v1_cfg.get("path"))
+
+    if detector_model_path:
+        return detector_model_path, "detector.model_path"
+    if legacy_detection_path:
+        return legacy_detection_path, "detection.path"
+    return DEFAULT_V1_MODEL_PATH, "default"
+
+
+def resolve_v1_model_path_and_source(
+    config: dict,
+    models_dir: str = "/app/models",
+    base_model_path: str = DEFAULT_V1_MODEL_PATH,
+) -> tuple[str | None, str]:
+    """Resolve effective V1 model path and source enum for runtime/verifier.
+
+    Source enum is stable and limited to:
+      - detector.model_path
+      - detection.path
+      - default
+
+    Resolution precedence is configuration-first:
+      detector.model_path > detection.path > default
+
+    Behavior:
+      - Non-default detector.model_path is an explicit override.
+      - Missing detector.model_path, or detector.model_path set to default path,
+        preserves fine-tuned preference behavior.
+      - Legacy detection.path explicit values are honored when present and valid.
+    """
+    allow_no_model = config.get("mode", {}).get("allow_no_model", False)
+    fine_tuned = Path(models_dir) / "ball_best.pt"
+    base_model = Path(base_model_path)
+    default_aliases = _v1_default_aliases(base_model_path)
+
+    configured_path, configured_source = _configured_v1_model_candidate(config)
+    candidate_path = _resolve_runtime_path(configured_path)
+
+    # Explicit detector.model_path override is only for non-default values.
+    if (
+        configured_source == "detector.model_path"
+        and configured_path not in default_aliases
+    ):
+        return candidate_path, "detector.model_path"
+
+    # Legacy explicit detection.path override remains supported.
+    if (
+        configured_source == "detection.path"
+        and configured_path not in default_aliases
+    ):
+        if Path(candidate_path).exists():
+            return candidate_path, "detection.path"
+        logger.warning(
+            "Explicit model path %s not found, falling back to default resolution",
+            candidate_path,
+        )
+
+    # Default/fallback resolution preserves existing fine-tuned preference.
+    if fine_tuned.exists():
+        return str(fine_tuned), "default"
+    if base_model.exists():
+        return str(base_model), "default"
+    if allow_no_model:
+        return None, "default"
 
     raise RuntimeError(
-        f"No ball detection model found (checked {fine_tuned}, {base_model_path}) "
+        f"No ball detection model found (checked {fine_tuned}, {base_model}) "
         "and mode.allow_no_model is false"
     )
 
@@ -127,7 +200,15 @@ class Detector:
         if self._v1_mode:
             v1_cfg = config["detection"]
             filt_cfg = config.get("filters", {})
-            self.model_path = v1_cfg.get("path", "yolov8s.pt")
+            resolution_meta = config.get("_v1_model_resolution", {})
+            resolved_model_path = _normalize_model_path(resolution_meta.get("path"))
+            resolved_model_source = _normalize_model_path(resolution_meta.get("source"))
+            if not resolved_model_path:
+                resolved_model_path, resolved_model_source = resolve_v1_model_path_and_source(
+                    config
+                )
+            self.model_path = resolved_model_path
+            self.model_source = resolved_model_source or "default"
             self.device = v1_cfg.get("device", "cuda:0")
             img_size = v1_cfg.get("img_size", 960)
             self.det_resolution = [img_size * 2, img_size]
@@ -165,6 +246,7 @@ class Detector:
             self.tiling_enabled = self.tiling.get("enabled", False)
             self.tile_count = self.tiling.get("tiles", 4)  # 2x2
             self.tile_overlap = self.tiling.get("overlap", 0.1)
+            self.model_source = "model.path"
 
         # Field-of-Interest filtering
         foi_cfg = config.get("field_of_interest", {})
@@ -223,6 +305,7 @@ class Detector:
 
         # Recompute FoI auto-center per run (do not leak prior run state).
         self._effective_center_yaw = None
+        logger.info("Model resolved: %s (source=%s)", self.model_path, self.model_source)
 
         det_w, det_h = self.det_resolution
         bs = self._effective_batch_size

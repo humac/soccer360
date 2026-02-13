@@ -37,8 +37,14 @@ Runtime modes in `src/pipeline.py`:
 - `install.sh` routes worker-image build through verifier and honors compose project naming.
 - Worker remains numeric `1000:1000`; image provides UID/GID 1000 passwd/group compatibility plus `HOME`/`USER`/`LOGNAME` to avoid torch/getpass crashes.
 - Verifier now asserts `python -c "import getpass; print(getpass.getuser())"` succeeds at runtime.
+- V1 model-path precedence is explicit and logged once per job:
+  - `detector.model_path` > `detection.path` > `default`
+  - source enum: `detector.model_path`, `detection.path`, `default`
+  - runtime log format: `Model resolved: <path> (source=<source>)`
 - Dockerfile pins Pascal-safe PyTorch from cu121 (`torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121`) and constrains requirements install to that trio.
 - Verifier now prints torch/CUDA + GPU capability diagnostics, treats arch-list mismatch as warning, and uses CUDA conv2d smoke as the authoritative gate (`GPU_SMOKE=1` default, `GPU_SMOKE=0` to skip).
+- Verifier resolves model path in-container using runtime Python logic (`src.utils.load_config` + `resolve_v1_model_path_and_source`), emits only `CONFIG_PATH`/`MODEL_PATH`/`MODEL_SOURCE` on stdout, validates selected `MODEL_PATH` via `test -s`, and only enforces baked `/app/yolov8s.pt` checks when that path is actually selected.
+- Resolver failures are fail-fast and include attempted `CONFIG_PATH`, resolver exit code, and captured stderr. Use `VERBOSE=1` to print captured resolver stderr/noise diagnostics when non-empty.
 
 ## Non-Negotiable Conventions
 
@@ -62,4 +68,10 @@ Compose service entrypoint is `soccer360`; for Python checks use:
 
 ```bash
 docker compose run --rm --no-deps --entrypoint python worker -c "import torch; print(torch.__version__)"
+```
+
+To print resolved model path/source (same logic as verifier):
+
+```bash
+docker compose run --rm --no-deps --entrypoint python worker -c "import os; from src.utils import load_config; from src.detector import resolve_v1_model_path_and_source; config_path=(os.getenv('SOCCER360_CONFIG') or '/app/configs/pipeline.yaml'); cfg=load_config(config_path); p,s=resolve_v1_model_path_and_source(cfg, models_dir=cfg.get('paths', {}).get('models', '/app/models')); print(f'CONFIG_PATH={config_path}'); print(f'MODEL_PATH={p}'); print(f'MODEL_SOURCE={s}')"
 ```
