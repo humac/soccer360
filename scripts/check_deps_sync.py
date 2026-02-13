@@ -2,34 +2,45 @@
 """Verify requirements-docker.txt mirrors pyproject.toml dependencies."""
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:
+        print(
+            "ERROR: needs tomllib (Python 3.11+) or tomli.\n"
+            "  Install: pip install tomli",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 REQUIREMENTS = ROOT / "requirements-docker.txt"
 
 
+def _normalize(dep: str) -> str:
+    """Normalize a dependency string for reliable comparison."""
+    return " ".join(dep.split())
+
+
 def parse_pyproject_deps() -> set[str]:
-    """Extract dependencies from pyproject.toml [project.dependencies] array."""
-    text = PYPROJECT.read_text()
-    match = re.search(r"^dependencies\s*=\s*\[(.*?)\]", text, re.DOTALL | re.MULTILINE)
-    if not match:
-        print("ERROR: could not find dependencies array in pyproject.toml", file=sys.stderr)
-        sys.exit(2)
-    block = match.group(1)
-    deps: set[str] = set()
-    for line in block.splitlines():
-        line = line.strip().strip(",").strip('"').strip("'").strip()
-        if line:
-            deps.add(line)
-    return deps
+    with open(PYPROJECT, "rb") as f:
+        data = tomllib.load(f)
+    return {_normalize(d) for d in data["project"]["dependencies"]}
 
 
 def parse_requirements() -> set[str]:
     lines = REQUIREMENTS.read_text().splitlines()
-    return {line.strip() for line in lines if line.strip() and not line.strip().startswith("#")}
+    return {
+        _normalize(line)
+        for line in lines
+        if line.strip() and not line.strip().startswith("#")
+    }
 
 
 def main() -> int:

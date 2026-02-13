@@ -47,9 +47,11 @@ before_id="$(docker image inspect "$IMAGE_TAG" --format '{{.Id}}' 2>/dev/null ||
 log "before_id=${before_id:-<none>}"
 
 log "Building worker image (project=$PROJECT)"
-if ! docker compose -p "$PROJECT" build "${build_args[@]}" --pull=false "$SERVICE"; then
+if ! DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
+     docker compose -p "$PROJECT" build "${build_args[@]}" --pull=false "$SERVICE"; then
   log "Retrying build without --pull=false (compose compatibility fallback)"
-  docker compose -p "$PROJECT" build "${build_args[@]}" "$SERVICE" \
+  DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
+    docker compose -p "$PROJECT" build "${build_args[@]}" "$SERVICE" \
     || fail "build failed for service '$SERVICE'"
 fi
 

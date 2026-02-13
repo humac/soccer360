@@ -21,18 +21,9 @@ RUN --mount=type=cache,target=/root/.cache/pip python -m pip install --upgrade p
 COPY requirements-docker.txt .
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements-docker.txt
 
-# Application source: changes often, but deps layer stays cached.
-COPY pyproject.toml .
-COPY src/ src/
-COPY configs/ configs/
-COPY scripts/ scripts/
-COPY models/ models/
-
-RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps .
-RUN which soccer360
-
-# Bake yolov8s.pt at a canonical path for V1 bootstrap detection
-RUN mkdir -p /app/.ultralytics \
+# Bake yolov8s.pt BEFORE copying src/ so code changes don't invalidate this layer.
+RUN MATCHES="" \
+    && mkdir -p /app/.ultralytics \
     && python -c "from ultralytics import YOLO; YOLO('yolov8s.pt')" \
     && if [ -s /app/yolov8s.pt ]; then MATCH="/app/yolov8s.pt"; else \
          MATCHES="$(find /app/.ultralytics -name 'yolov8s.pt' -type f -print)"; \
@@ -45,6 +36,16 @@ RUN mkdir -p /app/.ultralytics \
     && chown -R 1000:1000 /app/.ultralytics /app/yolov8s.pt \
     && echo "yolov8s.pt baked at /app/yolov8s.pt ($(stat -c%s /app/yolov8s.pt) bytes)" \
     || (echo "FATAL: expected exactly 1 yolov8s.pt under ULTRALYTICS_HOME, found: $MATCHES" && exit 1)
+
+# Application source: changes often, but deps + model layers stay cached.
+COPY pyproject.toml .
+COPY src/ src/
+COPY configs/ configs/
+COPY scripts/ scripts/
+COPY models/ models/
+
+RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps .
+RUN which soccer360
 
 # Safety net: preserve runtime writability if future layers touch these paths.
 RUN chown -R 1000:1000 /app/.ultralytics /app/yolov8s.pt || true
