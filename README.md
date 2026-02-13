@@ -37,7 +37,7 @@ docker compose logs -f worker
 
 Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 minutes:
 
-```
+```text
 360 video --> Detection (GPU) --> FoI Filter --> Tracking --> Camera Path --> Reframing --> Export
 ```
 
@@ -47,17 +47,17 @@ Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 
 
 ### Processing Phases
 
-| Phase | Operation | Hardware |
-|-------|-----------|----------|
-| 1 | Ball detection (YOLO) + FoI filtering | GPU (P40) |
-| 2 | Ball tracking (ByteTrack) | CPU |
-| 2.5 | Hard frame export (active learning) | I/O |
-| 3 | Camera path (Kalman filter + EMA) | CPU |
-| 4 | Broadcast reframing (py360convert) | CPU (12 workers) |
-| 5 | Tactical wide view | CPU (parallel) |
-| 6 | Highlight detection & export | CPU |
-| 7 | Output organization | I/O |
-| 8 | Scratch cleanup | I/O |
+|Phase|Operation|Hardware|
+|---|---|---|
+|1|Ball detection (YOLO) + FoI filtering|GPU (P40)|
+|2|Ball tracking (ByteTrack)|CPU|
+|2.5|Hard frame export (active learning)|I/O|
+|3|Camera path (Kalman filter + EMA)|CPU|
+|4|Broadcast reframing (py360convert)|CPU (12 workers)|
+|5|Tactical wide view|CPU (parallel)|
+|6|Highlight detection & export|CPU|
+|7|Output organization|I/O|
+|8|Scratch cleanup|I/O|
 
 ### V1 Bootstrap Detection
 
@@ -71,12 +71,14 @@ The V1 pipeline uses a COCO-pretrained YOLOv8s (sports ball, class 32) with cons
 6. **Upgrade** -- Drop `ball_best.pt` in `/tank/models/`; next run auto-uses it
 
 **Temporal stabilization** prevents false positives from reaching the camera path:
+
 - **Persistence gate**: Requires N detections within a sliding window of M frames before accepting
 - **Jump rejection**: Rejects detections that teleport beyond `max_jump_px` pixels
 - **Speed rejection**: Rejects detections moving faster than `max_speed_px_per_s`
 - **EMA smoothing**: Exponential moving average on accepted ball positions
 
 **Active learning triggers** (three types of hard frames exported):
+
 - **Low confidence**: Detection confidence in configurable range `[low_conf_min, low_conf_max]`
 - **Lost ball runs**: ONE representative frame per streak of `lost_run_frames` consecutive lost frames
 - **Jump rejections**: Tracking events where distance exceeds `jump_trigger_px`
@@ -84,12 +86,14 @@ The V1 pipeline uses a COCO-pretrained YOLOv8s (sports ball, class 32) with cons
 ### Model Resolution
 
 **V1 mode** (when `detection` section present in config):
+
 1. `/tank/models/ball_best.pt` (fine-tuned model via volume mount)
 2. `/app/yolov8s.pt` (baked into Docker image at build time)
 3. `mode.allow_no_model: true` -- NO_DETECT fallback
 4. Otherwise -- build error
 
 **Legacy mode** (no `detection` section):
+
 1. `/tank/models/ball_best.pt` (fine-tuned model)
 2. Config `model.path` (`/app/models/ball_best.pt`)
 3. `/app/models/ball_base.pt` (base model, auto-copied to tank)
@@ -98,6 +102,7 @@ The V1 pipeline uses a COCO-pretrained YOLOv8s (sports ball, class 32) with cons
 ### Model Fallback (NO_DETECT mode)
 
 If no ball detection model is available, the pipeline runs in **NO_DETECT mode**:
+
 - Skips phases 1, 2, 2.5, and 6 (detection, tracking, hard frames, highlights)
 - Generates a static camera path at field center with default FOV
 - Still produces `broadcast.mp4` (fixed framing) and `tactical_wide.mp4`
@@ -108,6 +113,7 @@ If no ball detection model is available, the pipeline runs in **NO_DETECT mode**
 When the 360 camera sits between adjacent soccer fields, YOLO detects balls on both. The FoI filter removes detections outside a configurable yaw/pitch window so only the target game reaches the tracker.
 
 **Modes:**
+
 - **fixed** (default): Use `center_yaw_deg` directly. Camera front lens faces the target field, so `center_yaw_deg: 0` with `yaw_window_deg: 200` covers the front hemisphere.
 - **auto**: Analyzes the first N seconds of detections, builds a 5-degree yaw histogram, finds the dominant cluster via peak detection + circular mean, and locks the center for the rest of the run.
 
@@ -134,7 +140,7 @@ All commands accept `--config` / `-c` to specify a custom config file (default: 
 
 ## Storage Layout
 
-```
+```text
 /scratch/                   Fast NVMe, active processing only (auto-cleaned)
 /tank/
   +-- ingest/               Drop raw 360 videos here
@@ -197,6 +203,7 @@ The virtual camera uses a multi-stage smoothing pipeline:
 6. **Dynamic FOV** -- widens during fast ball movement, tightens during slow play, immediately widens when ball is lost
 
 Ball-lost fallback:
+
 - Immediately: FOV widens to maximum (configurable)
 - Frames 1-30: coast on predicted velocity
 - Frames 31-90: velocity decays, camera slows
@@ -263,10 +270,10 @@ as processed and `metadata.json` records the archival failure details.
 
 Watcher dedupe state settings:
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `processed_state_file` | `watcher_processed_ingest.json` | JSON state filename/path; relative values resolve under `<paths.processed>/.state/` |
-| `processed_state_max_entries` | `50000` | Retention cap for state entries (latest N records kept, `0` = unlimited) |
+|Key|Default|Description|
+|---|---|---|
+|`processed_state_file`|`watcher_processed_ingest.json`|JSON state filename/path; relative values resolve under `<paths.processed>/.state/`|
+|`processed_state_max_entries`|`50000`|Retention cap for state entries (latest N records kept, `0` = unlimited)|
 
 Tune `processed_state_max_entries` based on ingest volume and startup latency.
 Higher values retain longer dedupe history but increase state file size/load time.
@@ -274,13 +281,13 @@ Lower values reduce startup overhead for high-volume deployments.
 
 **Post-success archival** is configured in `configs/pipeline.yaml` under `ingest`:
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `archive_on_success` | `true` | Enable archival after successful processing |
-| `archive_dir` | `/tank/archive_raw` | Destination directory for archived originals |
-| `archive_mode` | `move` | `move` (relocate), `copy` (keep original too), or `leave` (disable) |
-| `archive_name_template` | `{match}_{job_id}{ext}` | Filename template (`{match}` = input stem, `{job_id}` = pipeline job id, `{ext}` = `.mp4`) |
-| `archive_collision` | `suffix` | `suffix` (append `_01`, `_02`), `skip` (leave in ingest), or `overwrite` |
+|Key|Default|Description|
+|---|---|---|
+|`archive_on_success`|`true`|Enable archival after successful processing|
+|`archive_dir`|`/tank/archive_raw`|Destination directory for archived originals|
+|`archive_mode`|`move`|`move` (relocate), `copy` (keep original too), or `leave` (disable)|
+|`archive_name_template`|`{match}_{job_id}{ext}`|Filename template (`{match}` = input stem, `{job_id}` = pipeline job id, `{ext}` = `.mp4`)|
+|`archive_collision`|`suffix`|`suffix` (append `_01`, `_02`), `skip` (leave in ingest), or `overwrite`|
 
 If archival fails (e.g. permissions), the pipeline still succeeds -- processed outputs are preserved, the ingest file stays in place, and `metadata.json` records `ingest_archive_status: "failed"`.
 This also applies to `archive_mode: copy` / `leave` and `archive_collision: skip`: persistent watcher dedupe prevents restart loops even when the ingest file remains present.
@@ -345,6 +352,7 @@ Root causes this workflow catches:
 4. Runtime user (`1000:1000`) permission mismatch on baked assets.
 
 Worker image policy:
+
 - `docker-compose.yml` sets `image: soccer360-worker:local` + `pull_policy: never`.
 - With both `build` and `image`, compose builds and tags the local result as `soccer360-worker:local`.
 - `pull_policy: never` may not be honored on every Compose version; the verifier script is the source of truth.
@@ -369,6 +377,7 @@ make verify-container-assets-clean
 ```
 
 Both modes:
+
 - Verify `requirements-docker.txt` matches `pyproject.toml` before building (auto docker fallback if host `python3` is missing or lacks `tomllib`/`tomli`).
 - Print dependency mismatch details before failing.
 - Assert rebuilt image SHA == ephemeral container SHA.
@@ -376,13 +385,13 @@ Both modes:
 
 **Environment variable overrides:**
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PROJECT` | `soccer360` | Compose project name |
-| `IMAGE_TAG` | `soccer360-worker:local` | Image tag to verify |
-| `NO_CACHE` | `0` | Set `1` for `--no-cache` build |
-| `RESET` | `0` | Set `1` to run `compose down` before build (applies to both cached and no-cache builds) |
-| `SKIP_DEPS_SYNC` | `0` | Set `1` to skip deps sync check |
+|Variable|Default|Description|
+|---|---|---|
+|`PROJECT`|`soccer360`|Compose project name|
+|`IMAGE_TAG`|`soccer360-worker:local`|Image tag to verify|
+|`NO_CACHE`|`0`|Set `1` for `--no-cache` build|
+|`RESET`|`0`|Set `1` to run `compose down` before build (applies to both cached and no-cache builds)|
+|`SKIP_DEPS_SYNC`|`0`|Set `1` to skip deps sync check|
 
 Example with overrides:
 
@@ -415,7 +424,7 @@ The P40 is a Pascal GP102 GPU with 24GB VRAM. It supports FP16 arithmetic (no Te
 
 ## Project Structure
 
-```
+```text
 src/
   cli.py          Click CLI entry point
   watcher.py      Watchdog folder daemon (stability checks, dotfile filtering)
@@ -461,16 +470,16 @@ tests/
 
 ## Key Dependencies
 
-| Package | Purpose |
-|---------|---------|
-| ultralytics | YOLO ball detection |
-| py360convert | Equirectangular-to-perspective projection |
-| filterpy | Kalman filtering (tracking + camera smoothing) |
-| scipy | Linear sum assignment (ByteTrack matching) |
-| watchdog | File system event monitoring |
-| click | CLI framework |
-| opencv-python-headless | Image processing |
-| ffmpeg (system) | Video decode/encode via streaming pipes |
+|Package|Purpose|
+|---|---|
+|ultralytics|YOLO ball detection|
+|py360convert|Equirectangular-to-perspective projection|
+|filterpy|Kalman filtering (tracking + camera smoothing)|
+|scipy|Linear sum assignment (ByteTrack matching)|
+|watchdog|File system event monitoring|
+|click|CLI framework|
+|opencv-python-headless|Image processing|
+|ffmpeg (system)|Video decode/encode via streaming pipes|
 
 ## Testing
 

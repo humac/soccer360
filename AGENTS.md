@@ -1,151 +1,160 @@
 # Soccer360 - AI Agent Context
 
-This file provides context for AI coding agents (Claude Code, Copilot, Cursor, Windsurf, etc.) working on this codebase.
+Reference context for coding agents working in this repository.
 
 ## Project Overview
 
-Soccer360 is an automated 360 soccer video processing pipeline. It takes equirectangular 360 match footage from an Insta360 camera placed at midfield and produces:
-- **broadcast.mp4**: Auto-follow broadcast-style video tracking the ball
-- **tactical_wide.mp4**: Fixed wide-angle tactical overview
-- **highlight_*.mp4**: Automatically detected highlight clips
+Soccer360 processes equirectangular 360 soccer video into:
 
-## Tech Stack
+- `broadcast.mp4` (auto-follow view)
+- `tactical_wide.mp4` (fixed tactical view)
+- `highlight_*.mp4` clips (normal mode only)
+- run artifacts (`detections.jsonl`, `tracks.json`, `camera_path.json`, `foi_meta.json`, `hard_frames.json`, `metadata.json`)
 
-| Layer | Technology |
-|-------|-----------|
-| Language | Python 3.11 |
-| Detection | YOLO v8 (ultralytics) on NVIDIA GPU |
-| Tracking | ByteTrack (custom implementation, no external lib) |
-| Camera smoothing | Kalman filter (filterpy) + EMA |
-| 360 projection | py360convert (equirectangular to perspective) |
-| Video I/O | ffmpeg via subprocess pipes (streaming, no disk frames) |
-| Packaging | pyproject.toml, installed as `soccer360` CLI (click) |
-| Deployment | Docker (NVIDIA CUDA 12.2 base), docker-compose |
-| Testing | pytest |
-| Linting | ruff (line-length 100, target py311) |
+## Current Pipeline Modes
+
+The orchestrator is in `src/pipeline.py` and supports three runtime modes:
+
+1. `v1 bootstrap mode` (default config includes `detection` section):
+
+- Phase 1: `Detector.run_streaming()` (YOLO, FoI, y-band filter, best-per-frame)
+- Phase 2: `BallStabilizer.run()` (temporal persistence/jump-speed rejection)
+- Phase 2.5: `ActiveLearningExporter.run()` (low-conf, lost-run, jump-reject hard frames)
+- Phase 3+: camera, broadcast render, tactical render, highlights, export, cleanup
+
+1. `legacy mode` (if `detection` section is removed):
+
+- Phase 2 uses `Tracker.run()` (ByteTrack)
+- Phase 2.5 uses `HardFrameExporter.run()`
+
+1. `no_detect mode`:
+
+- Triggered when model resolution fails and `mode.allow_no_model: true`
+- Skips detection/tracking/highlights, produces static-camera broadcast + tactical outputs
 
 ## Source Layout
 
-```
+```text
 src/
-  pipeline.py     # Orchestrator -- coordinates 8 processing phases
-  detector.py     # YOLO ball detection + Field-of-Interest (FoI) filtering
-  tracker.py      # ByteTrack ball tracking + ball selection scoring
-  camera.py       # Virtual camera path: Kalman + EMA + deadband + dynamic FOV
-  reframer.py     # 360->perspective rendering with 12 parallel segment workers
-  highlights.py   # Heuristic highlight detection (speed, direction, goal-box)
-  exporter.py     # Output organization, metadata, artifact preservation
-  watcher.py      # Watchdog daemon monitoring ingest folder
-  trainer.py      # YOLO fine-tuning + TensorRT export + hard frame export
-  cli.py          # Click CLI entry point
-  utils.py        # FFmpeg streaming I/O, angle math, config loading, JSONL I/O
+  pipeline.py        Orchestrator; mode selection and phase coordination
+  detector.py        YOLO streaming inference, FoI filter, model resolution
+  tracker.py         Legacy ByteTrack tracker + V1 BallStabilizer
+  active_learning.py V1 hard-frame candidate selection and export
+  hard_frames.py     Legacy hard-frame export
+  camera.py          Camera path smoothing (Kalman + EMA + deadband + dynamic FOV)
+  reframer.py        360->perspective rendering (parallel segments with overlap)
+  highlights.py      Heuristic highlight detection and clip export
+  exporter.py        Final outputs, metadata, ingest archival bookkeeping
+  watcher.py         Ingest daemon + persistent dedupe state
+  trainer.py         Fine-tuning + TensorRT export + manual hard-frame export command
+  cli.py             Click CLI entrypoint
+  utils.py           ffmpeg streaming I/O, angle math, JSON/JSONL helpers
 ```
 
-## Pipeline Flow
+## Model Resolution
 
-```
-Input 360 video
-  |
-  v
-[1] Detector.run_streaming()     -- GPU: ffmpeg pipe -> YOLO batches -> detections
-  |                                  Includes FoI filtering (yaw/pitch gating)
-  v  detections.jsonl
-[2] Tracker.run()                -- CPU: ByteTrack association -> ball positions
-  |
-  v  tracks.json
-[3] CameraPathGenerator.run()    -- CPU: Kalman + EMA -> per-frame yaw/pitch/FOV
-  |
-  v  camera_path.json
-[4] Reframer.run()               -- CPU: py360convert e2p, 12 parallel workers
-  |
-  v  broadcast.mp4
-[5] Reframer.run_tactical()      -- CPU: fixed wide-angle view, parallel
-  |
-  v  tactical_wide.mp4
-[6] HighlightDetector.run()      -- CPU: heuristic events -> highlight clips
-  |
-  v  highlight_*.mp4
-[7] Exporter.run()               -- I/O: organize outputs, write metadata
-  |
-[8] Cleanup scratch
-```
+`src/detector.py` has separate resolvers:
 
-## Data Formats
+- V1 (`resolve_model_path_v1`):
 
-**detections.jsonl** (one JSON object per line):
-```json
-{"frame": 0, "bbox": [x1, y1, x2, y2], "confidence": 0.87, "class": 0}
-```
+1. `/app/models/ball_best.pt`
+2. `/app/yolov8s.pt`
+3. `None` only when `mode.allow_no_model: true` (NO_DETECT)
+4. otherwise raise `RuntimeError`
 
-**tracks.json** (array of per-frame objects):
-```json
-[{"frame": 0, "ball": {"x": 960, "y": 480, "bbox": [...], "confidence": 0.85, "track_id": 1}}]
-```
+- Legacy (`resolve_model_path`):
 
-**camera_path.json** (array of per-frame camera params):
-```json
-[{"frame": 0, "yaw": 12.3, "pitch": -5.1, "fov": 90.0}]
-```
+1. `{paths.models}/ball_best.pt`
+2. `model.path`
+3. `/app/models/ball_base.pt` (copied into tank models)
+4. `None` (NO_DETECT)
 
-**foi_meta.json** (runtime FoI metadata):
-```json
-{"enabled": true, "center_mode": "fixed", "effective_center_yaw_deg": 0.0, "yaw_window_deg": 200, "pitch_min_deg": -45, "pitch_max_deg": 20, "sample_count": 0, "fallback": false}
-```
+## Critical Math and Conventions
 
-## Critical Math
+- Equirectangular conversion (`src/utils.py`):
 
-These formulas are used throughout the codebase. Getting them wrong breaks the pipeline:
-
-**Equirectangular pixel to spherical angles** (`src/utils.py`):
 ```python
-yaw = (x / width) * 360.0 - 180.0      # [-180, +180]
-pitch = 90.0 - (y / height) * 180.0     # [+90 top, -90 bottom]
+yaw = (x / width) * 360.0 - 180.0
+pitch = 90.0 - (y / height) * 180.0
 ```
 
-**Angle wrapping to (-180, 180]** (`src/utils.py`):
+- Angle wrapping is always `(-180, 180]`:
+
 ```python
 a = a % 360.0
 if a > 180.0:
     a -= 360.0
 ```
 
-**Vertical FOV from horizontal FOV** (`src/reframer.py`):
+- Vertical FOV (`src/reframer.py`) must be tangent-based:
+
 ```python
 fov_v = degrees(2 * atan(tan(radians(fov_h / 2)) * (out_h / out_w)))
 ```
-This is the correct tangent-based formula. Do NOT use `fov_h * (h/w)` -- that is a linear approximation that gives wrong results (50.6 vs 58.7 for 16:9 at 90 hFOV).
 
-**FoI auto-center** (`src/detector.py`):
-- Build 72-bin histogram (5 degrees each) of detection yaws from first 30s
-- Find peak bin
-- Compute circular mean (atan2 of sin/cos sum) from peak +/- 1 neighbor bin
+- FoI auto-center (`src/detector.py`): 72-bin (5 deg) yaw histogram over early detections, peak-bin cluster, circular mean.
 
 ## Configuration
 
-All tunable parameters live in `configs/pipeline.yaml`. When adding new parameters:
-1. Add to `configs/pipeline.yaml` with a comment
-2. Read in the relevant module's `__init__` with a sensible default
-3. Add to `tests/conftest.py` test config fixture
+Primary runtime config: `configs/pipeline.yaml`.
+
+Key sections currently used in production:
+
+- `paths`, `model`, `detector`, `field_of_interest`, `tracker`, `camera`, `reframer`, `highlights`, `exporter`, `watcher`, `ingest`, `active_learning`, `detection`, `filters`, `tracking`, `mode`, `logging`
+
+When adding/changing config:
+
+1. Update `configs/pipeline.yaml`
+2. Wire defaults in the owning module `__init__`
+3. Update `tests/conftest.py` fixture config
+
+## Ingest and Watcher Behavior
+
+`src/watcher.py` maintains persistent dedupe state keyed by source-path + material fingerprint.
+
+- State file configured by `watcher.processed_state_file` (relative paths resolve under `<paths.processed>/.state/`)
+- `watcher.processed_state_max_entries` bounds state growth (0 means unlimited)
+- Dedupe bookkeeping failures are logged but must not block processing
+
+`src/exporter.py` performs post-success ingest archival per `ingest.*` config (`move`/`copy`/`leave`, collision policy `suffix`/`skip`/`overwrite`) and records outcome in `metadata.json`.
+
+## Build / Install Verification (Recent Fixes)
+
+Canonical worker build verification is `scripts/verify_container_assets.sh`:
+
+- Docker preflight: checks `docker` CLI exists and daemon is reachable
+- Deps sync guard: validates `requirements-docker.txt` vs `pyproject.toml`
+- Host dependency-check fallback: if host `python3` missing or missing `tomllib`/`tomli`, fallback runs in `python:3.11-slim`
+- Failure behavior: mismatch details are printed; docker fallback execution failures are distinguished from true dependency mismatches
+- Build mode flags:
+  - `NO_CACHE=1` -> `--no-cache`
+  - `RESET=1` -> always `docker compose down --remove-orphans` before build
+- BuildKit forced for compose builds
+- Asserts rebuilt image SHA equals ephemeral container SHA and validates `/app/yolov8s.pt` and `/app/.ultralytics` runtime permissions
+
+`scripts/install.sh` now uses this verifier as the canonical worker-image build path and uses the configured compose project name.
 
 ## Testing
 
-Tests run inside Docker (no local Python environment):
+Run tests in Docker:
+
 ```bash
 docker compose run --rm worker pytest tests/ -v
 ```
 
-For quick local syntax validation:
-```bash
-python3 -c "import ast; ast.parse(open('src/detector.py').read())"
-```
+Useful maintenance checks:
 
-Test config in `tests/conftest.py` has FoI disabled and uses small resolutions to keep tests fast.
+```bash
+make verify-container-assets
+NO_CACHE=1 RESET=1 bash scripts/verify_container_assets.sh
+make check-deps-sync
+```
 
 ## Common Pitfalls
 
-1. **No local venv**: All execution happens in Docker. `pip install` / `pytest` won't work locally.
-2. **Angle convention**: The codebase uses `(-180, 180]` everywhere. `wrap_angle_deg` in utils.py and `wrap_angle` in camera.py both follow this. Don't mix conventions.
-3. **Pixel space**: Tracker thresholds (`max_speed_px_per_frame`, `max_displacement_px`, bbox area limits) are all in `detector.resolution` pixel space (default 1920x960), not source video resolution.
-4. **Streaming design**: Frames flow through ffmpeg pipes, never written to disk. This is intentional for performance. Don't add intermediate frame storage.
-5. **Reframer parallelism**: `_render_segment` and `_render_tactical_segment` are module-level functions (not methods) because ProcessPoolExecutor needs pickleable callables.
-6. **Segment overlap**: Adjacent parallel segments overlap by `overlap_sec` (0.5s) for codec warmup. The first segment starts at frame 0 with no overlap.
+1. No local venv workflow: run test/runtime commands in Docker.
+2. Do not break the `(-180, 180]` angle convention.
+3. Tracker/stabilizer thresholds are in detector-space pixels, not source resolution.
+4. Keep frame I/O streaming (ffmpeg pipes); do not introduce disk frame dumps.
+5. Reframer segment workers are module-level callables for process pickling.
+6. Preserve overlap semantics at segment boundaries (`reframer.overlap_sec`).
