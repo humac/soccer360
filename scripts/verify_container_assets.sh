@@ -146,9 +146,11 @@ log "Resolve configured model path via in-container runtime logic"
 resolver_rc=0
 resolver_stdout_file="$(mktemp)"
 resolver_stderr_file="$(mktemp)"
-if docker exec -i \
-  -e SOCCER360_CONFIG="${SOCCER360_CONFIG:-}" \
-  -e VERBOSE="$VERBOSE" \
+resolver_exec_args=(-e VERBOSE="$VERBOSE")
+if [ "${SOCCER360_CONFIG+x}" = "x" ]; then
+  resolver_exec_args=(-e SOCCER360_CONFIG="$SOCCER360_CONFIG" "${resolver_exec_args[@]}")
+fi
+if docker exec -i "${resolver_exec_args[@]}" \
   "$cid" python - >"$resolver_stdout_file" 2>"$resolver_stderr_file" <<'PY'
 import io
 import os

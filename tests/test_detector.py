@@ -276,6 +276,27 @@ class TestV1ModelResolver:
         assert resolved_path == str(detector_model)
         assert source == "detector.model_path"
 
+    def test_missing_explicit_detector_override_raises(self, tmp_path):
+        config = {
+            "detector": {"model_path": str(tmp_path / "missing_override.pt")},
+            "mode": {"allow_no_model": True},
+        }
+
+        with pytest.raises(RuntimeError, match="Explicit detector.model_path not found or not a file"):
+            resolve_v1_model_path_and_source(config, models_dir=str(tmp_path))
+
+    def test_explicit_detector_override_directory_raises(self, tmp_path):
+        override_dir = tmp_path / "override_dir"
+        override_dir.mkdir()
+
+        config = {
+            "detector": {"model_path": str(override_dir)},
+            "mode": {"allow_no_model": True},
+        }
+
+        with pytest.raises(RuntimeError, match="Explicit detector.model_path not found or not a file"):
+            resolve_v1_model_path_and_source(config, models_dir=str(tmp_path))
+
     def test_default_detector_model_path_is_not_explicit_override(self, tmp_path):
         fine_tuned = tmp_path / "ball_best.pt"
         fine_tuned.write_bytes(b"fine_tuned")
