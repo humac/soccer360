@@ -155,7 +155,10 @@ class TestPipelineIntegration:
             def finalize(self, *args, **kwargs):
                 return tmp_path / "out"
 
-        monkeypatch.setattr("src.pipeline.resolve_model_path_v1", lambda cfg: ("dummy.pt", "normal"))
+        monkeypatch.setattr(
+            "src.pipeline.resolve_model_path_v1",
+            lambda cfg, models_dir=None: ("dummy.pt", "normal"),
+        )
         monkeypatch.setattr("src.pipeline.Detector", _FakeDetector)
         monkeypatch.setattr("src.pipeline.BallStabilizer", _FakeStabilizer)
         monkeypatch.setattr("src.pipeline.ActiveLearningExporter", _FakeActiveLearning)
@@ -169,3 +172,32 @@ class TestPipelineIntegration:
         pipeline.run(input_path, cleanup=False)
 
         assert calls["total_frames"] == meta.total_frames
+
+    def test_v1_resolver_uses_configured_models_dir(self, test_config, monkeypatch, tmp_path):
+        """V1 model resolution should receive config.paths.models."""
+        from src.pipeline import Pipeline
+
+        config = deepcopy(test_config)
+        config["paths"]["models"] = str(tmp_path / "custom_models")
+        seen: dict[str, str | None] = {"models_dir": None}
+
+        class _FakeComponent:
+            def __init__(self, cfg):
+                pass
+
+        def _fake_resolve(cfg, models_dir=None):
+            seen["models_dir"] = models_dir
+            return "dummy.pt", "normal"
+
+        monkeypatch.setattr("src.pipeline.resolve_model_path_v1", _fake_resolve)
+        monkeypatch.setattr("src.pipeline.Detector", _FakeComponent)
+        monkeypatch.setattr("src.pipeline.BallStabilizer", _FakeComponent)
+        monkeypatch.setattr("src.pipeline.ActiveLearningExporter", _FakeComponent)
+        monkeypatch.setattr("src.pipeline.CameraPathGenerator", _FakeComponent)
+        monkeypatch.setattr("src.pipeline.Reframer", _FakeComponent)
+        monkeypatch.setattr("src.pipeline.HighlightDetector", _FakeComponent)
+        monkeypatch.setattr("src.pipeline.Exporter", _FakeComponent)
+
+        Pipeline(config)
+
+        assert seen["models_dir"] == config["paths"]["models"]

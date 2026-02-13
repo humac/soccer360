@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import math
 from pathlib import Path
@@ -101,6 +102,23 @@ class TestPixelToAngle:
 
 
 class TestCameraPathGeneration:
+    def test_v1_uses_detection_img_size_for_angle_mapping(self, test_config):
+        """V1 camera geometry should use detection.img_size, not legacy detector.resolution."""
+        config = deepcopy(test_config)
+        config["detection"]["img_size"] = 128  # expected det space: 256x128
+        config["detector"]["resolution"] = [320, 160]  # intentionally mismatched legacy value
+
+        gen = CameraPathGenerator(config)
+        angles = gen._tracks_to_angles([
+            {"frame": 0, "ball": {"x": 128, "y": 64, "confidence": 0.9}},
+        ])
+
+        yaw, pitch, _ = angles[0]
+        assert gen.det_width == 256
+        assert gen.det_height == 128
+        assert abs(yaw) < 1e-6
+        assert abs(pitch) < 1e-6
+
     def test_basic_generation(self, test_config, sample_tracks, tmp_work_dir):
         """Camera path should be generated with correct number of entries."""
         gen = CameraPathGenerator(test_config)

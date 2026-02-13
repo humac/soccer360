@@ -51,6 +51,7 @@ class CameraPathGenerator:
     def __init__(self, config: dict):
         cam_cfg = config.get("camera", {})
         det_cfg = config.get("detector", {})
+        v1_cfg = config.get("detection", {})
 
         self.max_pan_speed = cam_cfg.get("max_pan_speed_deg_per_sec", 60.0)
         self.max_fast_pan_speed = cam_cfg.get("max_fast_pan_speed_deg_per_sec", 120.0)
@@ -72,8 +73,13 @@ class CameraPathGenerator:
         self.process_noise = kalman_cfg.get("process_noise", 0.1)
         self.measurement_noise = kalman_cfg.get("measurement_noise", 1.0)
 
-        self.det_width = det_cfg.get("resolution", [1920, 960])[0]
-        self.det_height = det_cfg.get("resolution", [1920, 960])[1]
+        if "detection" in config:
+            img_size = v1_cfg.get("img_size", 960)
+            self.det_width = img_size * 2
+            self.det_height = img_size
+        else:
+            self.det_width = det_cfg.get("resolution", [1920, 960])[0]
+            self.det_height = det_cfg.get("resolution", [1920, 960])[1]
 
     def generate_static(self, meta: VideoMeta, output_path: Path):
         """Generate a static camera path at field center for NO_DETECT mode."""
