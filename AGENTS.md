@@ -125,6 +125,7 @@ Canonical worker build verification is `scripts/verify_container_assets.sh`:
 - Docker preflight: checks `docker` CLI exists and daemon is reachable
 - Runtime user model: worker runs as numeric `1000:1000`
 - Image identity compatibility: Dockerfile ensures UID/GID 1000 has passwd/group resolution and sets `HOME`/`USER`/`LOGNAME` for `getpass` callers
+- P40 compatibility pin: Dockerfile installs `torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121` before `requirements-docker.txt`, then installs requirements with torch constraints
 - Deps sync guard: validates `requirements-docker.txt` vs `pyproject.toml`
 - Host dependency-check fallback: if host `python3` missing or missing `tomllib`/`tomli`, fallback runs in `python:3.11-slim`
 - Failure behavior: mismatch details are printed; docker fallback execution failures are distinguished from true dependency mismatches
@@ -134,6 +135,9 @@ Canonical worker build verification is `scripts/verify_container_assets.sh`:
 - BuildKit forced for compose builds
 - Asserts rebuilt image SHA equals ephemeral container SHA and validates `/app/yolov8s.pt` and `/app/.ultralytics` runtime permissions
 - Verifies runtime identity lookup with `python -c "import getpass; print(getpass.getuser())"`
+- Prints runtime torch/CUDA diagnostics + `nvidia-smi` GPU name/compute capability when available
+- Arch-list mismatch is warning-only; CUDA smoke test is the authoritative gate
+- CUDA smoke defaults on (`GPU_SMOKE=1`) and can be disabled with `GPU_SMOKE=0`
 
 `scripts/install.sh` now uses this verifier as the canonical worker-image build path and uses the configured compose project name.
 
@@ -149,8 +153,15 @@ Useful maintenance checks:
 
 ```bash
 make verify-container-assets
+GPU_SMOKE=1 make verify-container-assets
 NO_CACHE=1 RESET=1 bash scripts/verify_container_assets.sh
 make check-deps-sync
+```
+
+Service entrypoint is `soccer360`; use `--entrypoint python` for Python diagnostics:
+
+```bash
+docker compose run --rm --no-deps --entrypoint python worker -c "import torch; print(torch.__version__)"
 ```
 
 ## Common Pitfalls

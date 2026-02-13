@@ -32,7 +32,21 @@ RUN if ! grep -qE '^[^:]+:[^:]*:1000:' /etc/group; then \
 # Dependencies layer: changes only when requirements-docker.txt changes.
 RUN --mount=type=cache,target=/root/.cache/pip python -m pip install --upgrade pip
 COPY requirements-docker.txt .
-RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements-docker.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+      --index-url https://pypi.org/simple \
+      --extra-index-url https://download.pytorch.org/whl/cu121 \
+      torch==2.4.1+cu121 torchvision==0.19.1+cu121 torchaudio==2.4.1+cu121
+RUN printf '%s\n' \
+    'torch==2.4.1+cu121' \
+    'torchvision==0.19.1+cu121' \
+    'torchaudio==2.4.1+cu121' > /tmp/torch-constraints.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+      --index-url https://pypi.org/simple \
+      --extra-index-url https://download.pytorch.org/whl/cu121 \
+      -c /tmp/torch-constraints.txt \
+      -r requirements-docker.txt
 
 # Bake yolov8s.pt BEFORE copying src/ so code changes don't invalidate this layer.
 RUN MATCHES="" \

@@ -52,6 +52,8 @@ Soccer360 ingests 360 match video and outputs:
 - Install script uses verifier as canonical path
 - Worker runtime remains numeric `1000:1000`; image now guarantees UID/GID 1000 passwd/group compatibility plus `HOME`/`USER`/`LOGNAME` for `getpass` safety.
 - Verifier now checks `python -c "import getpass; print(getpass.getuser())"` inside the runtime container.
+- Dockerfile pins Pascal-compatible PyTorch from cu121 (`torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121`) and constrains requirements install to those versions.
+- Verifier prints torch/CUDA + GPU capability diagnostics, treats arch-list mismatch as warning-only, and uses CUDA conv2d smoke as the authoritative gate (`GPU_SMOKE=1` by default, `GPU_SMOKE=0` to skip).
 
 ## Critical Conventions
 
@@ -69,4 +71,10 @@ Soccer360 ingests 360 match video and outputs:
 
 ```bash
 docker compose run --rm worker pytest tests/ -v
+```
+
+Worker service entrypoint is `soccer360`; for Python diagnostics use:
+
+```bash
+docker compose run --rm --no-deps --entrypoint python worker -c "import torch; print(torch.__version__)"
 ```

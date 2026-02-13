@@ -10,6 +10,7 @@ IMAGE_TAG="${IMAGE_TAG:-soccer360-worker:local}"
 NO_CACHE="${NO_CACHE:-0}"
 RESET="${RESET:-0}"
 SKIP_DEPS_SYNC="${SKIP_DEPS_SYNC:-0}"
+GPU_SMOKE="${GPU_SMOKE:-1}"
 cid=""
 
 log() {
@@ -157,5 +158,68 @@ if [ -z "${runtime_user//[[:space:]]/}" ]; then
   fail "runtime getpass.getuser() returned empty username"
 fi
 log "runtime_user=$runtime_user"
+
+log "Runtime GPU diagnostics (torch/cuda)"
+if docker exec "$cid" bash -lc 'command -v nvidia-smi >/dev/null 2>&1'; then
+  gpu_info="$(docker exec "$cid" nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader 2>/dev/null || true)"
+  if [ -n "${gpu_info//[[:space:]]/}" ]; then
+    log "nvidia_smi=$gpu_info"
+  else
+    log "nvidia_smi=available but no query output"
+  fi
+else
+  log "nvidia_smi=not available in container"
+fi
+
+gpu_diag="$(
+  docker exec -i "$cid" python - <<'PY'
+import torch
+
+print(f"TORCH_VERSION={torch.__version__}")
+print(f"TORCH_CUDA={torch.version.cuda}")
+avail = torch.cuda.is_available()
+print(f"CUDA_AVAILABLE={1 if avail else 0}")
+arch_list = getattr(torch.cuda, "get_arch_list", lambda: [])()
+print("ARCH_LIST=" + ",".join(arch_list))
+if avail:
+    major, minor = torch.cuda.get_device_capability()
+    sm_tag = f"sm_{major}{minor}"
+    print(f"DEVICE_CAP={major}.{minor}")
+    print(f"SM_TAG={sm_tag}")
+    print(f"ARCH_MATCH={1 if sm_tag in arch_list else 0}")
+PY
+)" || fail "torch cuda diagnostics failed"
+while IFS= read -r line; do
+  [ -n "$line" ] && log "$line"
+done <<< "$gpu_diag"
+
+cuda_available="$(printf '%s\n' "$gpu_diag" | awk -F= '$1=="CUDA_AVAILABLE" {print $2}')"
+arch_match="$(printf '%s\n' "$gpu_diag" | awk -F= '$1=="ARCH_MATCH" {print $2}')"
+sm_tag="$(printf '%s\n' "$gpu_diag" | awk -F= '$1=="SM_TAG" {print $2}')"
+
+if [ "$cuda_available" = "1" ]; then
+  if [ "${arch_match:-0}" != "1" ]; then
+    log "WARNING: torch arch list does not include ${sm_tag:-<unknown>}."
+    log "WARNING: this can be a false negative on some builds; CUDA smoke is the authoritative gate."
+    log "WARNING: run GPU_SMOKE=1 make verify-container-assets for a definitive kernel test."
+  fi
+
+  if [ "$GPU_SMOKE" = "1" ]; then
+    log "Runtime CUDA smoke test (GPU_SMOKE=1)"
+    docker exec -i "$cid" python - <<'PY' || fail "runtime CUDA smoke test failed"
+import torch
+import torch.nn.functional as F
+
+x = torch.randn(1, 3, 224, 224, device="cuda")
+w = torch.randn(8, 3, 3, 3, device="cuda")
+y = F.conv2d(x, w)
+print("GPU_SMOKE conv2d ok", tuple(y.shape))
+PY
+  else
+    log "Runtime CUDA smoke test skipped (GPU_SMOKE=0). Set GPU_SMOKE=1 for authoritative kernel validation."
+  fi
+else
+  log "CUDA unavailable at runtime; skipping GPU arch and smoke checks."
+fi
 
 log "verify_container_assets: ok"

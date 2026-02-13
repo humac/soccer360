@@ -358,6 +358,7 @@ Worker image policy:
 - Worker runs as numeric `1000:1000`.
 - With both `build` and `image`, compose builds and tags the local result as `soccer360-worker:local`.
 - Docker image includes UID/GID 1000 passwd/group compatibility plus `HOME`/`USER`/`LOGNAME` to prevent `getpass.getuser()` failures in torch/ultralytics paths.
+- Docker image pins PyTorch for Pascal compatibility: `torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121`.
 - `pull_policy: never` may not be honored on every Compose version; the verifier script is the source of truth.
 
 **BuildKit required:** The Dockerfile uses BuildKit cache mounts (`RUN --mount=type=cache`).
@@ -386,6 +387,9 @@ Both modes:
 - Assert rebuilt image SHA == ephemeral container SHA.
 - Validate `/app/yolov8s.pt` non-empty, `/app/.ultralytics` writable, both owned by `1000:1000`.
 - Validate runtime identity resolution via `python -c "import getpass; print(getpass.getuser())"`.
+- Print runtime torch/CUDA diagnostics and GPU capability (`nvidia-smi --query-gpu=name,compute_cap`) when available.
+- Run CUDA kernel smoke test by default (`GPU_SMOKE=1`); override with `GPU_SMOKE=0` to skip.
+- Treat arch-list mismatch as a warning; smoke test is the authoritative kernel gate.
 
 **Environment variable overrides:**
 
@@ -403,6 +407,26 @@ Example with overrides:
 PROJECT=soccer360 IMAGE_TAG=mytag:local bash scripts/verify_container_assets.sh
 ```
 
+Disable smoke test (not recommended unless debugging):
+
+```bash
+GPU_SMOKE=0 make verify-container-assets
+```
+
+Because worker service `ENTRYPOINT` is `soccer360`, run Python diagnostics with `--entrypoint python`:
+
+```bash
+docker compose run --rm --no-deps --entrypoint python worker -c "
+import torch
+print('torch:', torch.__version__)
+print('torch cuda:', torch.version.cuda)
+print('arch list:', getattr(torch.cuda, 'get_arch_list', lambda: [])())
+print('is_available:', torch.cuda.is_available())
+if torch.cuda.is_available():
+    print('device cap:', torch.cuda.get_device_capability())
+"
+```
+
 **Dependency sync check** (standalone):
 
 `requirements-docker.txt` mirrors `pyproject.toml` dependencies for Docker layer caching. The verifier runs this automatically; to run it standalone:
@@ -416,6 +440,9 @@ If host `python3` cannot import `tomllib`/`tomli`, the verifier falls back to ru
 ## Tesla P40 Notes
 
 The P40 is a Pascal GP102 GPU with 24GB VRAM. It supports FP16 arithmetic (no Tensor Cores) and has an NVENC hardware encoder.
+
+**Compatibility requirement:** P40 is compute capability `sm_61`. Recent torch builds (for example CUDA 12.8-era wheels) may omit Pascal kernels and fail with `no kernel image is available for execution on the device`.
+This image pins a Pascal-compatible stack from cu121 (`torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121`).
 
 **Baseline** (default): FP32 inference + CPU encoding. This is the correctness-first path.
 

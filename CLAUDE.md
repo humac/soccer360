@@ -37,6 +37,8 @@ Runtime modes in `src/pipeline.py`:
 - `install.sh` routes worker-image build through verifier and honors compose project naming.
 - Worker remains numeric `1000:1000`; image provides UID/GID 1000 passwd/group compatibility plus `HOME`/`USER`/`LOGNAME` to avoid torch/getpass crashes.
 - Verifier now asserts `python -c "import getpass; print(getpass.getuser())"` succeeds at runtime.
+- Dockerfile pins Pascal-safe PyTorch from cu121 (`torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121`) and constrains requirements install to that trio.
+- Verifier now prints torch/CUDA + GPU capability diagnostics, treats arch-list mismatch as warning, and uses CUDA conv2d smoke as the authoritative gate (`GPU_SMOKE=1` default, `GPU_SMOKE=0` to skip).
 
 ## Non-Negotiable Conventions
 
@@ -54,4 +56,10 @@ Runtime modes in `src/pipeline.py`:
 
 ```bash
 docker compose run --rm worker pytest tests/ -v
+```
+
+Compose service entrypoint is `soccer360`; for Python checks use:
+
+```bash
+docker compose run --rm --no-deps --entrypoint python worker -c "import torch; print(torch.__version__)"
 ```
