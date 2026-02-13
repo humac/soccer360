@@ -58,7 +58,8 @@ Soccer360 ingests 360 match video and outputs:
   - runtime log format: `Model resolved: <path> (source=<source>)`
 - Dockerfile pins Pascal-compatible PyTorch from cu121 (`torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121`) and constrains requirements install to those versions.
 - Verifier prints torch/CUDA + GPU capability diagnostics, treats arch-list mismatch as warning-only, and uses CUDA conv2d smoke as the authoritative gate (`GPU_SMOKE=1` by default, `GPU_SMOKE=0` to skip).
-- Verifier resolves model path in-container using runtime Python logic (`src.utils.load_config` + `resolve_v1_model_path_and_source`), logs `CONFIG_PATH`/`MODEL_PATH`/`MODEL_SOURCE`, validates selected `MODEL_PATH` with `test -s`, and only enforces baked `/app/yolov8s.pt` checks when that path is selected.
+- Verifier resolves model path in-container using runtime Python logic (`src.utils.load_config` + `resolve_v1_model_path_and_source`), emits only `CONFIG_PATH`/`MODEL_PATH`/`MODEL_SOURCE` on stdout, validates selected `MODEL_PATH` with `test -s`, and only enforces baked `/app/yolov8s.pt` checks when that path is selected.
+- Resolver failures are fail-fast and include attempted `CONFIG_PATH`, resolver exit code, and captured stderr. Use `VERBOSE=1` to print captured resolver stderr/noise diagnostics when non-empty.
 
 ## Critical Conventions
 

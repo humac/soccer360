@@ -149,7 +149,9 @@ Canonical worker build verification is `scripts/verify_container_assets.sh`:
   - `CONFIG_PATH`
   - `MODEL_PATH`
   - `MODEL_SOURCE`
+- Resolver stdout contract is strict: only those three lines are emitted on stdout; warnings/errors/noise go to stderr.
 - Resolver output is parsed with strict `KEY=value` prefix handling (no YAML parsing in bash).
+- Resolver failures are fail-fast: verifier reports attempted `CONFIG_PATH`, resolver exit code, and captured stderr before exiting.
 - Verifier validates `test -s "$MODEL_PATH"` and logs selected model file size.
 - Baked `/app/yolov8s.pt` checks are conditional: enforced only when `MODEL_PATH=/app/yolov8s.pt`.
 - Verifies runtime identity lookup with `python -c "import getpass; print(getpass.getuser())"`
@@ -173,6 +175,7 @@ Useful maintenance checks:
 make verify-container-assets
 GPU_SMOKE=1 make verify-container-assets
 NO_CACHE=1 RESET=1 bash scripts/verify_container_assets.sh
+VERBOSE=1 bash scripts/verify_container_assets.sh
 make check-deps-sync
 ```
 

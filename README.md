@@ -397,6 +397,7 @@ Both modes:
 - Assert rebuilt image SHA == ephemeral container SHA.
 - Resolve model path in-container using the same Python config + resolver logic as runtime (no bash YAML parsing), printing:
   `CONFIG_PATH=...`, `MODEL_PATH=...`, `MODEL_SOURCE=...`
+- Resolver stdout contract is strict: only those three `KEY=VALUE` lines are emitted on stdout (in that order).
 - Validate selected `MODEL_PATH` is non-empty (`test -s`) and log file size.
 - Enforce baked `/app/yolov8s.pt` checks only when `MODEL_PATH=/app/yolov8s.pt`; otherwise skip baked-model checks and validate only the selected path.
 - Always validate `/app/.ultralytics` is writable.
@@ -406,7 +407,7 @@ Both modes:
 - Treat arch-list mismatch as a warning; smoke test is the authoritative kernel gate.
 
 If resolver import/config load fails, verifier still prints the attempted
-`CONFIG_PATH` before exiting non-zero.
+`CONFIG_PATH`, preserves the resolver exit code, and surfaces resolver stderr before exiting non-zero.
 
 **Environment variable overrides:**
 
@@ -417,6 +418,7 @@ If resolver import/config load fails, verifier still prints the attempted
 |`NO_CACHE`|`0`|Set `1` for `--no-cache` build|
 |`RESET`|`0`|Set `1` to run `compose down` before build (applies to both cached and no-cache builds)|
 |`SKIP_DEPS_SYNC`|`0`|Set `1` to skip deps sync check|
+|`VERBOSE`|`0`|Set `1` to print captured resolver stderr/noise diagnostics when non-empty|
 
 Example with overrides:
 
