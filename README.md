@@ -350,11 +350,14 @@ Root causes this workflow catches:
 2. Compose project/context drift causing a different auto-tagged image.
 3. `build` + `image` + pull behavior mismatches.
 4. Runtime user (`1000:1000`) permission mismatch on baked assets.
+5. Missing passwd/group identity for numeric UID 1000 causing `getpass`/torch runtime crashes.
 
 Worker image policy:
 
 - `docker-compose.yml` sets `image: soccer360-worker:local` + `pull_policy: never`.
+- Worker runs as numeric `1000:1000`.
 - With both `build` and `image`, compose builds and tags the local result as `soccer360-worker:local`.
+- Docker image includes UID/GID 1000 passwd/group compatibility plus `HOME`/`USER`/`LOGNAME` to prevent `getpass.getuser()` failures in torch/ultralytics paths.
 - `pull_policy: never` may not be honored on every Compose version; the verifier script is the source of truth.
 
 **BuildKit required:** The Dockerfile uses BuildKit cache mounts (`RUN --mount=type=cache`).
@@ -382,6 +385,7 @@ Both modes:
 - Print dependency mismatch details before failing.
 - Assert rebuilt image SHA == ephemeral container SHA.
 - Validate `/app/yolov8s.pt` non-empty, `/app/.ultralytics` writable, both owned by `1000:1000`.
+- Validate runtime identity resolution via `python -c "import getpass; print(getpass.getuser())"`.
 
 **Environment variable overrides:**
 

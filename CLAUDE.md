@@ -35,6 +35,8 @@ Runtime modes in `src/pipeline.py`:
 - `RESET=1` now triggers `docker compose down --remove-orphans` regardless of `NO_CACHE`.
 - BuildKit is forced in verifier builds.
 - `install.sh` routes worker-image build through verifier and honors compose project naming.
+- Worker remains numeric `1000:1000`; image provides UID/GID 1000 passwd/group compatibility plus `HOME`/`USER`/`LOGNAME` to avoid torch/getpass crashes.
+- Verifier now asserts `python -c "import getpass; print(getpass.getuser())"` succeeds at runtime.
 
 ## Non-Negotiable Conventions
 

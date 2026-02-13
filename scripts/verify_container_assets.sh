@@ -150,4 +150,12 @@ test -w /app/.ultralytics
 test -s /app/yolov8s.pt
 ' || fail "runtime asset checks failed"
 
+log "Runtime user identity check"
+runtime_user="$(docker exec "$cid" python -c "import getpass; print(getpass.getuser())")" \
+  || fail "runtime getpass.getuser() check failed"
+if [ -z "${runtime_user//[[:space:]]/}" ]; then
+  fail "runtime getpass.getuser() returned empty username"
+fi
+log "runtime_user=$runtime_user"
+
 log "verify_container_assets: ok"

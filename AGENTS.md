@@ -123,6 +123,8 @@ When adding/changing config:
 Canonical worker build verification is `scripts/verify_container_assets.sh`:
 
 - Docker preflight: checks `docker` CLI exists and daemon is reachable
+- Runtime user model: worker runs as numeric `1000:1000`
+- Image identity compatibility: Dockerfile ensures UID/GID 1000 has passwd/group resolution and sets `HOME`/`USER`/`LOGNAME` for `getpass` callers
 - Deps sync guard: validates `requirements-docker.txt` vs `pyproject.toml`
 - Host dependency-check fallback: if host `python3` missing or missing `tomllib`/`tomli`, fallback runs in `python:3.11-slim`
 - Failure behavior: mismatch details are printed; docker fallback execution failures are distinguished from true dependency mismatches
@@ -131,6 +133,7 @@ Canonical worker build verification is `scripts/verify_container_assets.sh`:
   - `RESET=1` -> always `docker compose down --remove-orphans` before build
 - BuildKit forced for compose builds
 - Asserts rebuilt image SHA equals ephemeral container SHA and validates `/app/yolov8s.pt` and `/app/.ultralytics` runtime permissions
+- Verifies runtime identity lookup with `python -c "import getpass; print(getpass.getuser())"`
 
 `scripts/install.sh` now uses this verifier as the canonical worker-image build path and uses the configured compose project name.
 

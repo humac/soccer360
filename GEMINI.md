@@ -50,6 +50,8 @@ Soccer360 ingests 360 match video and outputs:
 - `RESET=1` compose reset is independent of `NO_CACHE`
 - BuildKit is forced during verifier compose builds
 - Install script uses verifier as canonical path
+- Worker runtime remains numeric `1000:1000`; image now guarantees UID/GID 1000 passwd/group compatibility plus `HOME`/`USER`/`LOGNAME` for `getpass` safety.
+- Verifier now checks `python -c "import getpass; print(getpass.getuser())"` inside the runtime container.
 
 ## Critical Conventions
 

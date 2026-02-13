@@ -5,6 +5,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV ULTRALYTICS_HOME=/app/.ultralytics
 ENV YOLO_CONFIG_DIR=/app/.ultralytics
+ENV HOME=/home/worker
+ENV USER=worker
+ENV LOGNAME=worker
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 python3.11-dev python3.11-venv python3-pip \
@@ -15,6 +18,16 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
     && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
 
 WORKDIR /app
+
+# Ensure numeric runtime user/group 1000:1000 can resolve identity APIs (getpass/pwd).
+RUN if ! grep -qE '^[^:]+:[^:]*:1000:' /etc/group; then \
+      echo 'worker:x:1000:' >> /etc/group; \
+    fi \
+    && if ! grep -qE '^[^:]+:[^:]*:1000:' /etc/passwd; then \
+      echo 'worker:x:1000:1000:worker:/home/worker:/bin/sh' >> /etc/passwd; \
+    fi \
+    && mkdir -p /home/worker \
+    && chown -R 1000:1000 /home/worker
 
 # Dependencies layer: changes only when requirements-docker.txt changes.
 RUN --mount=type=cache,target=/root/.cache/pip python -m pip install --upgrade pip
