@@ -97,6 +97,7 @@ Default behavior is unchanged unless `detector.model_path` is set, or a legacy
 Notes:
 
 - `detector.model_path` set to a non-default path is treated as explicit override.
+- Explicit non-default `detector.model_path` must exist and be a file; otherwise V1 model resolution fails fast with `RuntimeError`.
 - `detector.model_path: /app/yolov8s.pt` keeps normal default/fine-tuned behavior.
 - Current contract is `.pt` weights only (ONNX/TRT model-path selection is out of scope here).
 - Runtime logs one line per job: `Model resolved: <path> (source=<source>)`.

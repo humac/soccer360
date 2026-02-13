@@ -54,6 +54,7 @@ Soccer360 ingests 360 match video and outputs:
 - Verifier now checks `python -c "import getpass; print(getpass.getuser())"` inside the runtime container.
 - V1 model-path precedence is explicit and logged once per job:
   - `detector.model_path` > `detection.path` > `default`
+  - explicit non-default `detector.model_path` must point to an existing file (else resolver raises `RuntimeError`)
   - source enum: `detector.model_path`, `detection.path`, `default`
   - runtime log format: `Model resolved: <path> (source=<source>)`
 - Dockerfile pins Pascal-compatible PyTorch from cu121 (`torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121`) and constrains requirements install to those versions.

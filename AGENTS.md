@@ -69,6 +69,7 @@ Notes:
 
 - `detector.model_path` is canonical; `detection.path` is backward-compatible fallback.
 - Non-default `detector.model_path` is explicit override.
+- Explicit non-default `detector.model_path` must exist and be a file; otherwise V1 model resolution raises `RuntimeError`.
 - `detector.model_path: /app/yolov8s.pt` behaves like default path selection.
 - Runtime logs once per job: `Model resolved: <path> (source=<source>)`.
 - Source enum is stable: `detector.model_path`, `detection.path`, `default`.
