@@ -57,10 +57,21 @@ src/
 
 - V1 (`resolve_model_path_v1`):
 
-1. `/app/models/ball_best.pt`
-2. `/app/yolov8s.pt`
-3. `None` only when `mode.allow_no_model: true` (NO_DETECT)
-4. otherwise raise `RuntimeError`
+1. `detector.model_path` (source=`detector.model_path`)
+2. `detection.path` (legacy, source=`detection.path`)
+3. default path resolution (source=`default`):
+4. `{paths.models}/ball_best.pt` if present
+5. `/app/yolov8s.pt` baked fallback
+6. `None` only when `mode.allow_no_model: true` (NO_DETECT)
+7. otherwise raise `RuntimeError`
+
+Notes:
+
+- `detector.model_path` is canonical; `detection.path` is backward-compatible fallback.
+- Non-default `detector.model_path` is explicit override.
+- `detector.model_path: /app/yolov8s.pt` behaves like default path selection.
+- Runtime logs once per job: `Model resolved: <path> (source=<source>)`.
+- Source enum is stable: `detector.model_path`, `detection.path`, `default`.
 
 - Legacy (`resolve_model_path`):
 
@@ -133,7 +144,14 @@ Canonical worker build verification is `scripts/verify_container_assets.sh`:
   - `NO_CACHE=1` -> `--no-cache`
   - `RESET=1` -> always `docker compose down --remove-orphans` before build
 - BuildKit forced for compose builds
-- Asserts rebuilt image SHA equals ephemeral container SHA and validates `/app/yolov8s.pt` and `/app/.ultralytics` runtime permissions
+- Asserts rebuilt image SHA equals ephemeral container SHA and validates runtime asset permissions
+- Resolves configured model path in-container with runtime Python logic (`src.utils.load_config` + `resolve_v1_model_path_and_source`) and logs:
+  - `CONFIG_PATH`
+  - `MODEL_PATH`
+  - `MODEL_SOURCE`
+- Resolver output is parsed with strict `KEY=value` prefix handling (no YAML parsing in bash).
+- Verifier validates `test -s "$MODEL_PATH"` and logs selected model file size.
+- Baked `/app/yolov8s.pt` checks are conditional: enforced only when `MODEL_PATH=/app/yolov8s.pt`.
 - Verifies runtime identity lookup with `python -c "import getpass; print(getpass.getuser())"`
 - Prints runtime torch/CUDA diagnostics + `nvidia-smi` GPU name/compute capability when available
 - Arch-list mismatch is warning-only; CUDA smoke test is the authoritative gate
@@ -162,6 +180,12 @@ Service entrypoint is `soccer360`; use `--entrypoint python` for Python diagnost
 
 ```bash
 docker compose run --rm --no-deps --entrypoint python worker -c "import torch; print(torch.__version__)"
+```
+
+Print resolved model path/source with runtime resolver logic:
+
+```bash
+docker compose run --rm --no-deps --entrypoint python worker -c "import os; from src.utils import load_config; from src.detector import resolve_v1_model_path_and_source; config_path=(os.getenv('SOCCER360_CONFIG') or '/app/configs/pipeline.yaml'); cfg=load_config(config_path); p,s=resolve_v1_model_path_and_source(cfg, models_dir=cfg.get('paths', {}).get('models', '/app/models')); print(f'CONFIG_PATH={config_path}'); print(f'MODEL_PATH={p}'); print(f'MODEL_SOURCE={s}')"
 ```
 
 ## Common Pitfalls

@@ -52,8 +52,13 @@ Soccer360 ingests 360 match video and outputs:
 - Install script uses verifier as canonical path
 - Worker runtime remains numeric `1000:1000`; image now guarantees UID/GID 1000 passwd/group compatibility plus `HOME`/`USER`/`LOGNAME` for `getpass` safety.
 - Verifier now checks `python -c "import getpass; print(getpass.getuser())"` inside the runtime container.
+- V1 model-path precedence is explicit and logged once per job:
+  - `detector.model_path` > `detection.path` > `default`
+  - source enum: `detector.model_path`, `detection.path`, `default`
+  - runtime log format: `Model resolved: <path> (source=<source>)`
 - Dockerfile pins Pascal-compatible PyTorch from cu121 (`torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121`) and constrains requirements install to those versions.
 - Verifier prints torch/CUDA + GPU capability diagnostics, treats arch-list mismatch as warning-only, and uses CUDA conv2d smoke as the authoritative gate (`GPU_SMOKE=1` by default, `GPU_SMOKE=0` to skip).
+- Verifier resolves model path in-container using runtime Python logic (`src.utils.load_config` + `resolve_v1_model_path_and_source`), logs `CONFIG_PATH`/`MODEL_PATH`/`MODEL_SOURCE`, validates selected `MODEL_PATH` with `test -s`, and only enforces baked `/app/yolov8s.pt` checks when that path is selected.
 
 ## Critical Conventions
 
@@ -77,4 +82,10 @@ Worker service entrypoint is `soccer360`; for Python diagnostics use:
 
 ```bash
 docker compose run --rm --no-deps --entrypoint python worker -c "import torch; print(torch.__version__)"
+```
+
+To print resolved model path/source (same logic as verifier):
+
+```bash
+docker compose run --rm --no-deps --entrypoint python worker -c "import os; from src.utils import load_config; from src.detector import resolve_v1_model_path_and_source; config_path=(os.getenv('SOCCER360_CONFIG') or '/app/configs/pipeline.yaml'); cfg=load_config(config_path); p,s=resolve_v1_model_path_and_source(cfg, models_dir=cfg.get('paths', {}).get('models', '/app/models')); print(f'CONFIG_PATH={config_path}'); print(f'MODEL_PATH={p}'); print(f'MODEL_SOURCE={s}')"
 ```

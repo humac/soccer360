@@ -85,12 +85,22 @@ The V1 pipeline uses a COCO-pretrained YOLOv8s (sports ball, class 32) with cons
 
 ### Model Resolution
 
-**V1 mode** (when `detection` section present in config):
+**V1 mode** (when `detection` section is present) resolves with stable precedence:
 
-1. `/tank/models/ball_best.pt` (fine-tuned model via volume mount)
-2. `/app/yolov8s.pt` (baked into Docker image at build time)
-3. `mode.allow_no_model: true` -- NO_DETECT fallback
-4. Otherwise -- build error
+1. `detector.model_path` (canonical override)
+2. `detection.path` (legacy fallback)
+3. `default` resolver path (`/tank/models/ball_best.pt` when present, else baked `/app/yolov8s.pt`)
+
+Default behavior is unchanged unless `detector.model_path` is set, or a legacy
+`detection.path` override is already in use.
+
+Notes:
+
+- `detector.model_path` set to a non-default path is treated as explicit override.
+- `detector.model_path: /app/yolov8s.pt` keeps normal default/fine-tuned behavior.
+- Current contract is `.pt` weights only (ONNX/TRT model-path selection is out of scope here).
+- Runtime logs one line per job: `Model resolved: <path> (source=<source>)`.
+- Source enum is stable: `detector.model_path`, `detection.path`, `default`.
 
 **Legacy mode** (no `detection` section):
 
@@ -385,11 +395,18 @@ Both modes:
 - Verify `requirements-docker.txt` matches `pyproject.toml` before building (auto docker fallback if host `python3` is missing or lacks `tomllib`/`tomli`).
 - Print dependency mismatch details before failing.
 - Assert rebuilt image SHA == ephemeral container SHA.
-- Validate `/app/yolov8s.pt` non-empty, `/app/.ultralytics` writable, both owned by `1000:1000`.
+- Resolve model path in-container using the same Python config + resolver logic as runtime (no bash YAML parsing), printing:
+  `CONFIG_PATH=...`, `MODEL_PATH=...`, `MODEL_SOURCE=...`
+- Validate selected `MODEL_PATH` is non-empty (`test -s`) and log file size.
+- Enforce baked `/app/yolov8s.pt` checks only when `MODEL_PATH=/app/yolov8s.pt`; otherwise skip baked-model checks and validate only the selected path.
+- Always validate `/app/.ultralytics` is writable.
 - Validate runtime identity resolution via `python -c "import getpass; print(getpass.getuser())"`.
 - Print runtime torch/CUDA diagnostics and GPU capability (`nvidia-smi --query-gpu=name,compute_cap`) when available.
 - Run CUDA kernel smoke test by default (`GPU_SMOKE=1`); override with `GPU_SMOKE=0` to skip.
 - Treat arch-list mismatch as a warning; smoke test is the authoritative kernel gate.
+
+If resolver import/config load fails, verifier still prints the attempted
+`CONFIG_PATH` before exiting non-zero.
 
 **Environment variable overrides:**
 
@@ -424,6 +441,25 @@ print('arch list:', getattr(torch.cuda, 'get_arch_list', lambda: [])())
 print('is_available:', torch.cuda.is_available())
 if torch.cuda.is_available():
     print('device cap:', torch.cuda.get_device_capability())
+"
+```
+
+Print resolved model path/source with the same runtime logic used by verifier:
+
+```bash
+docker compose run --rm --no-deps --entrypoint python worker -c "
+import os
+from src.utils import load_config
+from src.detector import resolve_v1_model_path_and_source
+
+config_path = (os.getenv('SOCCER360_CONFIG') or '/app/configs/pipeline.yaml')
+cfg = load_config(config_path)
+model_path, model_source = resolve_v1_model_path_and_source(
+    cfg, models_dir=cfg.get('paths', {}).get('models', '/app/models')
+)
+print(f'CONFIG_PATH={config_path}')
+print(f'MODEL_PATH={model_path}')
+print(f'MODEL_SOURCE={model_source}')
 "
 ```
 

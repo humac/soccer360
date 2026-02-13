@@ -141,15 +141,129 @@ if [ "$container_sha" != "$after_id" ]; then
 fi
 
 # --- Runtime checks ---
+log "Resolve configured model path via in-container runtime logic"
+resolver_rc=0
+resolver_output="$(
+  docker exec -i -e SOCCER360_CONFIG="${SOCCER360_CONFIG:-}" "$cid" python - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+config_path = (os.getenv("SOCCER360_CONFIG") or "").strip() or "/app/configs/pipeline.yaml"
+model_path = ""
+model_source = ""
+exit_code = 0
+
+print(f"CONFIG_PATH={config_path}", flush=True)
+
+if not Path(config_path).is_file():
+    print(f"resolver error: config file not found: {config_path}", file=sys.stderr, flush=True)
+    exit_code = 11
+
+if exit_code == 0:
+    try:
+        from src.utils import load_config
+    except Exception as exc:  # pragma: no cover - defensive runtime guard
+        print(f"resolver error: failed to import src.utils.load_config: {exc}", file=sys.stderr, flush=True)
+        exit_code = 12
+
+if exit_code == 0:
+    try:
+        from src.detector import resolve_v1_model_path_and_source
+    except Exception as exc:  # pragma: no cover - defensive runtime guard
+        print(
+            "resolver error: failed to import src.detector.resolve_v1_model_path_and_source: "
+            f"{exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+        exit_code = 13
+
+if exit_code == 0:
+    try:
+        cfg = load_config(config_path)
+        models_dir = cfg.get("paths", {}).get("models", "/app/models")
+        resolved_path, resolved_source = resolve_v1_model_path_and_source(
+            cfg, models_dir=models_dir
+        )
+        model_path = "" if resolved_path is None else str(resolved_path)
+        model_source = str(resolved_source or "")
+    except Exception as exc:
+        print(f"resolver error: failed to load/resolve config: {exc}", file=sys.stderr, flush=True)
+        exit_code = 14
+
+print(f"MODEL_PATH={model_path}", flush=True)
+print(f"MODEL_SOURCE={model_source}", flush=True)
+sys.exit(exit_code)
+PY
+)" || resolver_rc=$?
+
+resolved_config_path=""
+resolved_model_path=""
+resolved_model_source=""
+while IFS= read -r raw_line; do
+  line="${raw_line%$'\r'}"
+  case "$line" in
+    CONFIG_PATH=*)
+      resolved_config_path="${line#*=}"
+      ;;
+    MODEL_PATH=*)
+      resolved_model_path="${line#*=}"
+      ;;
+    MODEL_SOURCE=*)
+      resolved_model_source="${line#*=}"
+      ;;
+  esac
+done <<< "$resolver_output"
+
+if [ -z "${resolved_config_path}" ]; then
+  resolved_config_path="${SOCCER360_CONFIG:-/app/configs/pipeline.yaml}"
+fi
+log "resolved_config_path=$resolved_config_path"
+log "resolved_model_path=${resolved_model_path:-<empty>}"
+log "resolved_model_source=${resolved_model_source:-<empty>}"
+
+if [ -z "${resolved_model_path//[[:space:]]/}" ] || [ -z "${resolved_model_source//[[:space:]]/}" ]; then
+  fail "model resolver returned empty MODEL_PATH/MODEL_SOURCE (config_path=$resolved_config_path, exit=$resolver_rc)"
+fi
+
+case "$resolved_model_source" in
+  detector.model_path|detection.path|default)
+    ;;
+  *)
+    fail "invalid MODEL_SOURCE='$resolved_model_source' (config_path=$resolved_config_path)"
+    ;;
+esac
+
+if [ "$resolver_rc" -ne 0 ]; then
+  fail "model resolver failed (config_path=$resolved_config_path, exit=$resolver_rc)"
+fi
+
+docker exec "$cid" sh -lc 'test -s "$1"' sh "$resolved_model_path" \
+  || fail "resolved model path missing/empty in container: $resolved_model_path (config_path=$resolved_config_path)"
+resolved_model_size="$(docker exec "$cid" sh -lc 'stat -c "%s" "$1"' sh "$resolved_model_path")" \
+  || fail "failed to stat resolved model path: $resolved_model_path"
+log "resolved_model_size_bytes=$resolved_model_size"
+
 log "Runtime asset checks"
 docker exec "$cid" bash -lc '
 set -euo pipefail
 id
-ls -lah /app/yolov8s.pt
-stat -c "%u:%g %A %n" /app/.ultralytics /app/yolov8s.pt
+stat -c "%u:%g %A %n" /app/.ultralytics
 test -w /app/.ultralytics
-test -s /app/yolov8s.pt
 ' || fail "runtime asset checks failed"
+
+if [ "$resolved_model_path" = "/app/yolov8s.pt" ]; then
+  log "Resolved model is baked default; enforcing /app/yolov8s.pt checks"
+  docker exec "$cid" bash -lc '
+set -euo pipefail
+ls -lah /app/yolov8s.pt
+stat -c "%u:%g %A %n" /app/yolov8s.pt
+test -s /app/yolov8s.pt
+' || fail "baked /app/yolov8s.pt checks failed"
+else
+  log "Resolved model is not /app/yolov8s.pt; skipping baked yolov8s.pt checks"
+fi
 
 log "Runtime user identity check"
 runtime_user="$(docker exec "$cid" python -c "import getpass; print(getpass.getuser())")" \

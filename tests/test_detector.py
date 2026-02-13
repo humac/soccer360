@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import src.detector as detector_mod
-from src.detector import Detector
+from src.detector import Detector, resolve_v1_model_path_and_source
 from src.utils import VideoMeta, pixel_to_yaw_pitch, wrap_angle_deg
 
 
@@ -221,6 +221,72 @@ class TestNMS:
         scores = np.array([0.9])
         keep = Detector._nms(boxes, scores, iou_threshold=0.5)
         assert keep == [0]
+
+
+class TestV1ModelResolver:
+    def test_detector_model_path_wins_over_detection_path(self, tmp_path):
+        detector_model = tmp_path / "detector_override.pt"
+        detector_model.write_bytes(b"model")
+        detection_model = tmp_path / "legacy_detection.pt"
+        detection_model.write_bytes(b"model")
+
+        config = {
+            "detector": {"model_path": str(detector_model)},
+            "detection": {"path": str(detection_model)},
+            "mode": {"allow_no_model": True},
+        }
+        resolved_path, source = resolve_v1_model_path_and_source(config, models_dir=str(tmp_path))
+        assert resolved_path == str(detector_model)
+        assert source == "detector.model_path"
+
+    def test_detection_path_used_when_detector_model_path_missing(self, tmp_path):
+        detection_model = tmp_path / "legacy_detection.pt"
+        detection_model.write_bytes(b"model")
+
+        config = {
+            "detection": {"path": str(detection_model)},
+            "mode": {"allow_no_model": True},
+        }
+        resolved_path, source = resolve_v1_model_path_and_source(config, models_dir=str(tmp_path))
+        assert resolved_path == str(detection_model)
+        assert source == "detection.path"
+
+    def test_default_source_used_when_paths_missing(self, tmp_path):
+        fine_tuned = tmp_path / "ball_best.pt"
+        fine_tuned.write_bytes(b"model")
+
+        config = {
+            "mode": {"allow_no_model": True},
+        }
+        resolved_path, source = resolve_v1_model_path_and_source(config, models_dir=str(tmp_path))
+        assert resolved_path == str(fine_tuned)
+        assert source == "default"
+
+    def test_explicit_detector_override_bypasses_fine_tuned_preference(self, tmp_path):
+        fine_tuned = tmp_path / "ball_best.pt"
+        fine_tuned.write_bytes(b"fine_tuned")
+        detector_model = tmp_path / "explicit_override.pt"
+        detector_model.write_bytes(b"explicit")
+
+        config = {
+            "detector": {"model_path": str(detector_model)},
+            "mode": {"allow_no_model": True},
+        }
+        resolved_path, source = resolve_v1_model_path_and_source(config, models_dir=str(tmp_path))
+        assert resolved_path == str(detector_model)
+        assert source == "detector.model_path"
+
+    def test_default_detector_model_path_is_not_explicit_override(self, tmp_path):
+        fine_tuned = tmp_path / "ball_best.pt"
+        fine_tuned.write_bytes(b"fine_tuned")
+
+        config = {
+            "detector": {"model_path": "/app/yolov8s.pt"},
+            "mode": {"allow_no_model": True},
+        }
+        resolved_path, source = resolve_v1_model_path_and_source(config, models_dir=str(tmp_path))
+        assert resolved_path == str(fine_tuned)
+        assert source == "default"
 
 
 class TestDetectorHardening:
