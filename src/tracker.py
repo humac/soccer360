@@ -418,8 +418,15 @@ class BallStabilizer:
 
         self.max_jump_px = filt_cfg.get("max_jump_px", 250)
         self.max_speed_px_per_s = filt_cfg.get("max_speed_px_per_s", 2500)
+        self.jump_max_gap_frames = filt_cfg.get("jump_max_gap_frames", 15)
 
-    def run(self, detections_path: Path, output_path: Path, fps: float) -> list[dict]:
+    def run(
+        self,
+        detections_path: Path,
+        output_path: Path,
+        fps: float,
+        total_frames: int | None = None,
+    ) -> list[dict]:
         """Process per-frame best detections and produce tracks.json.
 
         Returns list of tracking events for active learning triggers.
@@ -432,7 +439,11 @@ class BallStabilizer:
             frame = det.get("frame_index", det.get("frame", -1))
             by_frame[frame] = det
 
-        max_frame = max(by_frame.keys(), default=-1)
+        max_frame_from_dets = max(by_frame.keys(), default=-1) + 1
+        target_frames = max(total_frames or 0, max_frame_from_dets)
+        if target_frames <= 0:
+            write_json([], output_path)
+            return []
 
         # State
         window_buf: list[bool] = []
@@ -441,12 +452,23 @@ class BallStabilizer:
         prev_accepted_frame: int | None = None
         prev_accepted_x: float | None = None
         prev_accepted_y: float | None = None
-        lost_streak = 0
 
         tracks: list[dict] = []
         events: list[dict] = []
 
-        for frame_idx in range(max_frame + 1):
+        for frame_idx in range(target_frames):
+            # After long gaps, reset anchor/EMA to allow reacquisition.
+            if (
+                prev_accepted_frame is not None
+                and (frame_idx - prev_accepted_frame) > self.jump_max_gap_frames
+            ):
+                prev_accepted_frame = None
+                prev_accepted_x = None
+                prev_accepted_y = None
+                ema_x = None
+                ema_y = None
+                window_buf.clear()
+
             det = by_frame.get(frame_idx)
             has_det = det is not None
 
@@ -523,7 +545,6 @@ class BallStabilizer:
                 prev_accepted_frame = frame_idx
                 prev_accepted_x = ema_x
                 prev_accepted_y = ema_y
-                lost_streak = 0
                 status = "accepted"
 
                 tracks.append({
@@ -540,7 +561,6 @@ class BallStabilizer:
                     "raw_det": raw_det,
                 })
             else:
-                lost_streak += 1
                 tracks.append({
                     "frame": frame_idx,
                     "ball": None,

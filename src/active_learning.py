@@ -35,6 +35,32 @@ class ActiveLearningExporter:
         self.lost_run_frames = al_cfg.get("lost_run_frames", 15)
         self.jump_trigger_px = al_cfg.get("jump_trigger_px", 200)
 
+    @staticmethod
+    def _is_low_conf_only(candidate: dict) -> bool:
+        """True when candidate was triggered only by low confidence."""
+        return set(candidate.get("triggers", [])) == {"low_conf"}
+
+    @staticmethod
+    def _is_rare(candidate: dict) -> bool:
+        """Rare triggers should bypass modulo gating."""
+        triggers = set(candidate.get("triggers", []))
+        return "lost_run" in triggers or "jump_reject" in triggers
+
+    @staticmethod
+    def _evenly_sample(candidates: list[dict], k: int) -> list[dict]:
+        """Deterministically sample k items spread across sorted candidates."""
+        n = len(candidates)
+        if k <= 0:
+            return []
+        if k >= n:
+            return list(candidates)
+
+        sampled: list[dict] = []
+        for i in range(k):
+            idx = ((2 * i + 1) * n) // (2 * k)
+            sampled.append(candidates[idx])
+        return sampled
+
     def run(
         self,
         video_path: str,
@@ -80,17 +106,30 @@ class ActiveLearningExporter:
             "Identified %d hard frame candidates for %s", len(candidates), match_name
         )
 
-        # Gating: frame_index modulo check
-        gated = [
-            c for c in candidates
-            if c["frame_index"] % self.export_every_n == 0
-        ]
+        ordered = sorted(candidates, key=lambda c: c["frame_index"])
+        rare = [c for c in ordered if self._is_rare(c)]
+        dense = [c for c in ordered if self._is_low_conf_only(c)]
 
-        # Cap at max
-        if len(gated) > self.export_max_frames:
-            gated = gated[:self.export_max_frames]
+        # Apply modulo gating only to low_conf-only candidates.
+        if self.export_every_n <= 1:
+            dense_gated = dense
+        else:
+            dense_gated = [
+                c for c in dense if c["frame_index"] % self.export_every_n == 0
+            ]
 
-        if not gated:
+        cap = max(int(self.export_max_frames), 0)
+        selected: list[dict]
+        if cap <= 0:
+            selected = []
+        elif len(rare) >= cap:
+            selected = self._evenly_sample(rare, cap)
+        else:
+            remaining = cap - len(rare)
+            selected = rare + self._evenly_sample(dense_gated, remaining)
+
+        selected = sorted(selected, key=lambda c: c["frame_index"])
+        if not selected:
             logger.info("No candidates passed gating for %s", match_name)
             return
 
@@ -100,7 +139,7 @@ class ActiveLearningExporter:
         frames_dir.mkdir(parents=True, exist_ok=True)
 
         exported = []
-        for hf in gated:
+        for hf in selected:
             frame_idx = hf["frame_index"]
             out_path = frames_dir / f"frame_{frame_idx:06d}.jpg"
             try:
@@ -172,19 +211,21 @@ class ActiveLearningExporter:
 
         # Trigger 2: Lost ball runs (one representative frame per streak)
         streak = 0
-        streak_start = -1
-        for i, track in enumerate(tracks):
+        prev_frame: int | None = None
+        for track in tracks:
+            frame_idx = int(track.get("frame", -1))
+
+            if prev_frame is not None and frame_idx != prev_frame + 1:
+                streak = 0
+
             if track.get("ball") is None:
-                if streak == 0:
-                    streak_start = i
                 streak += 1
                 # Export exactly at threshold crossing
                 if streak == self.lost_run_frames:
-                    threshold_frame = streak_start + self.lost_run_frames - 1
-                    entry = candidates.setdefault(threshold_frame, {
-                        "frame_index": threshold_frame,
+                    entry = candidates.setdefault(frame_idx, {
+                        "frame_index": frame_idx,
                         "time_sec": round(
-                            threshold_frame / meta.fps, 3
+                            frame_idx / meta.fps, 3
                         ) if meta.fps > 0 else 0.0,
                         "triggers": [],
                     })
@@ -193,6 +234,7 @@ class ActiveLearningExporter:
                         entry["streak_length"] = streak
             else:
                 streak = 0
+            prev_frame = frame_idx
 
         # Trigger 3: Jump/speed rejection events (gated by jump_trigger_px)
         for event in tracking_events:

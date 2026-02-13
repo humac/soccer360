@@ -212,7 +212,7 @@ class Detector:
 
     def run_streaming(
         self, video_path: str | Path, meta: VideoMeta, output_path: Path
-    ):
+    ) -> int:
         """Stream frames from video, run batched detection, write JSONL.
 
         If process_every_n_frames > 1, only every Nth frame is sent through
@@ -306,6 +306,7 @@ class Detector:
             frame_count, len(detected_detections), len(all_detections),
         )
         write_detections_jsonl(all_detections, output_path)
+        return frame_count
 
     @staticmethod
     def _interpolate_skipped(

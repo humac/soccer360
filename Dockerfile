@@ -28,13 +28,20 @@ RUN which soccer360
 # Bake yolov8s.pt at a canonical path for V1 bootstrap detection
 RUN mkdir -p /app/.ultralytics \
     && python -c "from ultralytics import YOLO; YOLO('yolov8s.pt')" \
-    && MATCHES="$(find /app/.ultralytics -name 'yolov8s.pt' -type f -print)" \
-    && COUNT="$(printf '%s\n' "$MATCHES" | grep -c .)" \
-    && test "$COUNT" -eq 1 \
-    && cp "$MATCHES" /app/yolov8s.pt \
+    && if [ -s /app/yolov8s.pt ]; then MATCH="/app/yolov8s.pt"; else \
+         MATCHES="$(find /app/.ultralytics -name 'yolov8s.pt' -type f -print)"; \
+         COUNT="$(printf '%s\n' "$MATCHES" | grep -c .)"; \
+         test "$COUNT" -eq 1; \
+         MATCH="$MATCHES"; \
+       fi \
+    && if [ "$MATCH" != "/app/yolov8s.pt" ]; then cp "$MATCH" /app/yolov8s.pt; fi \
     && test -s /app/yolov8s.pt \
+    && chown -R 1000:1000 /app/.ultralytics /app/yolov8s.pt \
     && echo "yolov8s.pt baked at /app/yolov8s.pt ($(stat -c%s /app/yolov8s.pt) bytes)" \
     || (echo "FATAL: expected exactly 1 yolov8s.pt under ULTRALYTICS_HOME, found: $MATCHES" && exit 1)
+
+# Safety net: preserve runtime writability if future layers touch these paths.
+RUN chown -R 1000:1000 /app/.ultralytics /app/yolov8s.pt || true
 
 ENTRYPOINT ["soccer360"]
 CMD ["watch"]

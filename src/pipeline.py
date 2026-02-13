@@ -114,15 +114,22 @@ class Pipeline:
                 # Phase 1: Ball detection (GPU)
                 logger.info("--- Phase 1: Ball Detection (GPU) ---")
                 detections_path = work_dir / "detections.jsonl"
-                self.detector.run_streaming(str(input_path), meta, detections_path)
+                processed_frames = self.detector.run_streaming(
+                    str(input_path), meta, detections_path
+                )
 
                 tracks_path = work_dir / "tracks.json"
 
                 if self._v1_mode:
                     # Phase 2: Ball stabilization (V1)
                     logger.info("--- Phase 2: Ball Stabilization (V1) ---")
+                    total_frames = (
+                        processed_frames
+                        if processed_frames and processed_frames > 0
+                        else meta.total_frames
+                    )
                     tracking_events = self.stabilizer.run(
-                        detections_path, tracks_path, meta.fps
+                        detections_path, tracks_path, meta.fps, total_frames=total_frames
                     )
 
                     # Phase 2.5: Active learning export (V1)

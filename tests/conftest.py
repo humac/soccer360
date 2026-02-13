@@ -150,6 +150,7 @@ def test_config() -> dict:
                 "max_y_frac": 0.98,
                 "max_jump_px": 250,
                 "max_speed_px_per_s": 2500,
+                "jump_max_gap_frames": 15,
             },
             "tracking": {
                 "ema_alpha": 0.35,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -81,3 +82,90 @@ class TestPipelineIntegration:
             assert -180 <= entry["yaw"] <= 180
             assert -90 <= entry["pitch"] <= 90
             assert entry["fov"] > 0
+
+    def test_v1_stabilizer_receives_total_frames_fallback(self, test_config, tmp_path, monkeypatch):
+        """V1 pipeline should pass detector/meta-derived total_frames to BallStabilizer."""
+        from src.pipeline import Pipeline
+
+        config = deepcopy(test_config)
+        config["paths"]["scratch"] = str(tmp_path / "scratch")
+        input_path = tmp_path / "input.mp4"
+        input_path.write_bytes(b"dummy")
+
+        calls: dict[str, int | None] = {}
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0, duration=2.0, total_frames=60, codec="h264"
+        )
+
+        class _FakeDetector:
+            def __init__(self, cfg):
+                pass
+
+            def run_streaming(self, video_path, meta_obj, output_path):
+                Path(output_path).write_text("")
+                return 0  # force fallback to meta.total_frames
+
+        class _FakeStabilizer:
+            def __init__(self, cfg):
+                pass
+
+            def run(self, detections_path, tracks_path, fps, total_frames=None):
+                calls["total_frames"] = total_frames
+                Path(tracks_path).write_text("[]")
+                return []
+
+        class _FakeActiveLearning:
+            def __init__(self, cfg):
+                pass
+
+            def run(self, *args, **kwargs):
+                return None
+
+        class _FakeCamera:
+            def __init__(self, cfg):
+                pass
+
+            def generate(self, tracks_path, meta_obj, out_path):
+                Path(out_path).write_text("[]")
+
+            def generate_static(self, meta_obj, out_path):
+                Path(out_path).write_text("[]")
+
+        class _FakeReframer:
+            def __init__(self, cfg):
+                pass
+
+            def render_broadcast(self, *args, **kwargs):
+                return None
+
+            def render_tactical(self, *args, **kwargs):
+                return None
+
+        class _FakeHighlights:
+            def __init__(self, cfg):
+                pass
+
+            def detect_and_export(self, *args, **kwargs):
+                return None
+
+        class _FakeExporter:
+            def __init__(self, cfg):
+                pass
+
+            def finalize(self, *args, **kwargs):
+                return tmp_path / "out"
+
+        monkeypatch.setattr("src.pipeline.resolve_model_path_v1", lambda cfg: ("dummy.pt", "normal"))
+        monkeypatch.setattr("src.pipeline.Detector", _FakeDetector)
+        monkeypatch.setattr("src.pipeline.BallStabilizer", _FakeStabilizer)
+        monkeypatch.setattr("src.pipeline.ActiveLearningExporter", _FakeActiveLearning)
+        monkeypatch.setattr("src.pipeline.CameraPathGenerator", _FakeCamera)
+        monkeypatch.setattr("src.pipeline.Reframer", _FakeReframer)
+        monkeypatch.setattr("src.pipeline.HighlightDetector", _FakeHighlights)
+        monkeypatch.setattr("src.pipeline.Exporter", _FakeExporter)
+        monkeypatch.setattr("src.pipeline.probe_video", lambda path: meta)
+
+        pipeline = Pipeline(config)
+        pipeline.run(input_path, cleanup=False)
+
+        assert calls["total_frames"] == meta.total_frames

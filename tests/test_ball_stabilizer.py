@@ -378,3 +378,79 @@ class TestOutputFormat:
         assert events[0]["trigger"] == "jump_reject"
         assert "frame" in events[0]
         assert "distance_px" in events[0]
+
+
+class TestFrameRangeAndReacquisition:
+    def test_tracks_len_matches_total_frames(self, tmp_path):
+        config = {
+            "tracking": {"ema_alpha": 1.0, "require_persistence": 1, "window": 1},
+            "filters": {"max_jump_px": 9999, "max_speed_px_per_s": 99999, "jump_max_gap_frames": 15},
+        }
+        stab = BallStabilizer(config)
+
+        dets_path = tmp_path / "dets.jsonl"
+        _write_v1_detections(dets_path, [_make_det(0, 50, 50), _make_det(2, 55, 50)])
+
+        tracks_path = tmp_path / "tracks.json"
+        stab.run(dets_path, tracks_path, fps=10.0, total_frames=8)
+
+        tracks = json.loads(tracks_path.read_text())
+        assert len(tracks) == 8
+        assert tracks[-1]["frame"] == 7
+
+    def test_reacquire_after_long_gap_accepts_far_detection(self, tmp_path):
+        config = {
+            "tracking": {"ema_alpha": 1.0, "require_persistence": 1, "window": 1},
+            "filters": {"max_jump_px": 50, "max_speed_px_per_s": 99999, "jump_max_gap_frames": 2},
+        }
+        stab = BallStabilizer(config)
+
+        # Accepted at frame 0, long gap, then far detection at frame 4.
+        dets_path = tmp_path / "dets.jsonl"
+        _write_v1_detections(dets_path, [_make_det(0, 50, 50), _make_det(4, 250, 50)])
+
+        tracks_path = tmp_path / "tracks.json"
+        tracks_events = stab.run(dets_path, tracks_path, fps=10.0, total_frames=5)
+
+        tracks = json.loads(tracks_path.read_text())
+        assert tracks[0]["status"] == "accepted"
+        assert tracks[4]["status"] == "accepted"
+        assert tracks[4]["reason"] is None
+        assert all(e["frame"] != 4 for e in tracks_events)
+
+    def test_short_gap_large_jump_still_rejected(self, tmp_path):
+        config = {
+            "tracking": {"ema_alpha": 1.0, "require_persistence": 1, "window": 1},
+            "filters": {"max_jump_px": 50, "max_speed_px_per_s": 99999, "jump_max_gap_frames": 10},
+        }
+        stab = BallStabilizer(config)
+
+        dets_path = tmp_path / "dets.jsonl"
+        _write_v1_detections(dets_path, [_make_det(0, 50, 50), _make_det(1, 250, 50)])
+
+        tracks_path = tmp_path / "tracks.json"
+        events = stab.run(dets_path, tracks_path, fps=10.0, total_frames=2)
+
+        tracks = json.loads(tracks_path.read_text())
+        assert tracks[1]["status"] == "rejected"
+        assert tracks[1]["reason"] == "jump"
+        assert any(e["trigger"] == "jump_reject" and e["frame"] == 1 for e in events)
+
+    def test_no_detections_with_total_frames_outputs_all_lost(self, tmp_path):
+        config = {
+            "tracking": {"ema_alpha": 1.0, "require_persistence": 1, "window": 1},
+            "filters": {"max_jump_px": 50, "max_speed_px_per_s": 99999, "jump_max_gap_frames": 10},
+        }
+        stab = BallStabilizer(config)
+
+        dets_path = tmp_path / "dets.jsonl"
+        _write_v1_detections(dets_path, [])
+
+        tracks_path = tmp_path / "tracks.json"
+        events = stab.run(dets_path, tracks_path, fps=10.0, total_frames=4)
+
+        tracks = json.loads(tracks_path.read_text())
+        assert len(tracks) == 4
+        assert all(t["status"] == "lost" for t in tracks)
+        assert all(t["ball"] is None for t in tracks)
+        assert events == []

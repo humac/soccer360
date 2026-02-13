@@ -313,3 +313,145 @@ class TestManifest:
         assert "jump_trigger_px" in manifest["config"]
         assert "export_every_n" in manifest["config"]
         assert "export_max" in manifest["config"]
+
+
+class TestV1GatingAndCapBehavior:
+    def test_lost_run_uses_track_frame_and_resets_on_discontinuity(self, al_config, fake_meta):
+        exporter = ActiveLearningExporter(al_config)
+        tracks = [
+            {"frame": 10, "ball": None, "status": "lost"},
+            {"frame": 11, "ball": None, "status": "lost"},
+            {"frame": 13, "ball": None, "status": "lost"},
+            {"frame": 14, "ball": None, "status": "lost"},
+            {"frame": 15, "ball": None, "status": "lost"},
+            {"frame": 16, "ball": None, "status": "lost"},
+            {"frame": 17, "ball": None, "status": "lost"},
+        ]
+
+        candidates = exporter._identify_candidates([], tracks, fake_meta, [])
+        lost_run_frames = [c["frame_index"] for c in candidates if "lost_run" in c["triggers"]]
+        assert lost_run_frames == [17]
+
+    def test_rare_trigger_bypasses_modulo_gating(self, al_config, tmp_path, fake_meta):
+        al_config["active_learning"]["export_every_n_frames"] = 2
+        al_config["active_learning"]["export_max_frames"] = 20
+        al_config["active_learning"]["export_dir"] = str(tmp_path / "labeling")
+        exporter = ActiveLearningExporter(al_config)
+
+        det_path = tmp_path / "detections.jsonl"
+        tracks_path = tmp_path / "tracks.json"
+        _write_detections(det_path, [{"frame_index": 2, "conf": 0.35, "bbox_xyxy": [10, 10, 20, 20]}])
+        _write_tracks(
+            tracks_path,
+            [{"frame": i, "ball": None, "status": "lost"} for i in range(5, 10)],
+        )  # lost_run threshold at odd frame 9
+
+        with patch("src.active_learning.extract_frame"):
+            exporter.run(
+                str(tmp_path / "video.mp4"),
+                fake_meta,
+                det_path,
+                tracks_path,
+                tmp_path,
+                tracking_events=[],
+                mode="normal",
+            )
+
+        manifest = json.loads((tmp_path / "hard_frames.json").read_text())
+        exported_frames = [f["frame_index"] for f in manifest["frames"]]
+        assert 9 in exported_frames
+
+    def test_mixed_trigger_on_odd_frame_is_treated_as_rare(self, al_config, tmp_path, fake_meta):
+        al_config["active_learning"]["export_every_n_frames"] = 2
+        al_config["active_learning"]["export_max_frames"] = 20
+        al_config["active_learning"]["export_dir"] = str(tmp_path / "labeling")
+        exporter = ActiveLearningExporter(al_config)
+
+        det_path = tmp_path / "detections.jsonl"
+        tracks_path = tmp_path / "tracks.json"
+        _write_detections(
+            det_path,
+            [{"frame_index": 5, "conf": 0.35, "bbox_xyxy": [10, 10, 20, 20]}],
+        )
+        _write_tracks(tracks_path, [{"frame": 5, "ball": {"x": 15, "y": 15}, "status": "accepted"}])
+        events = [{"frame": 5, "trigger": "jump_reject", "distance_px": 250.0}]
+
+        with patch("src.active_learning.extract_frame"):
+            exporter.run(
+                str(tmp_path / "video.mp4"),
+                fake_meta,
+                det_path,
+                tracks_path,
+                tmp_path,
+                tracking_events=events,
+                mode="normal",
+            )
+
+        manifest = json.loads((tmp_path / "hard_frames.json").read_text())
+        frame5 = next(f for f in manifest["frames"] if f["frame_index"] == 5)
+        assert "jump_reject" in frame5["triggers"]
+        assert "low_conf" in frame5["triggers"]
+
+    def test_cap_prioritizes_rare_then_evenly_samples_dense_deterministically(
+        self, al_config, tmp_path, fake_meta
+    ):
+        al_config["active_learning"]["export_every_n_frames"] = 1
+        al_config["active_learning"]["export_max_frames"] = 6
+        al_config["active_learning"]["export_dir"] = str(tmp_path / "labeling")
+        exporter = ActiveLearningExporter(al_config)
+
+        det_path = tmp_path / "detections.jsonl"
+        tracks_path = tmp_path / "tracks.json"
+        dense_frames = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]
+        _write_detections(
+            det_path,
+            [
+                {"frame_index": i, "conf": 0.35, "bbox_xyxy": [10, 10, 20, 20]}
+                for i in dense_frames
+            ],
+        )
+        _write_tracks(
+            tracks_path,
+            [{"frame": i, "ball": {"x": 15, "y": 15}, "status": "accepted"} for i in range(100)],
+        )
+        events = [
+            {"frame": 5, "trigger": "jump_reject", "distance_px": 250.0},
+            {"frame": 95, "trigger": "jump_reject", "distance_px": 300.0},
+        ]
+
+        with patch("src.active_learning.extract_frame"):
+            exporter.run(
+                str(tmp_path / "video.mp4"),
+                fake_meta,
+                det_path,
+                tracks_path,
+                tmp_path,
+                tracking_events=events,
+                mode="normal",
+            )
+        first = json.loads((tmp_path / "hard_frames.json").read_text())
+        first_frames = [f["frame_index"] for f in first["frames"]]
+
+        with patch("src.active_learning.extract_frame"):
+            exporter.run(
+                str(tmp_path / "video.mp4"),
+                fake_meta,
+                det_path,
+                tracks_path,
+                tmp_path,
+                tracking_events=events,
+                mode="normal",
+            )
+        second = json.loads((tmp_path / "hard_frames.json").read_text())
+        second_frames = [f["frame_index"] for f in second["frames"]]
+
+        assert first_frames == [5, 10, 30, 60, 80, 95]
+        assert second_frames == first_frames
+
+    def test_evenly_sample_edge_cases(self):
+        candidates = [{"frame_index": i} for i in range(5)]
+
+        assert ActiveLearningExporter._evenly_sample(candidates, 0) == []
+        assert ActiveLearningExporter._evenly_sample(candidates, -2) == []
+        assert ActiveLearningExporter._evenly_sample(candidates, 5) == candidates
+        assert ActiveLearningExporter._evenly_sample(candidates, 6) == candidates
