@@ -1,4 +1,4 @@
-.PHONY: start stop logs rebuild test-gpu verify-container-assets
+.PHONY: start stop logs rebuild test-gpu verify-container-assets verify-container-assets-clean check-deps-sync
 
 start:
 	docker compose up -d
@@ -17,3 +17,9 @@ test-gpu:
 
 verify-container-assets:
 	bash scripts/verify_container_assets.sh
+
+verify-container-assets-clean:
+	NO_CACHE=1 RESET=1 bash scripts/verify_container_assets.sh
+
+check-deps-sync:
+	python3 scripts/check_deps_sync.py

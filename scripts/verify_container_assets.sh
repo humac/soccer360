@@ -7,6 +7,8 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT="${PROJECT:-soccer360}"
 SERVICE="${SERVICE:-worker}"
 IMAGE_TAG="${IMAGE_TAG:-soccer360-worker:local}"
+NO_CACHE="${NO_CACHE:-0}"
+RESET="${RESET:-0}"
 cid=""
 
 log() {
@@ -27,19 +29,31 @@ trap cleanup EXIT INT TERM
 
 cd "$REPO_DIR"
 
-log "Reset compose state (project=$PROJECT)"
-docker compose -p "$PROJECT" down --remove-orphans
+# --- Mode selection ---
+build_args=()
+if [ "$NO_CACHE" = "1" ]; then
+  log "Mode: CLEAN (no-cache rebuild)"
+  build_args+=(--no-cache)
+  if [ "$RESET" = "1" ]; then
+    log "Reset compose state (project=$PROJECT)"
+    docker compose -p "$PROJECT" down --remove-orphans
+  fi
+else
+  log "Mode: FAST (cached build, no service disruption)"
+fi
 
+# --- Build ---
 before_id="$(docker image inspect "$IMAGE_TAG" --format '{{.Id}}' 2>/dev/null || true)"
 log "before_id=${before_id:-<none>}"
 
-log "Build fresh worker image (no cache, pull=false)"
-if ! docker compose -p "$PROJECT" build --no-cache --pull=false "$SERVICE"; then
+log "Building worker image (project=$PROJECT)"
+if ! docker compose -p "$PROJECT" build "${build_args[@]}" --pull=false "$SERVICE"; then
   log "Retrying build without --pull=false (compose compatibility fallback)"
-  docker compose -p "$PROJECT" build --no-cache "$SERVICE" \
+  docker compose -p "$PROJECT" build "${build_args[@]}" "$SERVICE" \
     || fail "build failed for service '$SERVICE'"
 fi
 
+# --- SHA assertion ---
 after_id="$(docker image inspect "$IMAGE_TAG" --format '{{.Id}}' 2>/dev/null || true)"
 if [ -z "$after_id" ] || [ "$after_id" = "<no value>" ]; then
   fail "could not resolve rebuilt image SHA for tag '$IMAGE_TAG'"
@@ -53,6 +67,7 @@ if ! docker compose -p "$PROJECT" config --images; then
   docker compose -p "$PROJECT" images
 fi
 
+# --- Ephemeral container ---
 log "Start short-lived worker container"
 cid="$(docker compose -p "$PROJECT" run -d --no-TTY --no-deps --entrypoint sleep "$SERVICE" 60)" \
   || fail "failed to start verifier container"
@@ -67,6 +82,7 @@ if [ "$container_sha" != "$after_id" ]; then
   fail "container image SHA does not match rebuilt image SHA"
 fi
 
+# --- Runtime checks ---
 log "Runtime asset checks"
 docker exec "$cid" bash -lc '
 set -euo pipefail

@@ -349,11 +349,19 @@ Worker image policy:
 - With both `build` and `image`, compose builds and tags the local result as `soccer360-worker:local`.
 - `pull_policy: never` may not be honored on every Compose version; the verifier script is the source of truth.
 
-Recommended pre-merge check:
+**Fast dev check** (cached build, does NOT stop running services):
 
 ```bash
 make verify-container-assets
 ```
+
+**Pre-merge clean check** (no-cache rebuild, resets compose state):
+
+```bash
+make verify-container-assets-clean
+```
+
+Both modes assert: rebuilt image SHA == ephemeral container SHA, `/app/yolov8s.pt` non-empty, `/app/.ultralytics` writable, both owned by `1000:1000`.
 
 Compose project drift warning:
 - Running compose from a different directory or with a different `-p` project name can target another image namespace.
@@ -369,51 +377,14 @@ Image tag override (if needed):
 IMAGE_TAG=mytag:local PROJECT=soccer360 bash scripts/verify_container_assets.sh
 ```
 
-Force a fresh build and confirm image identity:
+BuildKit is required for the Dockerfile cache mounts. It is the default engine in modern Docker; set `DOCKER_BUILDKIT=1` if your installation still defaults to the legacy builder.
+
+**Dependency sync check:**
+
+`requirements-docker.txt` mirrors `pyproject.toml` dependencies for Docker layer caching. Verify they stay in sync:
 
 ```bash
-docker compose -p soccer360 down --remove-orphans
-docker compose -p soccer360 build --no-cache worker
-docker compose -p soccer360 images
-docker image inspect soccer360-worker:local --format '{{.Id}}'
-```
-
-Run runtime checks inside the worker container:
-
-```bash
-docker compose -p soccer360 run --rm --no-deps --entrypoint bash worker -lc '
-set -euo pipefail
-id
-ls -lah /app/yolov8s.pt
-stat -c "%u:%g %A %n" /app/.ultralytics /app/yolov8s.pt
-test -w /app/.ultralytics
-test -s /app/yolov8s.pt
-'
-```
-
-Expected output patterns:
-- `id` contains `uid=1000 gid=1000`.
-- `ls -lah /app/yolov8s.pt` shows non-zero size.
-- `stat` lines include:
-  - `1000:1000 ... /app/.ultralytics`
-  - `1000:1000 ... /app/yolov8s.pt`
-- `test` commands produce no output and exit `0`.
-
-Container/image consistency check:
-
-```bash
-cid="$(docker compose -p soccer360 run -d --no-TTY --no-deps --entrypoint sleep worker 60)"
-docker inspect -f '{{.Image}}' "$cid"
-docker image inspect soccer360-worker:local --format '{{.Id}}'
-docker rm -f "$cid"
-```
-
-Both printed IDs must match.
-
-CI-style one-shot verifier:
-
-```bash
-PROJECT=soccer360 bash scripts/verify_container_assets.sh
+make check-deps-sync
 ```
 
 ## Tesla P40 Notes
