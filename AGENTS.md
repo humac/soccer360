@@ -73,6 +73,8 @@ Notes:
 - `detector.model_path: /app/yolov8s.pt` behaves like default path selection.
 - Runtime logs once per job: `Model resolved: <path> (source=<source>)`.
 - Source enum is stable: `detector.model_path`, `detection.path`, `default`.
+- Canonical container path for explicit Roboflow usage: `/app/models/roboflow/football_players_v1.pt`.
+- In default compose runtime, `/app/models` is bind-mounted from host `/tank/models`; place Roboflow weights at `/tank/models/roboflow/football_players_v1.pt`.
 
 - Legacy (`resolve_model_path`):
 
@@ -153,6 +155,10 @@ Canonical worker build verification is `scripts/verify_container_assets.sh`:
 - Resolver stdout contract is strict: only those three lines are emitted on stdout; warnings/errors/noise go to stderr.
 - Resolver output is parsed with strict `KEY=value` prefix handling (no YAML parsing in bash).
 - Resolver failures are fail-fast: verifier reports attempted `CONFIG_PATH`, resolver exit code, and captured stderr before exiting.
+- Resolver exit codes are deterministic:
+  - `11`: config path missing/not a file/not readable
+  - `12`: config load/parse failure
+  - `13`: resolver import/runtime resolution failure
 - Verifier validates `test -s "$MODEL_PATH"` and logs selected model file size.
 - Baked `/app/yolov8s.pt` checks are conditional: enforced only when `MODEL_PATH=/app/yolov8s.pt`.
 - Verifies runtime identity lookup with `python -c "import getpass; print(getpass.getuser())"`

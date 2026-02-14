@@ -46,6 +46,8 @@ Runtime modes in `src/pipeline.py`:
 - Verifier now prints torch/CUDA + GPU capability diagnostics, treats arch-list mismatch as warning, and uses CUDA conv2d smoke as the authoritative gate (`GPU_SMOKE=1` default, `GPU_SMOKE=0` to skip).
 - Verifier resolves model path in-container using runtime Python logic (`src.utils.load_config` + `resolve_v1_model_path_and_source`), emits only `CONFIG_PATH`/`MODEL_PATH`/`MODEL_SOURCE` on stdout, validates selected `MODEL_PATH` via `test -s`, and only enforces baked `/app/yolov8s.pt` checks when that path is actually selected.
 - Resolver failures are fail-fast and include attempted `CONFIG_PATH`, resolver exit code, and captured stderr. Use `VERBOSE=1` to print captured resolver stderr/noise diagnostics when non-empty.
+- Resolver exit codes are deterministic: `11` (config path/readability), `12` (config parse/load), `13` (resolver import/runtime resolution).
+- Canonical explicit Roboflow path is `/app/models/roboflow/football_players_v1.pt`; in default compose runtime `/app/models` is mounted from host `/tank/models`, so place weights at `/tank/models/roboflow/football_players_v1.pt`.
 
 ## Non-Negotiable Conventions
 
