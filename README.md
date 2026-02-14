@@ -97,10 +97,24 @@ Default behavior is unchanged unless `detector.model_path` is set, or a legacy
 Notes:
 
 - `detector.model_path` set to a non-default path is treated as explicit override.
+- Explicit non-default `detector.model_path` must exist and be a file; otherwise V1 model resolution fails fast with `RuntimeError`.
 - `detector.model_path: /app/yolov8s.pt` keeps normal default/fine-tuned behavior.
 - Current contract is `.pt` weights only (ONNX/TRT model-path selection is out of scope here).
 - Runtime logs one line per job: `Model resolved: <path> (source=<source>)`.
 - Source enum is stable: `detector.model_path`, `detection.path`, `default`.
+
+### Roboflow Model Placement (Default Compose Runtime)
+
+- Canonical container path: `/app/models/roboflow/football_players_v1.pt`
+- In the default `docker compose` worker runtime, `/app/models` is bind-mounted from host `/tank/models`.
+- Host placement for Roboflow weights in this runtime: `/tank/models/roboflow/football_players_v1.pt`
+
+Example config override:
+
+```yaml
+detector:
+  model_path: /app/models/roboflow/football_players_v1.pt
+```
 
 **Legacy mode** (no `detection` section):
 
@@ -398,6 +412,10 @@ Both modes:
 - Resolve model path in-container using the same Python config + resolver logic as runtime (no bash YAML parsing), printing:
   `CONFIG_PATH=...`, `MODEL_PATH=...`, `MODEL_SOURCE=...`
 - Resolver stdout contract is strict: only those three `KEY=VALUE` lines are emitted on stdout (in that order).
+- Resolver exit codes are deterministic:
+  - `11`: config path missing/not a file/not readable
+  - `12`: config parse/load failure
+  - `13`: resolver import/runtime resolution failure
 - Validate selected `MODEL_PATH` is non-empty (`test -s`) and log file size.
 - Enforce baked `/app/yolov8s.pt` checks only when `MODEL_PATH=/app/yolov8s.pt`; otherwise skip baked-model checks and validate only the selected path.
 - Always validate `/app/.ultralytics` is writable.
@@ -464,6 +482,35 @@ print(f'MODEL_PATH={model_path}')
 print(f'MODEL_SOURCE={model_source}')
 "
 ```
+
+### Roboflow Quick Validation
+
+```bash
+# 1) Place Roboflow weights on host (default compose runtime mount)
+mkdir -p /tank/models/roboflow
+cp /path/to/best.pt /tank/models/roboflow/football_players_v1.pt
+
+# 2) Set detector.model_path in configs/pipeline.yaml
+# detector:
+#   model_path: /app/models/roboflow/football_players_v1.pt
+
+# 3) Confirm model class names from the worker image
+docker compose run --rm --no-deps --entrypoint python worker -c "
+from ultralytics import YOLO
+m = YOLO('/app/models/roboflow/football_players_v1.pt')
+print(m.names)
+"
+
+# 4) Validate resolver/verifier selection
+make verify-container-assets
+```
+
+Expected verifier lines with Roboflow selected:
+
+- `resolved_model_path=/app/models/roboflow/football_players_v1.pt`
+- `resolved_model_source=detector.model_path`
+- `resolved_model_size_bytes=<non-zero>`
+- `Resolved model is not /app/yolov8s.pt; skipping baked yolov8s.pt checks`
 
 **Dependency sync check** (standalone):
 

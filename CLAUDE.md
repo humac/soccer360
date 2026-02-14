@@ -39,12 +39,15 @@ Runtime modes in `src/pipeline.py`:
 - Verifier now asserts `python -c "import getpass; print(getpass.getuser())"` succeeds at runtime.
 - V1 model-path precedence is explicit and logged once per job:
   - `detector.model_path` > `detection.path` > `default`
+  - explicit non-default `detector.model_path` must point to an existing file (else resolver raises `RuntimeError`)
   - source enum: `detector.model_path`, `detection.path`, `default`
   - runtime log format: `Model resolved: <path> (source=<source>)`
 - Dockerfile pins Pascal-safe PyTorch from cu121 (`torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121`) and constrains requirements install to that trio.
 - Verifier now prints torch/CUDA + GPU capability diagnostics, treats arch-list mismatch as warning, and uses CUDA conv2d smoke as the authoritative gate (`GPU_SMOKE=1` default, `GPU_SMOKE=0` to skip).
 - Verifier resolves model path in-container using runtime Python logic (`src.utils.load_config` + `resolve_v1_model_path_and_source`), emits only `CONFIG_PATH`/`MODEL_PATH`/`MODEL_SOURCE` on stdout, validates selected `MODEL_PATH` via `test -s`, and only enforces baked `/app/yolov8s.pt` checks when that path is actually selected.
 - Resolver failures are fail-fast and include attempted `CONFIG_PATH`, resolver exit code, and captured stderr. Use `VERBOSE=1` to print captured resolver stderr/noise diagnostics when non-empty.
+- Resolver exit codes are deterministic: `11` (config path/readability), `12` (config parse/load), `13` (resolver import/runtime resolution).
+- Canonical explicit Roboflow path is `/app/models/roboflow/football_players_v1.pt`; in default compose runtime `/app/models` is mounted from host `/tank/models`, so place weights at `/tank/models/roboflow/football_players_v1.pt`.
 
 ## Non-Negotiable Conventions
 
