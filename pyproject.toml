@@ -19,6 +19,9 @@ dependencies = [
     "ultralytics>=8.1",
     "filterpy>=1.4",
     "scipy>=1.11",
+    "fastapi>=0.109",
+    "uvicorn>=0.27",
+    "sse-starlette>=2.0",
 ]
 
 [project.optional-dependencies]

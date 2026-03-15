@@ -404,6 +404,40 @@ def test_ingest_archive_no_source_skipped(tmp_path: Path):
     assert meta["ingest_source_path"] is None
 
 
+def test_finalize_includes_phase_metrics_in_metadata(tmp_path: Path):
+    """Phase metrics are written to metadata.json when provided."""
+    cfg = _make_config(tmp_path)
+    exporter = Exporter(cfg)
+
+    raw_input = tmp_path / "ingest" / "game.mp4"
+    raw_input.parent.mkdir(parents=True, exist_ok=True)
+    raw_input.write_bytes(b"raw")
+
+    phase_metrics = {
+        "phase_timings_sec": {"detection": 10.5, "tracking": 2.3},
+        "stats": {"detection_count": 500},
+    }
+    work = _make_work_dir(tmp_path / "work")
+    out = exporter.finalize(work, str(raw_input), _meta(), phase_metrics=phase_metrics)
+    meta = json.loads((out / "metadata.json").read_text())
+    assert meta["phase_metrics"] == phase_metrics
+
+
+def test_finalize_phase_metrics_defaults_to_none(tmp_path: Path):
+    """When phase_metrics is not provided, metadata has null value."""
+    cfg = _make_config(tmp_path)
+    exporter = Exporter(cfg)
+
+    raw_input = tmp_path / "ingest" / "game.mp4"
+    raw_input.parent.mkdir(parents=True, exist_ok=True)
+    raw_input.write_bytes(b"raw")
+
+    work = _make_work_dir(tmp_path / "work")
+    out = exporter.finalize(work, str(raw_input), _meta())
+    meta = json.loads((out / "metadata.json").read_text())
+    assert meta["phase_metrics"] is None
+
+
 def test_safe_copy_fallback_no_overwrite_race_does_not_clobber(tmp_path: Path):
     """If destination appears during fallback publish, raise without overwrite."""
     src = tmp_path / "ingest.mp4"

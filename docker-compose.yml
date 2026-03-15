@@ -27,6 +27,12 @@ services:
     ulimits:
       memlock: -1
       stack: 67108864
+    healthcheck:
+      test: ["CMD", "bash", "/app/scripts/healthcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   labelstudio:
     image: heartexlabs/label-studio:latest
@@ -40,6 +46,34 @@ services:
     environment:
       - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
       - LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/data
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\""]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  dashboard:
+    image: soccer360-worker:local
+    pull_policy: never
+    container_name: soccer360-dashboard
+    restart: unless-stopped
+    command: ["dashboard", "--port", "8088"]
+    ports:
+      - "8088:8088"
+    volumes:
+      - /tank:/tank
+      - /scratch:/scratch
+      - ./configs:/app/configs:ro
+    environment:
+      - SOCCER360_CONFIG=/app/configs/pipeline.yaml
+    user: "1000:1000"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8088/api/status')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   labelstudio_data:

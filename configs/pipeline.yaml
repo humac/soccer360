@@ -182,6 +182,11 @@ tracking:
   require_persistence: 2     # require N detections in window to accept
   window: 3                  # rolling window size
 
+dashboard:
+  enabled: true
+  db_path: /tank/data/dashboard.db
+  port: 8088
+
 mode:
   allow_no_model: true
 

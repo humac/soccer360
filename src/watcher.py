@@ -531,6 +531,18 @@ class WatcherDaemon:
         self.scratch_dir = Path(config["paths"]["scratch"])
         self.output_dir = Path(config.get("paths", {}).get("processed", "/tank/processed"))
 
+        # Dashboard event bus (optional)
+        self.event_bus = None
+        dashboard_cfg = config.get("dashboard", {})
+        if dashboard_cfg.get("enabled", False):
+            try:
+                from .events import EventBus, create_event_store
+                store = create_event_store(config)
+                self.event_bus = EventBus(store)
+                logger.info("Dashboard event bus enabled (db=%s)", dashboard_cfg.get("db_path"))
+            except Exception:
+                logger.warning("Failed to initialize dashboard event bus", exc_info=True)
+
         watcher_cfg = config.get("watcher", {})
         self.stability_checks = watcher_cfg.get("stability_checks", 5)
         self.stability_interval = watcher_cfg.get("stability_interval_sec", 10.0)
@@ -696,7 +708,7 @@ class WatcherDaemon:
 
         succeeded = False
         try:
-            pipe = Pipeline(self.config)
+            pipe = Pipeline(self.config, event_bus=self.event_bus)
             pipe.run(job_path, cleanup=True, ingest_source=ingest_source)
             succeeded = True
         except Exception:

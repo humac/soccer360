@@ -57,6 +57,7 @@ class Exporter:
         mode: str = "normal",
         ingest_source: str | None = None,
         job_id: str | None = None,
+        phase_metrics: dict | None = None,
     ):
         """Move outputs from scratch to final destinations."""
         game_name = Path(input_path).stem
@@ -148,6 +149,7 @@ class Exporter:
             "mode": mode,
             "outputs": outputs,
             "artifacts": artifacts,
+            "phase_metrics": phase_metrics,
         }
 
         # Ingest archival (post-success only)

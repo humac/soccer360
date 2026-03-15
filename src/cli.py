@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import click
+
+logger = logging.getLogger("soccer360.cli")
 
 from .utils import load_config, setup_logging
 
@@ -100,6 +103,21 @@ def export_hard_frames(
         threshold=threshold,
         output_dir=Path(out),
     )
+
+
+@cli.command()
+@click.option("--port", default=8088, help="Dashboard server port.")
+@click.option("--host", default="0.0.0.0", help="Dashboard server host.")
+@click.pass_context
+def dashboard(ctx: click.Context, port: int, host: str):
+    """Start the monitoring dashboard web server."""
+    import uvicorn
+
+    from .dashboard import create_app
+
+    app = create_app(ctx.obj["config"])
+    logger.info("Starting Soccer360 Dashboard on %s:%d", host, port)
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":

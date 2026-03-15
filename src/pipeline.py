@@ -19,7 +19,10 @@ from .detector import Detector, resolve_model_path, resolve_model_path_v1
 from .exporter import Exporter
 from .hard_frames import HardFrameExporter
 from .highlights import HighlightDetector
+from .metrics import PhaseTimer, gpu_utilization_snapshot
 from .reframer import Reframer
+
+from contextlib import contextmanager
 from .tracker import BallStabilizer, Tracker
 from .utils import VideoMeta, probe_video
 
@@ -29,10 +32,11 @@ logger = logging.getLogger("soccer360.pipeline")
 class Pipeline:
     """End-to-end processing pipeline for 360 soccer video."""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, event_bus=None):
         self.config = config
         self.scratch_base = Path(config["paths"]["scratch"])
         self._v1_mode = "detection" in config
+        self.event_bus = event_bus
 
         # Resolve model and determine operating mode
         if self._v1_mode:
@@ -74,6 +78,22 @@ class Pipeline:
         self.highlights = HighlightDetector(config)
         self.exporter = Exporter(config)
 
+    @contextmanager
+    def _tracked_phase(self, timer: PhaseTimer, job_id: str, phase_name: str):
+        """Wrap a phase with both timing and event bus emission."""
+        if self.event_bus:
+            self.event_bus.phase_started(job_id, phase_name)
+        try:
+            with timer.phase(phase_name):
+                yield
+            if self.event_bus:
+                elapsed = timer._timings.get(phase_name)
+                self.event_bus.phase_completed(job_id, phase_name, duration_sec=elapsed)
+        except Exception:
+            if self.event_bus:
+                self.event_bus.phase_failed(job_id, phase_name)
+            raise
+
     def run(
         self,
         input_path: str | Path,
@@ -101,6 +121,11 @@ class Pipeline:
         logger.info("Working dir: %s", work_dir)
         logger.info("=" * 60)
 
+        if self.event_bus:
+            self.event_bus.job_created(job_id, str(input_path))
+
+        timer = PhaseTimer()
+
         try:
             # Probe video metadata
             meta = probe_video(input_path)
@@ -111,15 +136,54 @@ class Pipeline:
             )
             logger.info("Operating mode: %s", self.mode)
 
+            if self.event_bus:
+                self.event_bus.job_started(job_id, mode=self.mode)
+
             camera_path_file = work_dir / "camera_path.json"
 
             if self.mode == "normal":
+                # Decision: confirm mode before starting detection
+                if self.event_bus:
+                    mode_label = "V1 bootstrap" if self._v1_mode else "legacy"
+                    self.event_bus.request_decision(
+                        job_id,
+                        "mode_confirm",
+                        f"Proceeding in {mode_label} mode. Input: {input_path.name} "
+                        f"({meta.total_frames} frames, {meta.duration:.0f}s). Continue?",
+                        options=["continue", "cancel"],
+                        default_option="continue",
+                        timeout_sec=30,
+                    )
+
                 # Phase 1: Ball detection (GPU)
                 logger.info("--- Phase 1: Ball Detection (GPU) ---")
                 detections_path = work_dir / "detections.jsonl"
-                processed_frames = self.detector.run_streaming(
-                    str(input_path), meta, detections_path
-                )
+                with self._tracked_phase(timer, job_id, "detection"):
+                    processed_frames = self.detector.run_streaming(
+                        str(input_path), meta, detections_path
+                    )
+
+                # Capture GPU snapshot right after detection (GPU-intensive phase)
+                timer.record_stat("gpu_snapshot_post_detection", gpu_utilization_snapshot())
+
+                # Count detections from JSONL
+                detection_count = sum(1 for _ in open(detections_path))
+                timer.record_stat("detection_count", detection_count)
+                timer.record_stat("frames_processed", processed_frames or meta.total_frames)
+
+                # Decision: review detection results before continuing
+                if self.event_bus:
+                    total = processed_frames or meta.total_frames
+                    coverage = (detection_count / total * 100) if total > 0 else 0
+                    self.event_bus.request_decision(
+                        job_id,
+                        "post_detection_review",
+                        f"Detection complete: {detection_count} detections in {total} frames "
+                        f"({coverage:.1f}% coverage). Continue to tracking?",
+                        options=["continue", "cancel"],
+                        default_option="continue",
+                        timeout_sec=60,
+                    )
 
                 tracks_path = work_dir / "tracks.json"
 
@@ -131,67 +195,111 @@ class Pipeline:
                         if processed_frames and processed_frames > 0
                         else meta.total_frames
                     )
-                    tracking_events = self.stabilizer.run(
-                        detections_path, tracks_path, meta.fps, total_frames=total_frames
-                    )
+                    with self._tracked_phase(timer, job_id, "tracking"):
+                        tracking_events = self.stabilizer.run(
+                            detections_path, tracks_path, meta.fps, total_frames=total_frames
+                        )
 
                     # Phase 2.5: Active learning export (V1)
                     logger.info("--- Phase 2.5: Active Learning Export (V1) ---")
-                    self.active_learner.run(
-                        str(input_path), meta, detections_path, tracks_path,
-                        work_dir, tracking_events=tracking_events, mode=self.mode,
-                    )
+                    with self._tracked_phase(timer, job_id, "hard_frames"):
+                        self.active_learner.run(
+                            str(input_path), meta, detections_path, tracks_path,
+                            work_dir, tracking_events=tracking_events, mode=self.mode,
+                        )
                 else:
                     # Phase 2: Ball tracking (legacy ByteTrack)
                     logger.info("--- Phase 2: Ball Tracking ---")
-                    self.tracker.run(detections_path, tracks_path)
+                    with self._tracked_phase(timer, job_id, "tracking"):
+                        self.tracker.run(detections_path, tracks_path)
 
                     # Phase 2.5: Hard frame export (legacy)
                     logger.info("--- Phase 2.5: Hard Frame Export ---")
-                    self.hard_frame_exporter.run(
-                        str(input_path), meta, detections_path, tracks_path, work_dir
-                    )
+                    with self._tracked_phase(timer, job_id, "hard_frames"):
+                        self.hard_frame_exporter.run(
+                            str(input_path), meta, detections_path, tracks_path, work_dir
+                        )
+
+                # Decision: prompt to review hard frames in Label Studio
+                if self.event_bus:
+                    hard_frames_manifest = work_dir / "hard_frames.json"
+                    hf_count = 0
+                    if hard_frames_manifest.exists():
+                        import json as _json_hf
+                        try:
+                            hf_data = _json_hf.loads(hard_frames_manifest.read_text())
+                            hf_count = hf_data.get("exported_count", 0)
+                        except Exception:
+                            pass
+                    if hf_count > 0:
+                        self.event_bus.request_decision(
+                            job_id,
+                            "hard_frame_labeling",
+                            f"{hf_count} hard frames exported for labeling. "
+                            f"Open Label Studio (http://localhost:8080) to review and annotate them. "
+                            f"Pipeline will continue rendering in the background.",
+                            options=["continue", "pause"],
+                            default_option="continue",
+                            timeout_sec=120,
+                        )
+
+                # Record tracking quality stats
+                import json as _json
+                tracks_data = _json.loads(tracks_path.read_text())
+                ball_found = sum(
+                    1 for t in tracks_data
+                    if t.get("ball") is not None or t.get("x") is not None
+                )
+                timer.record_stat("track_frames_total", len(tracks_data))
+                timer.record_stat("track_frames_with_ball", ball_found)
 
                 # Phase 3: Camera path generation (CPU)
                 logger.info("--- Phase 3: Camera Path Generation ---")
-                self.camera.generate(tracks_path, meta, camera_path_file)
+                with self._tracked_phase(timer, job_id, "camera"):
+                    self.camera.generate(tracks_path, meta, camera_path_file)
             else:
                 # NO_DETECT mode: skip detection/tracking, static camera
                 logger.info("--- NO_DETECT: Skipping phases 1-2, static camera path ---")
-                self.camera.generate_static(meta, camera_path_file)
+                with self._tracked_phase(timer, job_id, "camera"):
+                    self.camera.generate_static(meta, camera_path_file)
                 tracks_path = None
 
             # Phase 4: Broadcast reframing (CPU, parallel)
             logger.info("--- Phase 4: Broadcast Reframing ---")
             broadcast_path = work_dir / "broadcast.mp4"
-            self.reframer.render_broadcast(
-                str(input_path), meta, camera_path_file, broadcast_path
-            )
+            with self._tracked_phase(timer, job_id, "broadcast_reframe"):
+                self.reframer.render_broadcast(
+                    str(input_path), meta, camera_path_file, broadcast_path
+                )
 
             # Phase 5: Tactical wide view (CPU, parallel)
             logger.info("--- Phase 5: Tactical Wide View ---")
             tactical_path = work_dir / "tactical_wide.mp4"
-            self.reframer.render_tactical(str(input_path), meta, tactical_path)
+            with self._tracked_phase(timer, job_id, "tactical_reframe"):
+                self.reframer.render_tactical(str(input_path), meta, tactical_path)
 
             # Phase 6: Highlight detection and export
             logger.info("--- Phase 6: Highlights ---")
             highlights_dir = work_dir / "highlights"
-            if self.mode == "normal" and tracks_path is not None:
-                self.highlights.detect_and_export(
-                    broadcast_path, meta, camera_path_file, tracks_path, highlights_dir
-                )
-            else:
-                logger.info("Skipping highlights in NO_DETECT mode (no tracks)")
+            with self._tracked_phase(timer, job_id, "highlights"):
+                if self.mode == "normal" and tracks_path is not None:
+                    self.highlights.detect_and_export(
+                        broadcast_path, meta, camera_path_file, tracks_path, highlights_dir
+                    )
+                else:
+                    logger.info("Skipping highlights in NO_DETECT mode (no tracks)")
 
             # Phase 7: Export to final destination
             logger.info("--- Phase 7: Export ---")
-            output_dir = self.exporter.finalize(
-                work_dir, str(input_path), meta,
-                processing_start=start_time,
-                mode=self.mode,
-                ingest_source=str(ingest_source) if ingest_source else None,
-                job_id=job_id,
-            )
+            with self._tracked_phase(timer, job_id, "export"):
+                output_dir = self.exporter.finalize(
+                    work_dir, str(input_path), meta,
+                    processing_start=start_time,
+                    mode=self.mode,
+                    ingest_source=str(ingest_source) if ingest_source else None,
+                    job_id=job_id,
+                    phase_metrics=timer.to_dict(),
+                )
 
             elapsed = (datetime.now() - start_time).total_seconds()
             logger.info("=" * 60)
@@ -201,8 +309,13 @@ class Pipeline:
             logger.info("Outputs: %s", output_dir)
             logger.info("=" * 60)
 
-        except Exception:
+            if self.event_bus:
+                self.event_bus.job_completed(job_id)
+
+        except Exception as exc:
             logger.exception("Pipeline failed for %s", input_path)
+            if self.event_bus:
+                self.event_bus.job_failed(job_id, error=str(exc))
             raise
 
         finally:
