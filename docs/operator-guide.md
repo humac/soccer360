@@ -291,21 +291,25 @@ These "hard frames" are exported as JPEG images to `/tank/labeling/<match_name>/
 
 Label Studio runs alongside the pipeline for annotating hard frames:
 
-1. **Open Label Studio** at `http://<server-address>:8080`
-2. **Import hard frames** (your administrator will run the import script)
+1. **Open Label Studio** at `http://<server-address>:8080` (or use the dashboard's **Open Label Studio** button)
+2. **Import hard frames** (run `bash scripts/labelstudio_import.sh <match_name>` first)
 3. **Create a bounding box** around the ball in each image
    - If no ball is visible, skip the frame
    - Draw a tight box around the ball only
 4. **Export annotations** in YOLO format when done
+5. **Build dataset and train** using the dashboard's Active Learning section or the command-line scripts
 
 > **Tip:** Even 5-10 minutes of labeling per week makes a meaningful difference. Focus on frames where you can clearly see a ball that the model missed.
+
+For detailed step-by-step instructions including Label Studio setup, labeling techniques, exporting, and training, see the [Labeling Guide](labeling-guide.md).
 
 ### The Weekly Improvement Cycle
 
 1. **Games are processed** -- hard frames are auto-exported
-2. **You label hard frames** -- 5-10 minutes in Label Studio
-3. **Administrator builds dataset and trains** -- one command each
-4. **Next games are better** -- the worker automatically uses the improved model
+2. **Import hard frames** -- `bash scripts/labelstudio_import.sh <match>` for each new match
+3. **You label hard frames** -- 5-10 minutes in Label Studio
+4. **Build dataset + train** -- use the dashboard or run `bash scripts/build_dataset.sh` then `bash scripts/train_ball.sh`
+5. **Next games are better** -- the worker automatically uses the improved model
 
 ## Reprocessing a Match
 

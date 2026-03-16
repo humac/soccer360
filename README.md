@@ -153,6 +153,10 @@ soccer360 watch
 soccer360 process /path/to/video.mp4
 soccer360 process /path/to/video.mp4 --no-cleanup
 
+# Start monitoring dashboard (port 8088)
+soccer360 dashboard
+soccer360 dashboard --port 9000 --host 127.0.0.1
+
 # Train/fine-tune ball detection model
 soccer360 train --epochs 50 --data /tank/labeling/dataset.yaml
 
@@ -214,6 +218,7 @@ All parameters are in `configs/pipeline.yaml`:
 - **filters** -- V1: y-range vertical band filter, max jump/speed sanity limits
 - **tracking** -- V1: EMA alpha, persistence gate (require_persistence, window size)
 - **mode** -- allow_no_model toggle for graceful degradation
+- **dashboard** -- monitoring UI: enabled toggle, SQLite db_path, server port
 
 ## Camera Smoothing
 
@@ -357,14 +362,67 @@ Exported to `/tank/labeling/<match>/frames/` with a manifest at `hard_frames.jso
 
 Configure in `configs/pipeline.yaml` under `active_learning`.
 
+## Monitoring Dashboard
+
+A web-based monitoring UI on port 8088 provides real-time pipeline visibility and interactive decision handling. No babysitting logs required.
+
+**Features:**
+
+- Real-time pipeline progress (8-phase progress bar with timing)
+- GPU utilization gauges (updated via SSE)
+- Interactive decision prompts (approve/reject with countdown timers)
+- Job history with phase-level metrics
+- Active learning management (labeling status, dataset build, model training)
+
+**Start the dashboard:**
+
+```bash
+# Via Docker Compose (recommended)
+docker compose up -d dashboard
+
+# Or directly via CLI
+soccer360 dashboard --port 8088
+```
+
+Open `http://<server>:8088` in a browser. The dashboard streams events from the pipeline via SSE — no polling, no refresh needed.
+
+**Decision hooks:** When the pipeline reaches a decision point (mode confirmation, post-detection review, hard frame labeling), a notification banner appears with approve/reject buttons and a countdown timer. If no response is given, the pipeline auto-proceeds with the default option.
+
+**Training management:** The Active Learning section shows labeling progress per match, and provides buttons to build a YOLO dataset and trigger model training — all from the browser.
+
+**Configuration** (`configs/pipeline.yaml`):
+
+```yaml
+dashboard:
+  enabled: true          # Enable event emission from pipeline
+  db_path: /tank/data/dashboard.db  # SQLite state store
+  port: 8088             # Dashboard server port
+```
+
 ## Docker Services
 
 ```bash
-docker compose up -d worker        # Start processing daemon
-docker compose up -d labelstudio   # Start Label Studio (port 8080)
-docker compose logs -f worker      # Follow logs
+# Start all services at once (worker + dashboard + Label Studio)
+docker compose up -d
+
+# Or start individual services
+docker compose up -d worker        # Processing daemon (GPU)
+docker compose up -d dashboard     # Monitoring dashboard (port 8088)
+docker compose up -d labelstudio   # Label Studio (port 8080)
+
+# Useful commands
+docker compose logs -f worker      # Follow worker logs
+docker compose ps                  # Check service status + health
 docker compose down                # Stop everything
 ```
+
+| Service | Port | URL | Purpose |
+| --- | --- | --- | --- |
+| worker | — | — | Processing daemon (watches `/tank/ingest/`) |
+| dashboard | 8088 | `http://<server>:8088` | Real-time monitoring + training management |
+| labelstudio | 8080 | `http://<server>:8080` | Hard frame annotation |
+
+All services include Docker health checks. The `dashboard` service reuses the same `soccer360-worker:local` image as the worker — no separate build needed.
 
 ### Verify Worker Image Freshness and Runtime Assets
 
@@ -542,9 +600,9 @@ This image pins a Pascal-compatible stack from cu121 (`torch==2.4.1+cu121`, `tor
 
 ```text
 src/
-  cli.py          Click CLI entry point
-  watcher.py      Watchdog folder daemon (stability checks, dotfile filtering)
-  pipeline.py     Orchestrator (coordinates all processing phases + NO_DETECT mode)
+  cli.py          Click CLI entry point (watch, process, train, dashboard)
+  watcher.py      Watchdog folder daemon (stability checks, dotfile filtering, EventBus)
+  pipeline.py     Orchestrator (phases, event bus, decision hooks, NO_DETECT mode)
   detector.py     YOLO streaming batch detection + FoI filtering + model resolution
   tracker.py      ByteTrack ball tracking (two-stage association, Kalman box filter)
   camera.py       Camera path generation (Kalman + EMA + deadband + dynamic FOV)
@@ -555,6 +613,11 @@ src/
   active_learning.py   V1 active learning export (three-trigger identification)
   trainer.py           YOLO fine-tuning + TensorRT export
   utils.py             FFmpeg streaming I/O, config, equirectangular angle helpers
+  events.py            EventStore (SQLite WAL) + EventBus + decision queue
+  dashboard.py         FastAPI monitoring dashboard + REST API + SSE + training mgmt
+  metrics.py           PhaseTimer (per-phase timing) + GPU utilization snapshots
+  static/
+    index.html         Single-page dashboard UI (vanilla JS/CSS, SSE)
 
 configs/
   pipeline.yaml       Main processing configuration
@@ -582,20 +645,26 @@ tests/
   test_model_resolution.py     Model resolution + NO_DETECT mode tests
   test_watcher.py          Watcher ingest handling + safety tests
   test_exporter.py         Output organization tests
+  test_events.py           EventStore + EventBus + decision queue tests
+  test_dashboard.py        Dashboard API + training endpoint tests
+  test_metrics.py          PhaseTimer + GPU snapshot tests
 ```
 
 ## Key Dependencies
 
-|Package|Purpose|
-|---|---|
-|ultralytics|YOLO ball detection|
-|py360convert|Equirectangular-to-perspective projection|
-|filterpy|Kalman filtering (tracking + camera smoothing)|
-|scipy|Linear sum assignment (ByteTrack matching)|
-|watchdog|File system event monitoring|
-|click|CLI framework|
-|opencv-python-headless|Image processing|
-|ffmpeg (system)|Video decode/encode via streaming pipes|
+| Package | Purpose |
+| --- | --- |
+| ultralytics | YOLO ball detection |
+| py360convert | Equirectangular-to-perspective projection |
+| filterpy | Kalman filtering (tracking + camera smoothing) |
+| scipy | Linear sum assignment (ByteTrack matching) |
+| watchdog | File system event monitoring |
+| click | CLI framework |
+| opencv-python-headless | Image processing |
+| ffmpeg (system) | Video decode/encode via streaming pipes |
+| fastapi | Monitoring dashboard REST API |
+| uvicorn | ASGI server for dashboard |
+| sse-starlette | Server-Sent Events for real-time streaming |
 
 ## Testing
 

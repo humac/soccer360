@@ -36,7 +36,7 @@ The orchestrator is in `src/pipeline.py` and supports three runtime modes:
 
 ```text
 src/
-  pipeline.py        Orchestrator; mode selection and phase coordination
+  pipeline.py        Orchestrator; mode selection, phase coordination, event bus, decision hooks
   detector.py        YOLO streaming inference, FoI filter, model resolution
   tracker.py         Legacy ByteTrack tracker + V1 BallStabilizer
   active_learning.py V1 hard-frame candidate selection and export
@@ -45,10 +45,15 @@ src/
   reframer.py        360->perspective rendering (parallel segments with overlap)
   highlights.py      Heuristic highlight detection and clip export
   exporter.py        Final outputs, metadata, ingest archival bookkeeping
-  watcher.py         Ingest daemon + persistent dedupe state
+  watcher.py         Ingest daemon + persistent dedupe state + EventBus creation
   trainer.py         Fine-tuning + TensorRT export + manual hard-frame export command
-  cli.py             Click CLI entrypoint
+  cli.py             Click CLI entrypoint (watch, process, train, dashboard commands)
   utils.py           ffmpeg streaming I/O, angle math, JSON/JSONL helpers
+  events.py          EventStore (SQLite WAL) + EventBus (null-safe) + decision queue
+  dashboard.py       FastAPI dashboard: REST API + SSE stream + training management
+  metrics.py         PhaseTimer (context-manager timing) + gpu_utilization_snapshot
+  static/
+    index.html       Single-page monitoring dashboard (vanilla JS/CSS, EventSource SSE)
 ```
 
 ## Model Resolution
@@ -82,6 +87,74 @@ Notes:
 2. `model.path`
 3. `/app/models/ball_base.pt` (copied into tank models)
 4. `None` (NO_DETECT)
+
+## Monitoring Dashboard
+
+FastAPI-based web UI on port 8088 for real-time pipeline monitoring and interactive decision handling.
+
+### Architecture
+
+```text
+[Watcher/Pipeline] --writes--> [SQLite WAL] <--reads-- [FastAPI+SSE] --streams--> [Browser]
+                                    ^                        |
+                                    +--- POST /decisions ----+
+```
+
+- `src/events.py`: `EventStore` persists to SQLite (`/tank/data/dashboard.db`); `EventBus` wraps it with null-safety (never raises, logs warnings). Thread-safe: shared connection for `:memory:`, per-thread for file-based.
+- `src/dashboard.py`: `create_app(config)` returns FastAPI app. REST endpoints + SSE `/api/events` stream.
+- `src/metrics.py`: `PhaseTimer` (context-manager per-phase timing + stats recording), `gpu_utilization_snapshot()` (parses `nvidia-smi` CSV).
+- `src/static/index.html`: Vanilla JS SPA. Dark theme. Connects via `EventSource`. Sections: pipeline progress bar, GPU gauges, stats, active learning/training controls, job history.
+
+### REST API
+
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/api/status` | GET | Current state (idle/processing), current phase, queue depth |
+| `/api/jobs` | GET | Recent jobs list (default limit 50) |
+| `/api/jobs/{job_id}` | GET | Job detail with phase timings |
+| `/api/gpu` | GET | Live GPU snapshot |
+| `/api/decisions/pending` | GET | Pending decision prompts |
+| `/api/decisions/{id}/resolve` | POST | Resolve a decision (approved/rejected) |
+| `/api/events` | GET | SSE stream (phase events, GPU snapshots, decisions, heartbeats) |
+| `/api/training/labeling-status` | GET | Per-match frame/label counts from `/tank/labeling/` |
+| `/api/training/status` | GET | Training state (idle/building/running/completed/failed) |
+| `/api/training/models` | GET | Available `.pt` models in models dir |
+| `/api/training/build-dataset` | POST | Trigger dataset build (subprocess) |
+| `/api/training/train` | POST | Trigger model training (subprocess, configurable epochs) |
+
+### Decision Hooks in Pipeline
+
+Pipeline emits three decision points (all auto-proceed on timeout):
+
+1. **Mode confirmation** (30s): before detection phase starts
+2. **Post-detection review** (60s): after detection, shows coverage stats
+3. **Hard frame labeling** (120s): after hard frame export, prompts Label Studio review
+
+### Event Bus Integration
+
+- `Pipeline.__init__` accepts optional `event_bus` parameter
+- `_tracked_phase()` context manager combines `PhaseTimer` timing with `EventBus` emission
+- All event bus calls guarded by `if self.event_bus:` — CLI-only path completely unchanged
+- `WatcherDaemon` creates `EventBus` when `dashboard.enabled: true` in config
+- Docker Compose `dashboard` service reuses `soccer360-worker:local` image
+
+### Config
+
+```yaml
+dashboard:
+  enabled: true
+  db_path: /tank/data/dashboard.db
+  port: 8088
+```
+
+### Docker
+
+```bash
+docker compose up -d dashboard    # Start dashboard (port 8088)
+docker compose up -d worker       # Worker emits events when dashboard.enabled: true
+```
+
+Dashboard service has a health check: `GET /api/status` every 30s.
 
 ## Critical Math and Conventions
 

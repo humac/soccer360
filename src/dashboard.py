@@ -14,7 +14,7 @@ import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
@@ -46,11 +46,13 @@ def _scan_labeling_status(labeling_dir: Path) -> dict:
         label_count = len(list(labels_dir.glob("*.txt"))) if labels_dir.exists() else 0
 
         if frame_count > 0:
+            tasks_json = match_dir / "labelstudio" / "tasks.json"
             matches.append({
                 "name": match_dir.name,
                 "frames": frame_count,
                 "labeled": label_count,
                 "pct_labeled": round(label_count / frame_count * 100, 1) if frame_count > 0 else 0,
+                "tasks_imported": tasks_json.exists(),
             })
             total_frames += frame_count
             total_labeled += label_count
@@ -72,6 +74,15 @@ def create_app(config: dict | None = None) -> FastAPI:
     store = create_event_store(config)
 
     app = FastAPI(title="Soccer360 Dashboard", version="0.1.0")
+
+    # CORS: allow Label Studio (port 8080) to fetch images from dashboard (port 8088)
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET"],
+        allow_headers=["*"],
+    )
 
     # Serve static files if directory exists
     if STATIC_DIR.is_dir():
@@ -148,6 +159,81 @@ def create_app(config: dict | None = None) -> FastAPI:
     @app.get("/api/training/labeling-status")
     async def labeling_status():
         return _scan_labeling_status(labeling_dir)
+
+    @app.post("/api/training/import-tasks/{match_name}")
+    async def import_tasks(match_name: str, request: Request):
+        """Generate Label Studio import tasks for a match."""
+        if ".." in match_name or "/" in match_name:
+            raise HTTPException(status_code=400, detail="Invalid match name")
+        match_dir = labeling_dir / match_name
+        frames_dir = match_dir / "frames"
+        if not frames_dir.is_dir():
+            raise HTTPException(
+                status_code=404,
+                detail=f"No frames found for '{match_name}'. Process a video first.",
+            )
+
+        # Load manifest for predicted bboxes
+        manifest_path = match_dir / "hard_frames.json"
+        frame_meta = {}
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text())
+                for f in manifest.get("frames", []):
+                    frame_meta[f["frame_index"]] = f
+            except Exception:
+                pass
+
+        # Build Label Studio task JSON
+        # Use the Host header so URLs work from the browser's perspective
+        host = request.headers.get("host", "localhost:8088")
+        scheme = request.headers.get("x-forwarded-proto", "http")
+        base_url = f"{scheme}://{host}"
+        tasks = []
+        img_w, img_h = 1920, 960  # detection resolution
+        for img in sorted(frames_dir.glob("frame_*.jpg")):
+            frame_idx = int(img.stem.split("_")[1])
+            ls_path = f"{base_url}/api/labeling/frames/{match_name}/{img.name}"
+
+            task: dict = {
+                "data": {
+                    "image": ls_path,
+                    "frame_index": frame_idx,
+                    "match_name": match_name,
+                },
+            }
+
+            meta = frame_meta.get(frame_idx, {})
+            bbox = meta.get("predicted_bbox") or meta.get("bbox")
+            if bbox and len(bbox) == 4:
+                x_pct = (bbox[0] / img_w) * 100
+                y_pct = (bbox[1] / img_h) * 100
+                w_pct = ((bbox[2] - bbox[0]) / img_w) * 100
+                h_pct = ((bbox[3] - bbox[1]) / img_h) * 100
+                task["predictions"] = [{
+                    "model_version": "ball_detector",
+                    "result": [{
+                        "from_name": "label",
+                        "to_name": "image",
+                        "type": "rectanglelabels",
+                        "value": {
+                            "x": round(x_pct, 2),
+                            "y": round(y_pct, 2),
+                            "width": round(w_pct, 2),
+                            "height": round(h_pct, 2),
+                            "rectanglelabels": ["ball"],
+                        },
+                    }],
+                }]
+            tasks.append(task)
+
+        # Write tasks.json
+        ls_output_dir = match_dir / "labelstudio"
+        ls_output_dir.mkdir(parents=True, exist_ok=True)
+        tasks_file = ls_output_dir / "tasks.json"
+        tasks_file.write_text(json.dumps(tasks, indent=2))
+
+        return {"ok": True, "match": match_name, "tasks": len(tasks)}
 
     @app.get("/api/training/status")
     async def training_status():
@@ -251,6 +337,88 @@ def create_app(config: dict | None = None) -> FastAPI:
 
         threading.Thread(target=_run_training, daemon=True).start()
         return {"ok": True, "status": "running", "epochs": epochs}
+
+    # ------------------------------------------------------------------
+    # Labeling frame server (for Label Studio to fetch images)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/labeling/frames/{match_name}/{filename}")
+    async def serve_labeling_frame(match_name: str, filename: str):
+        """Serve a hard frame image. Used by Label Studio tasks."""
+        if ".." in match_name or ".." in filename:
+            raise HTTPException(status_code=400, detail="Invalid path")
+        frame_path = labeling_dir / match_name / "frames" / filename
+        if not frame_path.is_file():
+            raise HTTPException(status_code=404, detail="Frame not found")
+        return FileResponse(str(frame_path), media_type="image/jpeg")
+
+    # ------------------------------------------------------------------
+    # Media / Processed Videos
+    # ------------------------------------------------------------------
+
+    processed_dir = Path(config.get("paths", {}).get("processed", "/tank/processed"))
+    highlights_dir = Path(config.get("paths", {}).get("highlights", "/tank/highlights"))
+
+    @app.get("/api/media/matches")
+    async def list_matches():
+        """List processed matches with available video files."""
+        matches = []
+        if processed_dir.is_dir():
+            for match_dir in sorted(processed_dir.iterdir(), reverse=True):
+                if not match_dir.is_dir() or match_dir.name.startswith("."):
+                    continue
+                videos = []
+                for vf in sorted(match_dir.glob("*.mp4")):
+                    videos.append({
+                        "name": vf.name,
+                        "size_mb": round(vf.stat().st_size / 1e6, 1),
+                    })
+                # Check for highlights
+                hl_dir = highlights_dir / match_dir.name
+                if hl_dir.is_dir():
+                    for vf in sorted(hl_dir.glob("*.mp4")):
+                        videos.append({
+                            "name": f"highlights/{vf.name}",
+                            "size_mb": round(vf.stat().st_size / 1e6, 1),
+                        })
+                if videos:
+                    # Read metadata if available
+                    meta_file = match_dir / "metadata.json"
+                    meta = {}
+                    if meta_file.exists():
+                        try:
+                            meta = json.loads(meta_file.read_text())
+                        except Exception:
+                            pass
+                    matches.append({
+                        "name": match_dir.name,
+                        "videos": videos,
+                        "mode": meta.get("mode", "--"),
+                        "processed_at": meta.get("processing_start", "--"),
+                    })
+        return matches
+
+    @app.get("/api/media/{match_name}/{filename:path}")
+    async def stream_video(match_name: str, filename: str):
+        """Serve a processed video file with range request support."""
+        # Sanitize path components
+        if ".." in match_name or ".." in filename:
+            raise HTTPException(status_code=400, detail="Invalid path")
+
+        if filename.startswith("highlights/"):
+            clip_name = filename[len("highlights/"):]
+            video_path = highlights_dir / match_name / clip_name
+        else:
+            video_path = processed_dir / match_name / filename
+
+        if not video_path.is_file():
+            raise HTTPException(status_code=404, detail="Video not found")
+
+        return FileResponse(
+            str(video_path),
+            media_type="video/mp4",
+            filename=filename,
+        )
 
     # ------------------------------------------------------------------
     # SSE event stream

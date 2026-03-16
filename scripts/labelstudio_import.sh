@@ -47,7 +47,7 @@ for img in sorted(frames_dir.glob("frame_*.jpg")):
     frame_idx = int(img.stem.split("_")[1])
     # Path as seen by Label Studio container
     # (mounted at /label-studio/data/labeling via docker-compose)
-    ls_path = f"/data/labeling/{match_name}/frames/{img.name}"
+    ls_path = f"/data/local-files/?d=labeling/{match_name}/frames/{img.name}"
 
     task = {
         "data": {

@@ -15,12 +15,16 @@ Runtime modes in `src/pipeline.py`:
 
 ## Key Files
 
-- `src/pipeline.py`: mode resolution and phase orchestration
+- `src/pipeline.py`: mode resolution, phase orchestration, event bus integration, decision hooks
 - `src/detector.py`: model resolution, FoI, V1/legacy detection behavior
 - `src/tracker.py`: ByteTrack (legacy) + BallStabilizer (V1)
 - `src/active_learning.py`: V1 hard-frame export triggers/gating
-- `src/watcher.py`: ingest queue daemon + persistent dedupe fingerprints
+- `src/watcher.py`: ingest queue daemon + persistent dedupe fingerprints + EventBus creation
 - `src/exporter.py`: metadata + ingest archival (`move`/`copy`/`leave`, collision policy)
+- `src/events.py`: EventStore (SQLite) + EventBus (null-safe pipeline wrapper) + decision queue
+- `src/dashboard.py`: FastAPI monitoring dashboard + REST API + SSE stream + training management
+- `src/metrics.py`: PhaseTimer (context-manager timing) + gpu_utilization_snapshot (nvidia-smi)
+- `src/static/index.html`: single-page dashboard UI (vanilla JS/CSS, EventSource SSE)
 - `scripts/verify_container_assets.sh`: canonical container build/runtime verifier
 - `scripts/install.sh`: calls verifier as canonical worker build path
 
@@ -48,6 +52,19 @@ Runtime modes in `src/pipeline.py`:
 - Resolver failures are fail-fast and include attempted `CONFIG_PATH`, resolver exit code, and captured stderr. Use `VERBOSE=1` to print captured resolver stderr/noise diagnostics when non-empty.
 - Resolver exit codes are deterministic: `11` (config path/readability), `12` (config parse/load), `13` (resolver import/runtime resolution).
 - Canonical explicit Roboflow path is `/app/models/roboflow/football_players_v1.pt`; in default compose runtime `/app/models` is mounted from host `/tank/models`, so place weights at `/tank/models/roboflow/football_players_v1.pt`.
+
+## Monitoring Dashboard
+
+- **Port 8088** (avoids Label Studio on 8080)
+- `soccer360 dashboard` CLI command starts FastAPI + uvicorn
+- `dashboard` Docker Compose service reuses `soccer360-worker:local` image
+- EventBus usage in pipeline is always guarded by `if self.event_bus:` — CLI path unchanged
+- SQLite WAL mode store at `dashboard.db_path` (default `/tank/data/dashboard.db`)
+- SSE endpoint (`/api/events`) streams phase events, GPU snapshots, decisions, status heartbeats
+- Decision hooks in pipeline: mode confirmation (30s), post-detection review (60s), hard frame labeling (120s)
+- Training management API: `/api/training/labeling-status`, `/api/training/build-dataset`, `/api/training/train`, `/api/training/models`
+- Config section: `dashboard:` with `enabled`, `db_path`, `port`
+- Dependencies: `fastapi>=0.109`, `uvicorn>=0.27`, `sse-starlette>=2.0`
 
 ## Non-Negotiable Conventions
 

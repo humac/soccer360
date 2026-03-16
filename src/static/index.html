@@ -107,6 +107,13 @@
   .btn:hover { opacity: 0.85; }
 
   .empty-state { color: var(--muted); text-align: center; padding: 40px; }
+
+  .video-btn {
+    padding: 4px 12px; border-radius: 4px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--muted); font-size: 0.8rem; cursor: pointer;
+  }
+  .video-btn.active { border-color: var(--accent); color: var(--accent); background: #1e3a5f; }
+  .video-btn:hover { border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -172,16 +179,42 @@
   <!-- Active Learning / Training -->
   <div class="card card-full">
     <h2>Active Learning</h2>
+
+    <!-- Workflow steps -->
+    <div style="display:flex;gap:4px;margin-bottom:16px;font-size:0.75rem;color:var(--muted)">
+      <div style="flex:1;text-align:center;padding:6px;background:var(--bg);border-radius:4px">
+        <div style="font-weight:600;color:var(--text)">1. Process</div>Hard frames auto-exported
+      </div>
+      <div style="display:flex;align-items:center;color:var(--border)">&#9654;</div>
+      <div style="flex:1;text-align:center;padding:6px;background:var(--bg);border-radius:4px">
+        <div style="font-weight:600;color:var(--text)">2. Import</div>Generate tasks for Label Studio
+      </div>
+      <div style="display:flex;align-items:center;color:var(--border)">&#9654;</div>
+      <div style="flex:1;text-align:center;padding:6px;background:var(--bg);border-radius:4px">
+        <div style="font-weight:600;color:var(--text)">3. Label</div>Draw boxes in Label Studio
+      </div>
+      <div style="display:flex;align-items:center;color:var(--border)">&#9654;</div>
+      <div style="flex:1;text-align:center;padding:6px;background:var(--bg);border-radius:4px">
+        <div style="font-weight:600;color:var(--text)">4. Export</div>YOLO labels from Label Studio
+      </div>
+      <div style="display:flex;align-items:center;color:var(--border)">&#9654;</div>
+      <div style="flex:1;text-align:center;padding:6px;background:var(--bg);border-radius:4px">
+        <div style="font-weight:600;color:var(--text)">5. Train</div>Build dataset + fine-tune
+      </div>
+    </div>
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
       <!-- Labeling Status -->
       <div>
-        <h3 style="font-size:0.9rem;color:var(--muted);margin-bottom:8px">Labeling Status</h3>
+        <h3 style="font-size:0.9rem;color:var(--muted);margin-bottom:8px">Matches</h3>
         <div id="labeling-summary" style="font-size:0.85rem;margin-bottom:8px">Loading...</div>
-        <div id="labeling-matches" style="font-size:0.8rem;max-height:120px;overflow-y:auto"></div>
-        <div style="margin-top:12px">
-          <a href="http://localhost:8080" target="_blank" class="btn" style="background:var(--accent);color:#fff;text-decoration:none;display:inline-block">
+        <div id="labeling-matches" style="font-size:0.8rem;max-height:200px;overflow-y:auto"></div>
+        <div style="margin-top:12px;display:flex;align-items:center;gap:12px">
+          <a id="labelstudio-link" href="#" target="_blank" class="btn" style="background:var(--accent);color:#fff;text-decoration:none;display:inline-block">
             Open Label Studio
           </a>
+          <span style="font-size:0.7rem;color:var(--muted)">Import tasks.json there after clicking Import above</span>
+          <script>document.getElementById('labelstudio-link').href = location.protocol + '//' + location.hostname + ':8080';</script>
         </div>
       </div>
       <!-- Training Controls -->
@@ -191,10 +224,10 @@
         <div id="training-error" style="font-size:0.8rem;color:var(--red);margin-bottom:8px;display:none"></div>
         <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
           <button class="btn" style="background:var(--yellow);color:#000" onclick="buildDataset()">
-            1. Build Dataset
+            Build Dataset
           </button>
           <button class="btn" style="background:var(--green);color:#000" onclick="startTraining()">
-            2. Train Model
+            Train Model
           </button>
           <label style="font-size:0.8rem;color:var(--muted)">
             Epochs: <input id="train-epochs" type="number" value="50" min="1" max="500"
@@ -206,6 +239,27 @@
         <div id="model-list" style="font-size:0.8rem">Loading...</div>
       </div>
     </div>
+  </div>
+
+  <!-- Media Player -->
+  <div class="card card-full">
+    <h2>Processed Videos</h2>
+    <div id="media-empty" class="empty-state" style="display:none;padding:20px">No processed videos found.</div>
+    <div id="media-controls" style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
+      <label style="font-size:0.85rem;color:var(--muted)">Match:</label>
+      <select id="media-match" onchange="onMatchSelect()"
+        style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:0.85rem;min-width:200px">
+        <option value="">Loading...</option>
+      </select>
+      <div id="media-video-btns" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      <span id="media-size" style="color:var(--muted);font-size:0.8rem;margin-left:auto"></span>
+    </div>
+    <div id="media-player-wrap" style="display:none;background:#000;border-radius:6px;overflow:hidden;position:relative">
+      <video id="media-player" controls preload="metadata"
+        style="width:100%;max-height:60vh;display:block">
+      </video>
+    </div>
+    <div id="media-meta" style="margin-top:8px;font-size:0.8rem;color:var(--muted);display:none"></div>
   </div>
 
   <!-- Job History -->
@@ -457,12 +511,32 @@ async function loadLabelingStatus() {
       ' frames labeled (' + pct + '%)' +
       (d.dataset_ready ? ' &mdash; <span style="color:var(--green)">Dataset ready</span>' : '');
 
-    matchesEl.innerHTML = d.matches.map(m =>
-      '<div style="display:flex;justify-content:space-between;padding:2px 0">' +
-      '<span>' + escapeHtml(m.name) + '</span>' +
-      '<span style="color:var(--muted)">' + m.labeled + '/' + m.frames + ' (' + m.pct_labeled + '%)</span>' +
-      '</div>'
-    ).join('');
+    matchesEl.innerHTML = d.matches.map(m => {
+      const imported = m.tasks_imported;
+      const labelPct = m.pct_labeled;
+      let statusIcon, statusColor, statusTip;
+      if (labelPct > 0) {
+        statusIcon = '&#10003;'; statusColor = 'var(--green)'; statusTip = 'Labeling in progress';
+      } else if (imported) {
+        statusIcon = '&#9679;'; statusColor = 'var(--yellow)'; statusTip = 'Tasks generated — import into Label Studio';
+      } else {
+        statusIcon = '&#9675;'; statusColor = 'var(--muted)'; statusTip = 'Click Import to generate tasks';
+      }
+
+      const importBtn = '<button class="btn" style="font-size:0.7rem;padding:1px 8px;background:var(--accent);color:#fff" ' +
+        'onclick="importTasks(\'' + escapeHtml(m.name) + '\',this)" title="Generate tasks.json for Label Studio">' +
+        (imported ? 'Re-import' : 'Import') + '</button>';
+
+      const labelInfo = '<span style="color:var(--muted);font-size:0.75rem" title="Labeled frames">' +
+        m.labeled + '/' + m.frames + ' labeled</span>';
+
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">' +
+        '<span style="color:' + statusColor + ';font-size:0.8rem" title="' + statusTip + '">' + statusIcon + '</span>' +
+        '<span style="flex:1;font-weight:500">' + escapeHtml(m.name) + '</span>' +
+        '<span style="min-width:100px;text-align:right">' + labelInfo + '</span>' +
+        '<span style="min-width:70px;text-align:right">' + importBtn + '</span>' +
+        '</div>';
+    }).join('');
   } catch(e) {
     console.error('Failed to load labeling status:', e);
   }
@@ -513,6 +587,37 @@ async function loadModels() {
   } catch(e) {}
 }
 
+async function importTasks(matchName, btnEl) {
+  btnEl.disabled = true;
+  btnEl.textContent = 'Generating...';
+  try {
+    const resp = await fetch('/api/training/import-tasks/' + encodeURIComponent(matchName), {method: 'POST'});
+    const d = await resp.json();
+    if (!resp.ok) { alert(d.detail || 'Import failed'); btnEl.disabled = false; btnEl.textContent = 'Import'; return; }
+    btnEl.textContent = d.tasks + ' tasks ready';
+    btnEl.style.background = 'var(--green)';
+    btnEl.style.color = '#fff';
+    setTimeout(() => { btnEl.disabled = false; btnEl.textContent = 'Re-import'; btnEl.style.background = 'var(--accent)'; }, 3000);
+    // Show next-step instructions
+    const lsHost = location.protocol + '//' + location.hostname + ':8080';
+    const tasksPath = '/tank/labeling/' + matchName + '/labelstudio/tasks.json';
+    const msg = 'Tasks generated for ' + matchName + '!\n\n' +
+      'Next steps:\n' +
+      '1. Open Label Studio: ' + lsHost + '\n' +
+      '2. Create or select a project\n' +
+      '3. Click "Import" in the project\n' +
+      '4. Upload the file: ' + tasksPath + '\n' +
+      '   (or drag-and-drop it)\n' +
+      '5. Label the ball in each frame';
+    alert(msg);
+    loadLabelingStatus();
+  } catch(e) {
+    alert('Failed: ' + e.message);
+    btnEl.disabled = false;
+    btnEl.textContent = 'Import';
+  }
+}
+
 async function buildDataset() {
   if (!confirm('Build dataset from all labeled frames?')) return;
   try {
@@ -536,16 +641,98 @@ async function startTraining() {
   } catch(e) { alert('Failed: ' + e.message); }
 }
 
+// --- Media Player ---
+let mediaData = [];
+let currentMatch = null;
+let currentVideo = null;
+
+async function loadMedia() {
+  try {
+    const resp = await fetch('/api/media/matches');
+    mediaData = await resp.json();
+    const select = document.getElementById('media-match');
+    const emptyEl = document.getElementById('media-empty');
+
+    if (mediaData.length === 0) {
+      select.innerHTML = '<option value="">No matches</option>';
+      emptyEl.style.display = 'block';
+      document.getElementById('media-controls').style.display = 'none';
+      return;
+    }
+
+    emptyEl.style.display = 'none';
+    document.getElementById('media-controls').style.display = 'flex';
+    select.innerHTML = mediaData.map((m, i) =>
+      '<option value="' + i + '">' + escapeHtml(m.name) + '</option>'
+    ).join('');
+
+    // Auto-select first match
+    if (!currentMatch) onMatchSelect();
+  } catch(e) {
+    console.error('Failed to load media:', e);
+  }
+}
+
+function onMatchSelect() {
+  const idx = parseInt(document.getElementById('media-match').value);
+  if (isNaN(idx) || !mediaData[idx]) return;
+  currentMatch = mediaData[idx];
+
+  const btnsEl = document.getElementById('media-video-btns');
+  btnsEl.innerHTML = currentMatch.videos.map(v => {
+    const label = v.name.replace('.mp4', '').replace('highlights/', 'HL: ');
+    return '<button class="video-btn" onclick="playVideo(\'' +
+      escapeHtml(currentMatch.name) + '\',\'' + escapeHtml(v.name) + '\',this)">' +
+      escapeHtml(label) + '</button>';
+  }).join('');
+
+  const metaEl = document.getElementById('media-meta');
+  metaEl.style.display = 'block';
+  metaEl.textContent = 'Mode: ' + currentMatch.mode + ' | Processed: ' +
+    (currentMatch.processed_at !== '--' ? new Date(currentMatch.processed_at).toLocaleString() : '--');
+
+  // Auto-play broadcast if available
+  const broadcast = currentMatch.videos.find(v => v.name === 'broadcast.mp4');
+  if (broadcast) {
+    const firstBtn = btnsEl.querySelector('.video-btn');
+    playVideo(currentMatch.name, broadcast.name, firstBtn);
+  }
+}
+
+function playVideo(matchName, filename, btnEl) {
+  const player = document.getElementById('media-player');
+  const wrap = document.getElementById('media-player-wrap');
+  const sizeEl = document.getElementById('media-size');
+
+  // Update active button
+  document.querySelectorAll('.video-btn').forEach(b => b.classList.remove('active'));
+  if (btnEl) btnEl.classList.add('active');
+
+  const url = '/api/media/' + encodeURIComponent(matchName) + '/' + encodeURIComponent(filename);
+  player.src = url;
+  wrap.style.display = 'block';
+  currentVideo = filename;
+
+  // Show file size
+  const match = mediaData.find(m => m.name === matchName);
+  if (match) {
+    const vid = match.videos.find(v => v.name === filename);
+    if (vid) sizeEl.textContent = vid.size_mb + ' MB';
+  }
+}
+
 // --- Init ---
 connectSSE();
 loadJobs();
 loadLabelingStatus();
 loadTrainingStatus();
 loadModels();
+loadMedia();
 setInterval(loadJobs, 10000);
 setInterval(loadLabelingStatus, 15000);
 setInterval(loadTrainingStatus, 5000);
 setInterval(loadModels, 30000);
+setInterval(loadMedia, 30000);
 </script>
 </body>
 </html>

@@ -236,7 +236,7 @@ class Pipeline:
                             job_id,
                             "hard_frame_labeling",
                             f"{hf_count} hard frames exported for labeling. "
-                            f"Open Label Studio (http://localhost:8080) to review and annotate them. "
+                            f"Open Label Studio (port 8080) to review and annotate them. "
                             f"Pipeline will continue rendering in the background.",
                             options=["continue", "pause"],
                             default_option="continue",
