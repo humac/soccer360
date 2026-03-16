@@ -42,7 +42,7 @@ A guide for day-to-day operation of the Soccer360 pipeline: ingesting match reco
 
 Soccer360 takes a 360-degree match recording (from a camera like the Insta360 X5) and automatically produces:
 
-- **Broadcast video** -- an auto-follow view that tracks the ball, mimicking a traditional TV broadcast
+- **Broadcast video** -- an auto-follow view that tracks the action using ball detection and player cluster tracking, mimicking a traditional TV broadcast
 - **Tactical wide view** -- a fixed wide-angle perspective of the full pitch
 - **Highlight clips** -- short clips of goals, shots, and other key moments
 
@@ -164,10 +164,11 @@ Press `Ctrl+C` to stop following logs (the worker keeps running).
 
 | Phase | What Happens | Duration (typical) |
 |-------|-------------|-------------------|
-| 1. Detection | YOLO finds the ball in each frame using the GPU | 15-25 min |
+| 1. Detection | YOLO finds the ball and players in each frame using the GPU | 15-25 min |
 | 2. Tracking | Ball positions are stabilized and smoothed | < 1 min |
 | 2.5. Hard frames | Difficult frames exported for future labeling | < 1 min |
-| 3. Camera path | Virtual camera angles calculated per frame | < 1 min |
+| 2.7. Player cluster | Center-of-play estimated from player positions | < 1 min |
+| 3. Camera path | Virtual camera angles calculated, blending ball and player data | < 1 min |
 | 4. Broadcast | Auto-follow video rendered (12 parallel workers) | 20-40 min |
 | 5. Tactical | Wide-angle view rendered in parallel | 10-20 min |
 | 6. Highlights | Key moments detected and clips exported | 2-5 min |
@@ -188,7 +189,7 @@ The `<match_name>` is derived from the input filename (without extension).
 
 **File:** `broadcast.mp4`
 
-The main output. An auto-follow perspective view that tracks the ball across the pitch, similar to a traditional TV broadcast. Resolution: 1920x1080, H.264 encoded.
+The main output. An auto-follow perspective view that tracks the action across the pitch, similar to a traditional TV broadcast. The camera follows the ball when detected, and falls back to tracking the center of player activity when the ball is lost. Resolution: 1920x1080, H.264 encoded.
 
 ### Tactical Wide View
 
@@ -229,6 +230,7 @@ The `phase_metrics` section in `metadata.json` is especially useful for understa
     "detection": 1234.5,
     "tracking": 2.3,
     "hard_frames": 1.1,
+    "player_cluster": 0.4,
     "camera": 0.8,
     "broadcast_reframe": 567.9,
     "tactical_reframe": 321.4,
@@ -253,8 +255,10 @@ The `phase_metrics` section in `metadata.json` is especially useful for understa
 > **Tip:** Compare `track_frames_with_ball` against `track_frames_total` to get a sense of how well the model is detecting the ball. A low ratio suggests the model needs improvement via the active learning workflow.
 
 **Other diagnostic files:**
-- `detections.jsonl` -- raw ball detections per frame
+
+- `detections.jsonl` -- raw detections per frame (ball and player positions)
 - `tracks.json` -- stabilized ball positions
+- `player_cluster.json` -- per-frame player cluster centroid and spread
 - `camera_path.json` -- virtual camera angles per frame
 - `foi_meta.json` -- Field-of-Interest filter metadata
 - `hard_frames.json` -- manifest of hard frames exported for labeling
@@ -360,8 +364,9 @@ docker compose run --rm worker soccer360 process /path/to/match.mp4 --no-cleanup
 
 | Issue | Likely Cause | Remedy |
 |-------|-------------|--------|
-| Camera not following the ball | Detection model missing balls frequently | Label hard frames to improve model |
+| Camera not following the action | Detection model missing balls and few players detected | Label hard frames to improve ball model; check `player_cluster.json` for cluster coverage |
 | Camera jittery / oscillating | Ball detections are noisy | Check FoI settings; may need wider yaw window |
+| Camera follows players but misses ball | Ball detection weak, center-of-play fallback active | Label hard frames; check `track_frames_with_ball` ratio in metadata |
 | Broadcast shows wrong field | FoI center pointing at adjacent field | Ask admin to adjust `field_of_interest.center_yaw_deg` |
 | Black frames or artifacts | Source video has stitching issues | Re-export from Insta360 Studio |
 | Highlight clips are irrelevant | Heuristic thresholds need tuning | Ask admin to adjust highlight parameters |

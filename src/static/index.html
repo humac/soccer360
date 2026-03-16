@@ -137,6 +137,7 @@
       <div class="phase-block" data-phase="detection">Detect</div>
       <div class="phase-block" data-phase="tracking">Track</div>
       <div class="phase-block" data-phase="hard_frames">Hard Fr</div>
+      <div class="phase-block" data-phase="player_cluster">Cluster</div>
       <div class="phase-block" data-phase="camera">Camera</div>
       <div class="phase-block" data-phase="broadcast_reframe">Bcast</div>
       <div class="phase-block" data-phase="tactical_reframe">Tactic</div>
@@ -275,7 +276,7 @@
 </div>
 
 <script>
-const PHASE_ORDER = ['detection','tracking','hard_frames','camera','broadcast_reframe','tactical_reframe','highlights','export'];
+const PHASE_ORDER = ['detection','tracking','hard_frames','player_cluster','camera','broadcast_reframe','tactical_reframe','highlights','export'];
 let evtSource = null;
 let lastEventId = 0;
 

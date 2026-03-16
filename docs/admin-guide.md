@@ -21,6 +21,7 @@ A guide for installing, configuring, and maintaining the Soccer360 pipeline serv
   - [Detection and Model Settings](#detection-and-model-settings)
   - [Field of Interest](#field-of-interest)
   - [Camera Behavior](#camera-behavior)
+  - [Center of Play](#center-of-play)
   - [Rendering](#rendering)
   - [Highlights](#highlights)
   - [Ingest and Archival](#ingest-and-archival)
@@ -89,11 +90,11 @@ Soccer360 is a containerized video processing pipeline. The core architecture:
 
 ```
 /tank/ingest/ ──> [Watcher Daemon] ──> [Detection (GPU)] ──> [Tracking (CPU)]
-                                              │
-                    [Active Learning Export] <─┘
-                              │
-              [Camera Path] ──> [Broadcast Render (12 workers)]
-                     │                    │
+                                              │                      │
+                    [Active Learning Export] <─┘              [Player Cluster]
+                              │                                      │
+              [Camera Path (hybrid blend)] ──> [Broadcast Render (12 workers)]
+                     │                                  │
               [Tactical Render] ──> [Highlight Export] ──> /tank/processed/
 ```
 
@@ -228,7 +229,7 @@ All pipeline parameters live in `configs/pipeline.yaml`. Override the config pat
 | Key | Default | Purpose |
 |-----|---------|---------|
 | `detection.path` | `yolov8s.pt` | YOLO model file |
-| `detection.classes` | `[32]` | COCO class IDs to detect (32 = sports ball) |
+| `detection.classes` | `[32, 0]` | COCO class IDs to detect (32 = sports ball, 0 = person) |
 | `detection.conf` | `0.35` | Minimum detection confidence |
 | `detection.iou` | `0.5` | NMS IOU threshold |
 | `detection.img_size` | `960` | Inference image size |
@@ -274,6 +275,28 @@ Controls the virtual broadcast camera movement:
 | `camera.deadband_deg` | `0.5` | Ignore movements below this angle |
 | `camera.lost_coast_frames` | `30` | Frames to coast on prediction when ball lost |
 | `camera.lost_drift_frames` | `90` | Frames before drifting to field center |
+
+### Center of Play
+
+Controls hybrid camera tracking that blends ball position with player cluster data. When ball detection is unreliable, the camera follows the center of player activity instead of drifting to a static field center.
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `center_of_play.enabled` | `true` | Enable hybrid camera tracking |
+| `center_of_play.player_class` | `0` | COCO class ID for person detection |
+| `center_of_play.min_player_conf` | `0.30` | Minimum confidence for player detections |
+| `center_of_play.trim_fraction` | `0.10` | Fraction of outlier players to discard from each end (removes isolated GKs) |
+| `center_of_play.min_players` | `4` | Minimum players required to form a valid cluster |
+| `center_of_play.ball_blend_weight` | `0.15` | Blend weight toward cluster when ball is detected (0 = pure ball, 1 = pure cluster) |
+| `center_of_play.ema_alpha` | `0.20` | Temporal smoothing for cluster centroid (lower = smoother) |
+| `center_of_play.fov_from_spread` | `true` | Adapt FOV based on how spread out players are |
+| `center_of_play.spread_max_fov` | `105.0` | Maximum FOV when players are very spread out |
+| `center_of_play.spread_min_deg` | `15.0` | Player spread below this uses minimum FOV |
+| `center_of_play.spread_max_deg` | `60.0` | Player spread above this uses maximum FOV |
+
+> **Tip:** If the camera seems to wander away from ball action, reduce `ball_blend_weight` toward `0.0`. If the camera loses the action entirely when the ball is hard to detect, keep it at `0.15` or higher.
+
+> **Note:** Player detection uses the pretrained COCO model and is not retrained by the active learning loop. The YOLOv8s base model already handles person detection well on soccer fields.
 
 ### Rendering
 
@@ -404,7 +427,7 @@ In the default compose setup, `/tank/models` is bind-mounted to `/app/models` in
 
 When no model is available and `mode.allow_no_model: true`:
 
-- Detection, tracking, hard frames, and highlights are skipped
+- Detection, tracking, hard frames, player cluster, and highlights are skipped
 - A static camera path at field center is generated
 - `broadcast.mp4` has fixed framing; `tactical_wide.mp4` is still produced
 - `metadata.json` records `"mode": "no_detect"`
@@ -655,10 +678,11 @@ Each processing phase records its wall-clock duration in seconds:
 
 | Phase Key | Pipeline Phase | What It Measures |
 |-----------|---------------|-----------------|
-| `detection` | Phase 1 | YOLO ball detection (GPU) |
+| `detection` | Phase 1 | YOLO ball + player detection (GPU) |
 | `tracking` | Phase 2 | BallStabilizer (V1) or ByteTrack (legacy) |
 | `hard_frames` | Phase 2.5 | Active learning / hard frame export |
-| `camera` | Phase 3 | Camera path generation |
+| `player_cluster` | Phase 2.7 | Center-of-play player cluster computation |
+| `camera` | Phase 3 | Camera path generation (hybrid blend) |
 | `broadcast_reframe` | Phase 4 | Broadcast video rendering (12 workers) |
 | `tactical_reframe` | Phase 5 | Tactical wide view rendering |
 | `highlights` | Phase 6 | Highlight detection and clip export |

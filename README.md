@@ -38,10 +38,10 @@ docker compose logs -f worker
 Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 minutes:
 
 ```text
-360 video --> Detection (GPU) --> FoI Filter --> Tracking --> Camera Path --> Reframing --> Export
+360 video --> Detection (GPU) --> FoI Filter --> Tracking --> Player Cluster --> Camera Path --> Reframing --> Export
 ```
 
-**Pass 1 (GPU):** Frames streamed via ffmpeg pipe -> YOLO batch inference -> Field-of-Interest filtering -> detections JSONL. Frames never touch disk.
+**Pass 1 (GPU):** Frames streamed via ffmpeg pipe -> YOLO batch inference (ball + players) -> Field-of-Interest filtering -> detections JSONL. Frames never touch disk.
 
 **Pass 2 (CPU, parallel):** Frames streamed again -> py360convert e2p with per-frame camera angles -> encoded via ffmpeg. 12 parallel workers with segment overlap for clean cuts.
 
@@ -49,10 +49,11 @@ Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 
 
 |Phase|Operation|Hardware|
 |---|---|---|
-|1|Ball detection (YOLO) + FoI filtering|GPU (P40)|
-|2|Ball tracking (ByteTrack)|CPU|
+|1|Ball + player detection (YOLO) + FoI filtering|GPU (P40)|
+|2|Ball tracking (BallStabilizer / ByteTrack)|CPU|
 |2.5|Hard frame export (active learning)|I/O|
-|3|Camera path (Kalman filter + EMA)|CPU|
+|2.7|Player cluster (center of play)|CPU|
+|3|Camera path (Kalman filter + EMA + hybrid blend)|CPU|
 |4|Broadcast reframing (py360convert)|CPU (12 workers)|
 |5|Tactical wide view|CPU (parallel)|
 |6|Highlight detection & export|CPU|
@@ -61,9 +62,9 @@ Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 
 
 ### V1 Bootstrap Detection
 
-The V1 pipeline uses a COCO-pretrained YOLOv8s (sports ball, class 32) with conservative filtering and temporal stabilization. This enables a train-then-upgrade cycle:
+The V1 pipeline uses a COCO-pretrained YOLOv8s detecting both sports ball (class 32) and person (class 0) with conservative filtering and temporal stabilization. Person detections feed the center-of-play module; ball detections feed the tracker. This enables a train-then-upgrade cycle:
 
-1. **Detect** -- YOLOv8s detects sports balls with class filter + y-range filter + best-per-frame selection
+1. **Detect** -- YOLOv8s detects balls and players with class filter + y-range filter + best-per-frame selection (best ball per frame; all person detections passed through)
 2. **Stabilize** -- BallStabilizer applies persistence gate (require N of M frames), jump/speed rejection, and EMA smoothing
 3. **Export hard frames** -- ActiveLearningExporter flags low-confidence detections, lost ball runs, and jump rejections for labeling
 4. **Label** -- Annotate exported frames in Label Studio
@@ -127,7 +128,7 @@ detector:
 
 If no ball detection model is available, the pipeline runs in **NO_DETECT mode**:
 
-- Skips phases 1, 2, 2.5, and 6 (detection, tracking, hard frames, highlights)
+- Skips phases 1, 2, 2.5, 2.7, and 6 (detection, tracking, hard frames, player cluster, highlights)
 - Generates a static camera path at field center with default FOV
 - Still produces `broadcast.mp4` (fixed framing) and `tactical_wide.mp4`
 - `metadata.json` includes `"mode": "no_detect"` to indicate degraded output
@@ -179,6 +180,7 @@ All commands accept `--config` / `-c` to specify a custom config file (default: 
   |       +-- camera_path.json
   |       +-- detections.jsonl
   |       +-- tracks.json
+  |       +-- player_cluster.json
   |       +-- foi_meta.json
   |       +-- hard_frames.json
   |       +-- metadata.json
@@ -214,7 +216,8 @@ All parameters are in `configs/pipeline.yaml`:
 - **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s), dotfile filtering, persistent processed-state dedupe file
 - **ingest** -- post-success archival (archive mode, collision handling, name template)
 - **active_learning** -- V1: three-trigger hard frame export (low confidence range, lost ball runs, jump rejections), gating (every_n, max cap)
-- **detection** -- V1 bootstrap: YOLO model path, COCO class filter, confidence/IOU, image size, half precision, device
+- **detection** -- V1 bootstrap: YOLO model path, COCO class filter (`[32, 0]`), confidence/IOU, image size, half precision, device
+- **center_of_play** -- hybrid camera tracking: player cluster computation, ball/cluster blend weights, FOV-from-spread, EMA smoothing
 - **filters** -- V1: y-range vertical band filter, max jump/speed sanity limits
 - **tracking** -- V1: EMA alpha, persistence gate (require_persistence, window size)
 - **mode** -- allow_no_model toggle for graceful degradation
@@ -224,19 +227,19 @@ All parameters are in `configs/pipeline.yaml`:
 
 The virtual camera uses a multi-stage smoothing pipeline:
 
-1. **Kalman filter** (4-state: yaw, pitch, velocity) -- handles noise and predicts through ball occlusions
-2. **EMA post-smoothing** -- removes residual jitter
-3. **Deadband** -- ignores movements below configurable angular threshold to prevent micro-oscillation
-4. **Velocity threshold** -- camera doesn't react to tiny ball movements
-5. **Pan speed clamping** -- enforces broadcast-quality maximum angular velocity (60 deg/s normal, 120 deg/s fast action)
-6. **Dynamic FOV** -- widens during fast ball movement, tightens during slow play, immediately widens when ball is lost
+1. **Hybrid ball + cluster blending** -- when ball detected: 85% ball / 15% player cluster; low confidence: 50/50; ball lost: 100% cluster; both lost: drift to center
+2. **Kalman filter** (4-state: yaw, pitch, velocity) -- handles noise and predicts through ball occlusions
+3. **EMA post-smoothing** -- removes residual jitter
+4. **Deadband** -- ignores movements below configurable angular threshold to prevent micro-oscillation
+5. **Velocity threshold** -- camera doesn't react to tiny ball movements
+6. **Pan speed clamping** -- enforces broadcast-quality maximum angular velocity (60 deg/s normal, 120 deg/s fast action)
+7. **Dynamic FOV** -- widens during fast ball movement, tightens during slow play, immediately widens when ball is lost; also adapts to player spread when `fov_from_spread` enabled
 
-Ball-lost fallback:
+Ball-lost fallback (with center of play enabled):
 
-- Immediately: FOV widens to maximum (configurable)
-- Frames 1-30: coast on predicted velocity
-- Frames 31-90: velocity decays, camera slows
-- Frames 91+: slowly drift toward field center
+- **Player cluster available**: camera follows center of play (no drift to field center)
+- **No cluster**: coast on predicted velocity (frames 1-30), velocity decays (31-90), drift toward field center (91+)
+- **FOV**: widens to maximum immediately; adapts to player spread when cluster available
 
 ## Weekly Improvement Loop (Active Learning)
 
@@ -368,7 +371,7 @@ A web-based monitoring UI on port 8088 provides real-time pipeline visibility an
 
 **Features:**
 
-- Real-time pipeline progress (8-phase progress bar with timing)
+- Real-time pipeline progress (9-phase progress bar with timing)
 - GPU utilization gauges (updated via SSE)
 - Interactive decision prompts (approve/reject with countdown timers)
 - Job history with phase-level metrics
@@ -605,7 +608,8 @@ src/
   pipeline.py     Orchestrator (phases, event bus, decision hooks, NO_DETECT mode)
   detector.py     YOLO streaming batch detection + FoI filtering + model resolution
   tracker.py      ByteTrack ball tracking (two-stage association, Kalman box filter)
-  camera.py       Camera path generation (Kalman + EMA + deadband + dynamic FOV)
+  player_cluster.py  Player cluster computation (center of play, trimmed mean, EMA)
+  camera.py       Camera path generation (hybrid blend + Kalman + EMA + deadband + dynamic FOV)
   reframer.py     360-to-perspective rendering (parallel segments, overlap warmup)
   highlights.py   Heuristic highlight detection (speed, direction, goal-box events)
   exporter.py     Output organization + metadata + artifact preservation
@@ -635,7 +639,8 @@ tests/
   test_pipeline.py         End-to-end pipeline tests
   test_detector.py         Detection + FoI filter + NMS tests
   test_tracker.py          ByteTrack association + ball selection tests
-  test_camera.py           Camera path smoothing + angle conversion tests
+  test_player_cluster.py   Player cluster computation + EMA smoothing tests
+  test_camera.py           Camera path smoothing + hybrid blend + angle conversion tests
   test_reframer.py         Vertical FOV math + e2p integration tests
   test_highlights.py       Highlight detection tests
   test_hard_frames.py           Hard frame identification + export tests

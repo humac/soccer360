@@ -9,7 +9,7 @@ Soccer360 processes equirectangular 360 soccer video into:
 - `broadcast.mp4` (auto-follow view)
 - `tactical_wide.mp4` (fixed tactical view)
 - `highlight_*.mp4` clips (normal mode only)
-- run artifacts (`detections.jsonl`, `tracks.json`, `camera_path.json`, `foi_meta.json`, `hard_frames.json`, `metadata.json`)
+- run artifacts (`detections.jsonl`, `tracks.json`, `player_cluster.json`, `camera_path.json`, `foi_meta.json`, `hard_frames.json`, `metadata.json`)
 
 ## Current Pipeline Modes
 
@@ -17,10 +17,11 @@ The orchestrator is in `src/pipeline.py` and supports three runtime modes:
 
 1. `v1 bootstrap mode` (default config includes `detection` section):
 
-- Phase 1: `Detector.run_streaming()` (YOLO, FoI, y-band filter, best-per-frame)
-- Phase 2: `BallStabilizer.run()` (temporal persistence/jump-speed rejection)
+- Phase 1: `Detector.run_streaming()` (YOLO ball+player, FoI, y-band filter, class-aware best-per-frame)
+- Phase 2: `BallStabilizer.run()` (temporal persistence/jump-speed rejection, filters to class 32 only)
 - Phase 2.5: `ActiveLearningExporter.run()` (low-conf, lost-run, jump-reject hard frames)
-- Phase 3+: camera, broadcast render, tactical render, highlights, export, cleanup
+- Phase 2.7: `PlayerClusterComputer.run()` (trimmed-mean player centroid + spread, EMA smoothing)
+- Phase 3+: camera (hybrid ball+cluster blend), broadcast render, tactical render, highlights, export, cleanup
 
 1. `legacy mode` (if `detection` section is removed):
 
@@ -30,7 +31,7 @@ The orchestrator is in `src/pipeline.py` and supports three runtime modes:
 1. `no_detect mode`:
 
 - Triggered when model resolution fails and `mode.allow_no_model: true`
-- Skips detection/tracking/highlights, produces static-camera broadcast + tactical outputs
+- Skips detection/tracking/player cluster/highlights, produces static-camera broadcast + tactical outputs
 
 ## Source Layout
 
@@ -38,10 +39,11 @@ The orchestrator is in `src/pipeline.py` and supports three runtime modes:
 src/
   pipeline.py        Orchestrator; mode selection, phase coordination, event bus, decision hooks
   detector.py        YOLO streaming inference, FoI filter, model resolution
-  tracker.py         Legacy ByteTrack tracker + V1 BallStabilizer
+  tracker.py         Legacy ByteTrack tracker + V1 BallStabilizer (class 32 filter)
+  player_cluster.py  Center-of-play: trimmed-mean player cluster + EMA smoothing
   active_learning.py V1 hard-frame candidate selection and export
   hard_frames.py     Legacy hard-frame export
-  camera.py          Camera path smoothing (Kalman + EMA + deadband + dynamic FOV)
+  camera.py          Camera path smoothing (hybrid ball+cluster blend + Kalman + EMA + deadband + dynamic FOV)
   reframer.py        360->perspective rendering (parallel segments with overlap)
   highlights.py      Heuristic highlight detection and clip export
   exporter.py        Final outputs, metadata, ingest archival bookkeeping
@@ -187,13 +189,13 @@ Primary runtime config: `configs/pipeline.yaml`.
 
 Key sections currently used in production:
 
-- `paths`, `model`, `detector`, `field_of_interest`, `tracker`, `camera`, `reframer`, `highlights`, `exporter`, `watcher`, `ingest`, `active_learning`, `detection`, `filters`, `tracking`, `mode`, `logging`
+- `paths`, `model`, `detector`, `field_of_interest`, `tracker`, `camera`, `center_of_play`, `reframer`, `highlights`, `exporter`, `watcher`, `ingest`, `active_learning`, `detection`, `filters`, `tracking`, `mode`, `logging`, `dashboard`
 
 When adding/changing config:
 
 1. Update `configs/pipeline.yaml`
 2. Wire defaults in the owning module `__init__`
-3. Update `tests/conftest.py` fixture config
+3. Update `tests/conftest.py` fixture config (includes `center_of_play`, `detection.classes: [32, 0]`)
 
 ## Ingest and Watcher Behavior
 

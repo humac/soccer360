@@ -51,6 +51,8 @@ Process videos --> Hard frames exported --> Label in Label Studio --> Build data
 
 You don't need to be a machine learning expert. The labeling task is straightforward: draw a box around the ball in each image.
 
+> **Note:** The pipeline now detects both players and the ball during processing, but labeling and training focus exclusively on ball detection. Player detection uses the pretrained model and does not need manual labeling.
+
 ## Before You Begin
 
 Make sure the following are running:
@@ -333,6 +335,8 @@ A typical YOLO label line looks like:
 ```
 
 This means: class 0 (ball), centered at 52.3% x / 34.1% y, with width 1.5% and height 2.8% of the image.
+
+> **Note:** Although the pipeline detects both players (COCO class 0) and the ball (COCO class 32) during processing, the training dataset uses a single-class format where class 0 = ball. This is a YOLO training convention for single-class datasets and is handled automatically by the dataset builder.
 
 ---
 

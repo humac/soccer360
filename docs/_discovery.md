@@ -49,8 +49,9 @@ No traditional database. All state is file-based:
 - `/tank/ingest/*.mp4` — raw 360-degree video files
 
 ### Processing Artifacts (per match)
-- `detections.jsonl` — per-frame YOLO ball detections
-- `tracks.json` — tracked/stabilized ball positions
+- `detections.jsonl` — per-frame YOLO detections (ball class 32 + person class 0)
+- `tracks.json` — tracked/stabilized ball positions (ball only)
+- `player_cluster.json` — per-frame player cluster centroid and spread (center-of-play)
 - `camera_path.json` — per-frame virtual camera (yaw, pitch, FOV)
 - `foi_meta.json` — Field-of-Interest metadata
 - `hard_frames.json` — hard-frame candidates with trigger reasons
@@ -74,19 +75,34 @@ No traditional database. All state is file-based:
 
 ## Runtime Modes
 
-1. **V1 Bootstrap** (`detection` section in config) — full pipeline with YOLO + BallStabilizer + active learning
-2. **Legacy** (no `detection` section) — full pipeline with ByteTrack tracker
+1. **V1 Bootstrap** (`detection` section in config) — full pipeline with YOLO + BallStabilizer + active learning + center-of-play
+2. **Legacy** (no `detection` section) — full pipeline with ByteTrack tracker + center-of-play
 3. **NO_DETECT** (model unavailable + `allow_no_model: true`) — static camera, broadcast + tactical only
+
+## Center of Play (Hybrid Camera Tracking)
+
+Detects players (COCO class 0) alongside the ball (class 32) in the same YOLO pass. A `PlayerClusterComputer` module computes a per-frame trimmed-mean centroid of player positions. The camera path generator blends ball tracking with player cluster positions:
+
+- Ball detected (high conf): 85% ball + 15% cluster
+- Ball detected (low conf): 50% ball + 50% cluster
+- Ball lost, cluster available: 100% cluster (follows play instead of drifting to field center)
+- Ball lost, no cluster: drift to field center (existing behavior)
+
+FOV adapts to player spread (wider when players are spread across the pitch).
+
+Config section: `center_of_play:` with `enabled`, `player_class`, `min_player_conf`, `trim_fraction`, `min_players`, `ball_blend_weight`, `ema_alpha`, `fov_from_spread`, `spread_max_fov`, `spread_min_deg`, `spread_max_deg`.
+
+Training remains ball-only — person detection rides on the pretrained COCO model and is not retrained.
+
+## Configuration Surface
+
+Single config file: `configs/pipeline.yaml` with 18 top-level sections covering paths, model, detection, tracking, camera, center-of-play, rendering, highlights, archival, and active learning.
 
 ## External Integrations
 
 - **Label Studio** — separate Docker service for annotation (port 8080)
 - **NVIDIA GPU** — Tesla P40 via nvidia-docker runtime
 - **FFmpeg** — streaming video I/O (system binary, not Python package)
-
-## Configuration Surface
-
-Single config file: `configs/pipeline.yaml` with 17 top-level sections covering paths, model, detection, tracking, camera, rendering, highlights, archival, and active learning.
 
 ## Key Operational Paths
 
