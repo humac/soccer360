@@ -62,7 +62,7 @@ Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 
 
 ### V1 Bootstrap Detection
 
-The V1 pipeline uses YOLO (currently YOLOv11l via `yolo26l.pt`) detecting both sports ball (class 32) and person (class 0) with conservative filtering and temporal stabilization. Person detections feed the center-of-play module; ball detections feed the tracker. This enables a train-then-upgrade cycle:
+The V1 pipeline uses YOLO26l (`yolo26l.pt`, the latest Ultralytics YOLO generation — NMS-free, 43% faster CPU inference than YOLO11) detecting both sports ball (class 32) and person (class 0) with conservative filtering and temporal stabilization. Person detections feed the center-of-play module; ball detections feed the tracker. This enables a train-then-upgrade cycle:
 
 1. **Detect** -- YOLO detects balls and players with class filter + y-range filter + best-per-frame selection (best ball per frame; all person detections passed through)
 2. **Stabilize** -- BallStabilizer applies persistence gate (require N of M frames), jump/speed rejection, and EMA smoothing
