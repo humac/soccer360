@@ -101,6 +101,14 @@ class TestPixelToAngle:
         assert abs(pitch - (-90)) < 1e-6
 
 
+def _make_cluster_json(tmp_dir: Path, clusters: list[dict]) -> Path:
+    """Write a player_cluster.json file and return its path."""
+    path = tmp_dir / "player_cluster.json"
+    with open(path, "w") as f:
+        json.dump(clusters, f)
+    return path
+
+
 class TestCameraPathGeneration:
     def test_v1_uses_detection_img_size_for_angle_mapping(self, test_config):
         """V1 camera geometry should use detection.img_size, not legacy detector.resolution."""
@@ -196,3 +204,156 @@ class TestCameraPathGeneration:
             dpitch = abs(path[i]["pitch"] - path[i - 1]["pitch"])
             assert dyaw <= max_delta_per_frame + 0.1, f"Yaw jump too large at frame {i}: {dyaw}"
             assert dpitch <= max_delta_per_frame + 0.1, f"Pitch jump too large at frame {i}: {dpitch}"
+
+
+class TestCenterOfPlayHybrid:
+    """Tests for hybrid camera tracking with player cluster blending."""
+
+    def test_ball_lost_follows_cluster(self, test_config, tmp_work_dir):
+        """When ball is lost but cluster available, camera follows cluster instead of drifting to center."""
+        config = deepcopy(test_config)
+        config["center_of_play"]["enabled"] = True
+
+        gen = CameraPathGenerator(config)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=5.0, total_frames=150, codec="h264",
+        )
+
+        # Ball detected at x=240 for 10 frames, then lost for 140
+        tracks = []
+        for i in range(10):
+            tracks.append({
+                "frame": i,
+                "ball": {"x": 240, "y": 80, "confidence": 0.9, "track_id": 1},
+            })
+        for i in range(10, 150):
+            tracks.append({"frame": i, "ball": None})
+
+        tracks_path = tmp_work_dir / "tracks_hybrid.json"
+        with open(tracks_path, "w") as f:
+            json.dump(tracks, f)
+
+        # Player cluster stays at x=240 (right side) for all 150 frames
+        clusters = []
+        for i in range(150):
+            clusters.append({
+                "frame": i,
+                "cluster": {"x": 240.0, "y": 80.0, "spread_x_deg": 25.0,
+                             "player_count": 15, "confidence": 0.6},
+            })
+        cluster_path = _make_cluster_json(tmp_work_dir, clusters)
+
+        output_path = tmp_work_dir / "camera_path_hybrid.json"
+        gen.generate(tracks_path, meta, output_path, player_cluster_path=cluster_path)
+
+        with open(output_path) as f:
+            path = json.load(f)
+
+        # Final yaw should NOT have drifted to field center (0)
+        # since cluster is providing a signal at x=240 (positive yaw)
+        final_yaw = path[-1]["yaw"]
+        assert final_yaw > 10, f"Camera drifted to center despite cluster: yaw={final_yaw}"
+
+    def test_ball_detected_with_slight_cluster_bias(self, test_config, tmp_work_dir):
+        """When ball is detected, cluster provides slight bias but ball dominates."""
+        config = deepcopy(test_config)
+        config["center_of_play"]["enabled"] = True
+
+        gen = CameraPathGenerator(config)
+
+        # Ball at x=200, cluster at x=100 -- should blend slightly toward cluster
+        tracks = [{"frame": 0, "ball": {"x": 200, "y": 80, "confidence": 0.9}}]
+        clusters = [{"frame": 0, "cluster": {"x": 100, "y": 80, "spread_x_deg": 20.0,
+                                              "player_count": 15, "confidence": 0.6}}]
+
+        hybrid_angles = gen._tracks_to_angles_hybrid(tracks, clusters)
+        ball_only_angles = gen._tracks_to_angles(tracks)
+
+        hybrid_yaw = hybrid_angles[0][0]
+        ball_yaw = ball_only_angles[0][0]
+
+        # Hybrid should be between ball-only and cluster (closer to ball)
+        cluster_yaw, _ = pixel_to_yaw_pitch(100, 80, gen.det_width, gen.det_height)
+        # With blend=0.15, hybrid should be slightly toward cluster from ball
+        assert abs(hybrid_yaw - ball_yaw) > 0.5, "Hybrid should differ from ball-only"
+        # But closer to ball than to cluster
+        assert abs(hybrid_yaw - ball_yaw) < abs(hybrid_yaw - cluster_yaw)
+
+    def test_disabled_cop_no_effect(self, test_config, tmp_work_dir):
+        """With center_of_play disabled, cluster path is ignored."""
+        config = deepcopy(test_config)
+        config["center_of_play"]["enabled"] = False
+
+        gen = CameraPathGenerator(config)
+        assert not gen.cop_enabled
+
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=1.0, total_frames=30, codec="h264",
+        )
+
+        # Tracks with ball lost
+        tracks = [{"frame": i, "ball": None} for i in range(30)]
+        tracks_path = tmp_work_dir / "tracks_disabled.json"
+        with open(tracks_path, "w") as f:
+            json.dump(tracks, f)
+
+        clusters = [{"frame": i, "cluster": {"x": 240, "y": 80, "spread_x_deg": 25.0,
+                                              "player_count": 15, "confidence": 0.6}}
+                     for i in range(30)]
+        cluster_path = _make_cluster_json(tmp_work_dir, clusters)
+
+        output_path = tmp_work_dir / "camera_path_disabled.json"
+        gen.generate(tracks_path, meta, output_path, player_cluster_path=cluster_path)
+
+        # Should use standard ball-only logic (drift to center) since COP disabled
+        with open(output_path) as f:
+            path = json.load(f)
+        # Camera should be at/near field center since all frames are lost
+        assert abs(path[-1]["yaw"]) < 15
+
+    def test_fov_widens_with_player_spread(self, test_config, tmp_work_dir):
+        """FOV should widen when player spread is large."""
+        config = deepcopy(test_config)
+        config["center_of_play"]["enabled"] = True
+        config["center_of_play"]["fov_from_spread"] = True
+
+        gen = CameraPathGenerator(config)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=1.0, total_frames=30, codec="h264",
+        )
+
+        # Ball detected, cluster with large spread
+        tracks = []
+        clusters = []
+        for i in range(30):
+            tracks.append({
+                "frame": i,
+                "ball": {"x": 160, "y": 80, "confidence": 0.9},
+            })
+            clusters.append({
+                "frame": i,
+                "cluster": {"x": 160, "y": 80, "spread_x_deg": 55.0,
+                             "player_count": 20, "confidence": 0.7},
+            })
+
+        tracks_path = tmp_work_dir / "tracks_spread.json"
+        with open(tracks_path, "w") as f:
+            json.dump(tracks, f)
+        cluster_path = _make_cluster_json(tmp_work_dir, clusters)
+
+        output_path = tmp_work_dir / "camera_path_spread.json"
+        gen.generate(tracks_path, meta, output_path, player_cluster_path=cluster_path)
+
+        with open(output_path) as f:
+            path = json.load(f)
+
+        # With spread=55 (near spread_max_deg=60), FOV should be wider than default
+        # spread_max_fov is 105.0
+        max_fov = max(e["fov"] for e in path)
+        assert max_fov > config["camera"]["max_fov"], (
+            f"FOV {max_fov} should exceed camera.max_fov={config['camera']['max_fov']} "
+            f"due to player spread"
+        )

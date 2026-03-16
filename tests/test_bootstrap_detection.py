@@ -106,7 +106,7 @@ class TestYRangeFilter:
             "frame": frame,
             "bbox": [50, cy - 5, 60, cy + 5],
             "confidence": 0.8,
-            "class": 0,
+            "class": 32,
         }
 
     def test_center_passes(self):
@@ -145,9 +145,9 @@ class TestBestPerFrameSelection:
     def test_picks_highest(self):
         """Three detections on same frame → highest confidence kept."""
         dets = [
-            {"frame": 0, "bbox": [0, 0, 10, 10], "confidence": 0.5, "class": 0},
-            {"frame": 0, "bbox": [20, 20, 30, 30], "confidence": 0.9, "class": 0},
-            {"frame": 0, "bbox": [40, 40, 50, 50], "confidence": 0.3, "class": 0},
+            {"frame": 0, "bbox": [0, 0, 10, 10], "confidence": 0.5, "class": 32},
+            {"frame": 0, "bbox": [20, 20, 30, 30], "confidence": 0.9, "class": 32},
+            {"frame": 0, "bbox": [40, 40, 50, 50], "confidence": 0.3, "class": 32},
         ]
         result = Detector._select_best_per_frame(dets)
         assert len(result) == 1
@@ -156,11 +156,11 @@ class TestBestPerFrameSelection:
     def test_one_per_frame(self):
         """Multiple frames each get exactly one detection."""
         dets = [
-            {"frame": 0, "bbox": [0, 0, 10, 10], "confidence": 0.5, "class": 0},
-            {"frame": 0, "bbox": [20, 20, 30, 30], "confidence": 0.9, "class": 0},
-            {"frame": 1, "bbox": [0, 0, 10, 10], "confidence": 0.7, "class": 0},
-            {"frame": 1, "bbox": [20, 20, 30, 30], "confidence": 0.4, "class": 0},
-            {"frame": 2, "bbox": [0, 0, 10, 10], "confidence": 0.6, "class": 0},
+            {"frame": 0, "bbox": [0, 0, 10, 10], "confidence": 0.5, "class": 32},
+            {"frame": 0, "bbox": [20, 20, 30, 30], "confidence": 0.9, "class": 32},
+            {"frame": 1, "bbox": [0, 0, 10, 10], "confidence": 0.7, "class": 32},
+            {"frame": 1, "bbox": [20, 20, 30, 30], "confidence": 0.4, "class": 32},
+            {"frame": 2, "bbox": [0, 0, 10, 10], "confidence": 0.6, "class": 32},
         ]
         result = Detector._select_best_per_frame(dets)
         assert len(result) == 3
@@ -177,7 +177,7 @@ class TestBestPerFrameSelection:
 
     def test_single_detection(self):
         """Single detection passes through."""
-        dets = [{"frame": 5, "bbox": [0, 0, 10, 10], "confidence": 0.8, "class": 0}]
+        dets = [{"frame": 5, "bbox": [0, 0, 10, 10], "confidence": 0.8, "class": 32}]
         result = Detector._select_best_per_frame(dets)
         assert len(result) == 1
         assert result[0]["frame"] == 5

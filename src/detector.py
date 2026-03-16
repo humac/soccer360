@@ -740,16 +740,24 @@ class Detector:
         return kept
 
     @staticmethod
-    def _select_best_per_frame(detections: list[dict]) -> list[dict]:
-        """Keep only highest-confidence detection per frame."""
-        by_frame: dict[int, dict] = {}
+    def _select_best_per_frame(
+        detections: list[dict], ball_class: int = 32
+    ) -> list[dict]:
+        """Keep only highest-confidence ball detection per frame; pass all others through."""
+        ball_by_frame: dict[int, dict] = {}
+        other_dets: list[dict] = []
         for det in detections:
             frame = det.get("frame", det.get("frame_index", -1))
+            class_id = det.get("class_id", det.get("class", -1))
             conf = det.get("confidence", det.get("conf", 0.0))
-            if frame not in by_frame or conf > by_frame[frame].get(
-                "confidence", by_frame[frame].get("conf", 0.0)
-            ):
-                by_frame[frame] = det
+            if class_id == ball_class:
+                if frame not in ball_by_frame or conf > ball_by_frame[frame].get(
+                    "confidence", ball_by_frame[frame].get("conf", 0.0)
+                ):
+                    ball_by_frame[frame] = det
+            else:
+                other_dets.append(det)
+        result = list(ball_by_frame.values()) + other_dets
         return sorted(
-            by_frame.values(), key=lambda d: d.get("frame", d.get("frame_index", 0))
+            result, key=lambda d: d.get("frame", d.get("frame_index", 0))
         )

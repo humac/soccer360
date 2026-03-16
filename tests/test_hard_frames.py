@@ -35,10 +35,10 @@ class TestHardFrameIdentification:
     def test_low_confidence_detected(self, exporter, meta):
         """Frames with confidence below threshold should be flagged."""
         detections = [
-            {"frame": 0, "bbox": [10, 10, 20, 20], "confidence": 0.9, "class": 0},
-            {"frame": 1, "bbox": [10, 10, 20, 20], "confidence": 0.1, "class": 0},
-            {"frame": 2, "bbox": [10, 10, 20, 20], "confidence": 0.2, "class": 0},
-            {"frame": 3, "bbox": [10, 10, 20, 20], "confidence": 0.9, "class": 0},
+            {"frame": 0, "bbox": [10, 10, 20, 20], "confidence": 0.9, "class": 32},
+            {"frame": 1, "bbox": [10, 10, 20, 20], "confidence": 0.1, "class": 32},
+            {"frame": 2, "bbox": [10, 10, 20, 20], "confidence": 0.2, "class": 32},
+            {"frame": 3, "bbox": [10, 10, 20, 20], "confidence": 0.9, "class": 32},
         ]
         tracks = [
             {"frame": i, "ball": {"x": 15, "y": 15, "bbox": [10, 10, 20, 20],
@@ -176,7 +176,7 @@ class TestHardFrameIdentification:
         exp = HardFrameExporter(config)
 
         detections = [
-            {"frame": 0, "bbox": [10, 10, 20, 20], "confidence": 0.1, "class": 0},
+            {"frame": 0, "bbox": [10, 10, 20, 20], "confidence": 0.1, "class": 32},
         ]
         tracks = [
             {"frame": 0, "ball": {"x": 15, "y": 15, "bbox": [10, 10, 20, 20],

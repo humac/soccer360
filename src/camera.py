@@ -81,6 +81,15 @@ class CameraPathGenerator:
             self.det_width = det_cfg.get("resolution", [1920, 960])[0]
             self.det_height = det_cfg.get("resolution", [1920, 960])[1]
 
+        # Center of play config
+        cop_cfg = config.get("center_of_play", {})
+        self.cop_enabled = cop_cfg.get("enabled", False)
+        self.cop_ball_blend = cop_cfg.get("ball_blend_weight", 0.15)
+        self.cop_fov_from_spread = cop_cfg.get("fov_from_spread", True)
+        self.cop_spread_max_fov = cop_cfg.get("spread_max_fov", 105.0)
+        self.cop_spread_min_deg = cop_cfg.get("spread_min_deg", 15.0)
+        self.cop_spread_max_deg = cop_cfg.get("spread_max_deg", 60.0)
+
     def generate_static(self, meta: VideoMeta, output_path: Path):
         """Generate a static camera path at field center for NO_DETECT mode."""
         camera_path = []
@@ -97,17 +106,41 @@ class CameraPathGenerator:
         )
         write_json(camera_path, output_path)
 
-    def generate(self, tracks_path: Path, meta: VideoMeta, output_path: Path):
-        """Generate camera path from tracked ball positions."""
+    def generate(
+        self,
+        tracks_path: Path,
+        meta: VideoMeta,
+        output_path: Path,
+        player_cluster_path: Path | None = None,
+    ):
+        """Generate camera path from tracked ball positions.
+
+        When player_cluster_path is provided and center_of_play is enabled,
+        blends ball tracking with player cluster centroid for more robust
+        camera following.
+        """
         tracks = load_json(tracks_path)
         fps = meta.fps
 
+        # Load player cluster data if available
+        clusters = None
+        if player_cluster_path is not None and self.cop_enabled:
+            if player_cluster_path.exists():
+                clusters = load_json(player_cluster_path)
+                logger.info(
+                    "Center of play enabled: loaded %d cluster entries", len(clusters)
+                )
+
         logger.info(
-            "Generating camera path: %d frames @ %.1f fps", len(tracks), fps
+            "Generating camera path: %d frames @ %.1f fps (hybrid=%s)",
+            len(tracks), fps, clusters is not None,
         )
 
-        # Step 1: Convert pixel coords to angles
-        raw_angles = self._tracks_to_angles(tracks)
+        # Step 1: Convert pixel coords to angles (hybrid or ball-only)
+        if clusters is not None:
+            raw_angles = self._tracks_to_angles_hybrid(tracks, clusters)
+        else:
+            raw_angles = self._tracks_to_angles(tracks)
 
         # Step 2: Kalman filter smoothing
         kalman_output = self._kalman_smooth(raw_angles, fps)
@@ -118,7 +151,15 @@ class CameraPathGenerator:
         # Step 4: Pan speed clamping
         clamped = self._clamp_pan_speed(ema_output, fps)
 
-        # Step 5: FOV computation
+        # Step 5: FOV computation (with optional spread data from clusters)
+        if clusters is not None and self.cop_fov_from_spread:
+            cluster_by_frame = {
+                c["frame"]: c.get("cluster") for c in clusters
+            }
+            for i, entry in enumerate(clamped):
+                cl = cluster_by_frame.get(i)
+                if cl is not None:
+                    entry["spread_x_deg"] = cl.get("spread_x_deg", 0.0)
         camera_path = self._compute_fov(clamped, fps)
 
         logger.info("Camera path generated: %d entries", len(camera_path))
@@ -140,6 +181,48 @@ class CameraPathGenerator:
                 result.append((yaw, pitch, conf))
             else:
                 result.append(None)
+        return result
+
+    def _tracks_to_angles_hybrid(
+        self, tracks: list[dict], clusters: list[dict]
+    ) -> list[tuple[float, float, float] | None]:
+        """Convert tracks + clusters to angles with priority blending.
+
+        Priority: ball (high conf) > ball+cluster blend > cluster only > None.
+        """
+        cluster_by_frame = {c["frame"]: c.get("cluster") for c in clusters}
+        result = []
+
+        for i, t in enumerate(tracks):
+            ball = t.get("ball")
+            cluster = cluster_by_frame.get(i)
+
+            if ball is not None and cluster is not None:
+                # Blend ball position with cluster centroid
+                ball_conf = ball.get("confidence", 0.5)
+                blend = self.cop_ball_blend if ball_conf >= 0.5 else 0.5
+                x = (1 - blend) * ball["x"] + blend * cluster["x"]
+                y = (1 - blend) * ball["y"] + blend * cluster["y"]
+                yaw, pitch = pixel_to_yaw_pitch(
+                    x, y, self.det_width, self.det_height
+                )
+                result.append((yaw, pitch, ball_conf))
+            elif ball is not None:
+                # Ball only -- no cluster available
+                yaw, pitch = pixel_to_yaw_pitch(
+                    ball["x"], ball["y"], self.det_width, self.det_height
+                )
+                result.append((yaw, pitch, ball.get("confidence", 1.0)))
+            elif cluster is not None:
+                # Cluster only -- ball lost, follow player mass
+                yaw, pitch = pixel_to_yaw_pitch(
+                    cluster["x"], cluster["y"],
+                    self.det_width, self.det_height,
+                )
+                result.append((yaw, pitch, 0.3))
+            else:
+                result.append(None)
+
         return result
 
     def _kalman_smooth(
@@ -346,6 +429,18 @@ class CameraPathGenerator:
                     lost_count = entry.get("lost_count", 0)
                     if lost_count > self.lost_coast_frames:
                         fov = self.default_fov
+
+            # Widen FOV based on player spread when available
+            spread = entry.get("spread_x_deg")
+            if spread is not None and self.cop_fov_from_spread:
+                t = (spread - self.cop_spread_min_deg) / (
+                    self.cop_spread_max_deg - self.cop_spread_min_deg
+                )
+                t = max(0.0, min(1.0, t))
+                spread_fov = self.min_fov + (
+                    self.cop_spread_max_fov - self.min_fov
+                ) * t
+                fov = max(fov, spread_fov)
 
             result.append({
                 "yaw": wrap_angle(entry["yaw"]),

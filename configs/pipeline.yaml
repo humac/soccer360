@@ -157,11 +157,11 @@ active_learning:
 # COCO-pretrained YOLOv8s for sports ball (class 32) detection
 detection:
   path: "yolov8s.pt"
-  classes: [32]              # COCO sports ball
+  classes: [32, 0]           # COCO sports ball + person
   conf: 0.35
   iou: 0.5
   img_size: 960
-  max_det: 20
+  max_det: 50
   half: true
   device: "cuda:0"
 
@@ -181,6 +181,21 @@ tracking:
   ema_alpha: 0.35
   require_persistence: 2     # require N detections in window to accept
   window: 3                  # rolling window size
+
+# --- Center of Play ---
+# Hybrid camera tracking: blend ball position with player cluster centroid
+center_of_play:
+  enabled: true
+  player_class: 0             # COCO person class
+  min_player_conf: 0.30       # minimum confidence for player detections
+  trim_fraction: 0.10         # discard 10% outliers from each end (removes GKs)
+  min_players: 4              # need >= 4 players for valid cluster
+  ball_blend_weight: 0.15     # when ball detected: 85% ball, 15% cluster
+  ema_alpha: 0.20             # temporal smoothing for cluster centroid
+  fov_from_spread: true       # adapt FOV based on player spread
+  spread_max_fov: 105.0       # max FOV when players very spread out
+  spread_min_deg: 15.0        # spread below this -> min_fov
+  spread_max_deg: 60.0        # spread above this -> spread_max_fov
 
 dashboard:
   enabled: true

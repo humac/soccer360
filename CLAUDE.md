@@ -9,15 +9,16 @@ Soccer360 is a two-pass 360 video pipeline producing `broadcast.mp4`, `tactical_
 
 Runtime modes in `src/pipeline.py`:
 
-- **V1 bootstrap mode** (`detection` section present): `Detector` -> `BallStabilizer` -> `ActiveLearningExporter` -> camera/reframe/highlights/export.
-- **Legacy mode** (`detection` section absent): `Detector` -> `Tracker` (ByteTrack) -> `HardFrameExporter` -> camera/reframe/highlights/export.
+- **V1 bootstrap mode** (`detection` section present): `Detector` -> `BallStabilizer` -> `ActiveLearningExporter` -> `PlayerClusterComputer` (if enabled) -> camera/reframe/highlights/export.
+- **Legacy mode** (`detection` section absent): `Detector` -> `Tracker` (ByteTrack) -> `HardFrameExporter` -> `PlayerClusterComputer` (if enabled) -> camera/reframe/highlights/export.
 - **NO_DETECT mode**: static camera path + broadcast/tactical only (no detect/track/highlights).
 
 ## Key Files
 
 - `src/pipeline.py`: mode resolution, phase orchestration, event bus integration, decision hooks
 - `src/detector.py`: model resolution, FoI, V1/legacy detection behavior
-- `src/tracker.py`: ByteTrack (legacy) + BallStabilizer (V1)
+- `src/tracker.py`: ByteTrack (legacy) + BallStabilizer (V1) — filters to class 32 (ball) only
+- `src/player_cluster.py`: center-of-play estimation from player cluster positions (class 0)
 - `src/active_learning.py`: V1 hard-frame export triggers/gating
 - `src/watcher.py`: ingest queue daemon + persistent dedupe fingerprints + EventBus creation
 - `src/exporter.py`: metadata + ingest archival (`move`/`copy`/`leave`, collision policy)
@@ -52,6 +53,18 @@ Runtime modes in `src/pipeline.py`:
 - Resolver failures are fail-fast and include attempted `CONFIG_PATH`, resolver exit code, and captured stderr. Use `VERBOSE=1` to print captured resolver stderr/noise diagnostics when non-empty.
 - Resolver exit codes are deterministic: `11` (config path/readability), `12` (config parse/load), `13` (resolver import/runtime resolution).
 - Canonical explicit Roboflow path is `/app/models/roboflow/football_players_v1.pt`; in default compose runtime `/app/models` is mounted from host `/tank/models`, so place weights at `/tank/models/roboflow/football_players_v1.pt`.
+
+## Center of Play (Hybrid Camera Tracking)
+
+- Detects players (COCO class 0) alongside ball (class 32) in same YOLO pass
+- `src/player_cluster.py`: `PlayerClusterComputer` computes per-frame trimmed-mean centroid from player positions
+- Pipeline Phase 2.7: runs after tracking, before camera path generation
+- Camera blending priority: ball (high conf, 85%/15%) > ball+cluster (low conf, 50%/50%) > cluster only > drift-to-center
+- FOV adapts to player spread: wide spread → wider FOV, tight cluster → tighter FOV
+- Config section: `center_of_play:` with `enabled`, `player_class`, `min_player_conf`, `trim_fraction`, `min_players`, `ball_blend_weight`, `ema_alpha`, `fov_from_spread`, `spread_max_fov`, `spread_min_deg`, `spread_max_deg`
+- Detection config: `classes: [32, 0]`, `max_det: 50`
+- Tracker/BallStabilizer filter to class 32 only — person detections do not affect ball tracking
+- Output: `player_cluster.json` (per-frame centroid, spread, player count)
 
 ## Monitoring Dashboard
 

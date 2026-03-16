@@ -283,8 +283,16 @@ class Tracker:
 
     def run(self, detections_path: Path, output_path: Path):
         """Process detections file and produce per-frame ball positions."""
-        detections = load_detections_jsonl(detections_path)
-        logger.info("Loaded %d detections from %s", len(detections), detections_path)
+        all_detections = load_detections_jsonl(detections_path)
+        # Filter to ball detections only (ignore person class from center-of-play)
+        detections = [
+            d for d in all_detections
+            if d.get("class_id", d.get("class", 32)) == 32
+        ]
+        logger.info(
+            "Loaded %d detections (%d ball) from %s",
+            len(all_detections), len(detections), detections_path,
+        )
 
         bt = ByteTrackInstance(
             track_high_thresh=self.track_high_thresh,
@@ -434,8 +442,12 @@ class BallStabilizer:
         detections = load_detections_jsonl(detections_path)
 
         # Build per-frame lookup (V1 detections use frame_index key)
+        # Filter to ball detections only (ignore person class from center-of-play)
         by_frame: dict[int, dict] = {}
         for det in detections:
+            class_id = det.get("class_id", det.get("class", 32))
+            if class_id != 32:
+                continue
             frame = det.get("frame_index", det.get("frame", -1))
             by_frame[frame] = det
 

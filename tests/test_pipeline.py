@@ -53,7 +53,7 @@ class TestPipelineIntegration:
                     "frame": frame,
                     "bbox": [x - 3, y - 3, x + 3, y + 3],
                     "confidence": 0.9,
-                    "class": 0,
+                    "class": 32,
                 }
                 f.write(json.dumps(det) + "\n")
 

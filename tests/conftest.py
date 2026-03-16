@@ -137,11 +137,11 @@ def test_config() -> dict:
             },
             "detection": {
                 "path": "yolov8s.pt",
-                "classes": [32],
+                "classes": [32, 0],
                 "conf": 0.35,
                 "iou": 0.5,
                 "img_size": 160,
-                "max_det": 20,
+                "max_det": 50,
                 "half": False,
                 "device": "cpu",
             },
@@ -156,6 +156,19 @@ def test_config() -> dict:
                 "ema_alpha": 0.35,
                 "require_persistence": 2,
                 "window": 3,
+            },
+            "center_of_play": {
+                "enabled": True,
+                "player_class": 0,
+                "min_player_conf": 0.30,
+                "trim_fraction": 0.10,
+                "min_players": 4,
+                "ball_blend_weight": 0.15,
+                "ema_alpha": 0.20,
+                "fov_from_spread": True,
+                "spread_max_fov": 105.0,
+                "spread_min_deg": 15.0,
+                "spread_max_deg": 60.0,
             },
             "mode": {
                 "allow_no_model": True,
@@ -240,7 +253,7 @@ def sample_detections(tmp_work_dir: Path) -> Path:
             "frame": frame,
             "bbox": [x - 5, y - 5, x + 5, y + 5],
             "confidence": 0.85 if frame != 15 else 0.15,  # one low-conf frame
-            "class": 0,
+            "class": 32,
         })
 
     # Frame 10 has no detection (ball lost)

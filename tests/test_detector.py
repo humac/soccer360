@@ -93,7 +93,7 @@ def _make_det(frame: int, cx: float, cy: float, conf: float = 0.9) -> dict:
         "frame": frame,
         "bbox": [cx - 5, cy - 5, cx + 5, cy + 5],
         "confidence": conf,
-        "class": 0,
+        "class": 32,
     }
 
 
@@ -313,8 +313,8 @@ class TestV1ModelResolver:
 class TestDetectorHardening:
     def test_interpolation_does_not_bridge_large_gaps(self):
         detections = [
-            {"frame": 0, "bbox": [0, 0, 10, 10], "confidence": 0.9, "class": 0},
-            {"frame": 6, "bbox": [6, 0, 16, 10], "confidence": 0.8, "class": 0},
+            {"frame": 0, "bbox": [0, 0, 10, 10], "confidence": 0.9, "class": 32},
+            {"frame": 6, "bbox": [6, 0, 16, 10], "confidence": 0.8, "class": 32},
         ]
         out = Detector._interpolate_skipped(detections, total_frames=7, skip_n=2)
         frames = sorted(d["frame"] for d in out)
@@ -361,7 +361,7 @@ class TestDetectorHardening:
                     "frame": idx,
                     "bbox": [cx - 5, 75.0, cx + 5, 85.0],
                     "confidence": 0.9,
-                    "class": 0,
+                    "class": 32,
                 })
             return out
 

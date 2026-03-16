@@ -20,6 +20,7 @@ from .exporter import Exporter
 from .hard_frames import HardFrameExporter
 from .highlights import HighlightDetector
 from .metrics import PhaseTimer, gpu_utilization_snapshot
+from .player_cluster import PlayerClusterComputer
 from .reframer import Reframer
 
 from contextlib import contextmanager
@@ -77,6 +78,13 @@ class Pipeline:
         self.reframer = Reframer(config)
         self.highlights = HighlightDetector(config)
         self.exporter = Exporter(config)
+
+        # Center of play: player cluster tracking for hybrid camera
+        cop_cfg = config.get("center_of_play", {})
+        if cop_cfg.get("enabled", False) and self.mode == "normal":
+            self.player_cluster = PlayerClusterComputer(config)
+        else:
+            self.player_cluster = None
 
     @contextmanager
     def _tracked_phase(self, timer: PhaseTimer, job_id: str, phase_name: str):
@@ -253,10 +261,28 @@ class Pipeline:
                 timer.record_stat("track_frames_total", len(tracks_data))
                 timer.record_stat("track_frames_with_ball", ball_found)
 
+                # Phase 2.7: Player cluster (center of play)
+                player_cluster_path = None
+                if self.player_cluster is not None:
+                    logger.info("--- Phase 2.7: Player Cluster (Center of Play) ---")
+                    player_cluster_path = work_dir / "player_cluster.json"
+                    target_frames = (
+                        processed_frames
+                        if processed_frames and processed_frames > 0
+                        else meta.total_frames
+                    )
+                    with self._tracked_phase(timer, job_id, "player_cluster"):
+                        self.player_cluster.run(
+                            detections_path, player_cluster_path, target_frames
+                        )
+
                 # Phase 3: Camera path generation (CPU)
                 logger.info("--- Phase 3: Camera Path Generation ---")
                 with self._tracked_phase(timer, job_id, "camera"):
-                    self.camera.generate(tracks_path, meta, camera_path_file)
+                    self.camera.generate(
+                        tracks_path, meta, camera_path_file,
+                        player_cluster_path=player_cluster_path,
+                    )
             else:
                 # NO_DETECT mode: skip detection/tracking, static camera
                 logger.info("--- NO_DETECT: Skipping phases 1-2, static camera path ---")
