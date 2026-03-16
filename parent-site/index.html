@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Soccer360 Viewer</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="script.js" defer></script>
+</head>
+<body>
+    <div class="noise-overlay"></div>
+    <nav class="main-nav">
+        <div class="logo">SOCCER<span>360</span></div>
+        <div class="nav-links">
+            <a href="#" class="active" data-view="season">Season</a>
+            <a href="#" data-view="about">Documentation</a>
+        </div>
+    </nav>
+
+    <main id="app-container">
+        <!-- V1: Season View -->
+        <section id="season-view" class="view active">
+            <header class="season-header">
+                <div class="team-badge">
+                    <img src="logo.png" alt="OSU Logo" class="badge-logo">
+                </div>
+                <div class="season-info">
+                    <h1>U12 GIRLS STEEL TIER 2</h1>
+                    <p>Real-time tactical and broadcast angles powered by the Soccer360 engine.</p>
+                </div>
+            </header>
+
+            <div class="controls-bar">
+                <div class="filter-group">
+                    <button class="filter-btn active">All Matches</button>
+                    <button class="filter-btn">Home</button>
+                    <button class="filter-btn">Away</button>
+                </div>
+                <div class="stats-overview">
+                    <span class="stat"><span>Played</span> 12</span>
+                    <span class="stat"><span>Wins</span> 8</span>
+                    <span class="stat"><span>Draws</span> 3</span>
+                </div>
+            </div>
+
+            <div class="matches-grid">
+                <!-- Match Card 1 -->
+                <div class="match-card" onclick="app.openGame('game-01')">
+                    <div class="card-bg"></div>
+                    <div class="match-date">OCT 14, 2026</div>
+                    <div class="match-teams">
+                        <h2>CITY <span>VS</span> UNITED</h2>
+                    </div>
+                    <div class="match-meta">
+                        <span class="badge score">3 - 1</span>
+                        <span class="badge mode">TACTICAL + BROADCAST</span>
+                    </div>
+                    <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
+                </div>
+
+                <!-- Match Card 2 -->
+                <div class="match-card" onclick="app.openGame('game-02')">
+                    <div class="card-bg"></div>
+                    <div class="match-date">OCT 09, 2026</div>
+                    <div class="match-teams">
+                        <h2>ROVERS <span>VS</span> CITY</h2>
+                    </div>
+                    <div class="match-meta">
+                        <span class="badge score">0 - 2</span>
+                        <span class="badge mode">TACTICAL + BROADCAST</span>
+                    </div>
+                    <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
+                </div>
+
+                <!-- Match Card 3 -->
+                <div class="match-card" onclick="app.openGame('game-03')">
+                    <div class="card-bg"></div>
+                    <div class="match-date">SEP 30, 2026</div>
+                    <div class="match-teams">
+                        <h2>CITY <span>VS</span> ATHLETIC</h2>
+                    </div>
+                    <div class="match-meta">
+                        <span class="badge score">1 - 1</span>
+                        <span class="badge mode">NO_DETECT MODE</span>
+                    </div>
+                    <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
+                </div>
+                
+                <!-- Match Card 4 -->
+                <div class="match-card" onclick="app.openGame('game-04')">
+                    <div class="card-bg"></div>
+                    <div class="match-date">SEP 22, 2026</div>
+                    <div class="match-teams">
+                        <h2>WANDERERS <span>VS</span> CITY</h2>
+                    </div>
+                    <div class="match-meta">
+                        <span class="badge score">0 - 4</span>
+                        <span class="badge mode">TACTICAL + BROADCAST</span>
+                    </div>
+                    <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- V2: Game View -->
+        <section id="game-view" class="view">
+            <button class="back-btn" onclick="app.closeGame()">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                Back to Season
+            </button>
+            <div class="game-layout">
+                <div class="video-container">
+                    <div class="player-wrapper">
+                        <!-- Placeholder Video Box -->
+                        <div class="video-placeholder">
+                            <div class="play-indicator"></div>
+                            <span class="player-label">BROADCAST.MP4 (AUTO-FOLLOW)</span>
+                        </div>
+                    </div>
+                    
+                    <div class="player-controls">
+                        <button class="active">Broadcast</button>
+                        <button>Tactical Wide</button>
+                    </div>
+                </div>
+
+                <div class="sidebar">
+                    <div class="game-details">
+                        <h2 class="game-title" id="active-game-title">CITY VS UNITED</h2>
+                        <div class="game-meta-row">
+                            <div class="g-meta"><span class="label">DATE</span><span id="active-game-date">Oct 14, 2026</span></div>
+                            <div class="g-meta"><span class="label">LOCATION</span><span id="active-game-loc">North Stadium</span></div>
+                            <div class="g-meta"><span class="label">SCORE</span><span id="active-game-score">3 - 1</span></div>
+                        </div>
+                    </div>
+
+                    <div class="highlights-section">
+                        <h3>KEY HIGHLIGHTS</h3>
+                        <div class="highlight-list">
+                            <div class="highlight-item">
+                                <div class="h-time">12:44</div>
+                                <div class="h-desc">Goal - Strike from outside box</div>
+                                <button class="action-btn play-h">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 9-14 9V3z"/></svg>
+                                </button>
+                            </div>
+                            <div class="highlight-item">
+                                <div class="h-time">34:11</div>
+                                <div class="h-desc">Yellow Card - Tactical Foul</div>
+                                <button class="action-btn play-h">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 9-14 9V3z"/></svg>
+                                </button>
+                            </div>
+                            <div class="highlight-item">
+                                <div class="h-time">78:02</div>
+                                <div class="h-desc">Goal - Header from corner</div>
+                                <button class="action-btn play-h">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 9-14 9V3z"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="downloads-section">
+                        <h3>ARTIFACTS</h3>
+                        <a href="javascript:void(0)" class="download-card">
+                            <div class="d-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                            </div>
+                            <div class="d-info">
+                                <span class="d-name">broadcast.mp4</span>
+                                <span class="d-size">1.2 GB</span>
+                            </div>
+                        </a>
+                        <a href="javascript:void(0)" class="download-card">
+                            <div class="d-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                            </div>
+                            <div class="d-info">
+                                <span class="d-name">tactical_wide.mp4</span>
+                                <span class="d-size">800 MB</span>
+                            </div>
+                        </a>
+                        <a href="javascript:void(0)" class="download-card meta-download">
+                            <div class="d-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                            </div>
+                            <div class="d-info">
+                                <span class="d-name">detections.jsonl</span>
+                                <span class="d-size">Engine Metadata (15 MB)</span>
+                            </div>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+</body>
+</html>
