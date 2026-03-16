@@ -211,7 +211,7 @@ All parameters are in `configs/pipeline.yaml`:
 - **tracker** -- ByteTrack thresholds, track buffer, ball selection sanity checks (detector.resolution pixel space)
 - **camera** -- pan speed limits, FOV range, Kalman filter noise, deadband, velocity threshold, ball-lost behavior
 - **reframer** -- output resolution, source downscale, worker count, segment overlap, tactical view (FOV 120)
-- **highlights** -- speed percentile, direction change threshold, goal-box regions, clip margins
+- **highlights** -- ball detectors (speed, direction, goal-box), cluster detectors (convergence, velocity, goal zone, density), scoring weights, clip margins, max clips
 - **exporter** -- codec, CRF quality, encoder (cpu/nvenc), raw file handling
 - **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s), dotfile filtering, persistent processed-state dedupe file
 - **ingest** -- post-success archival (archive mode, collision handling, name template)
@@ -611,7 +611,7 @@ src/
   player_cluster.py  Player cluster computation (center of play, trimmed mean, EMA)
   camera.py       Camera path generation (hybrid blend + Kalman + EMA + deadband + dynamic FOV)
   reframer.py     360-to-perspective rendering (parallel segments, overlap warmup)
-  highlights.py   Heuristic highlight detection (speed, direction, goal-box events)
+  highlights.py   Heuristic highlight detection (ball + cluster signals, scoring/ranking)
   exporter.py     Output organization + metadata + artifact preservation
   hard_frames.py       Automatic hard-frame export for active learning (legacy)
   active_learning.py   V1 active learning export (three-trigger identification)

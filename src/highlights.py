@@ -1,11 +1,13 @@
 """Heuristic highlight detection and clip export.
 
-Identifies interesting moments (shots, fast ball movement, goal-box entries)
-from detection and tracking data, then exports short video clips.
+Identifies interesting moments (shots, fast ball movement, goal-box entries,
+player convergence, fast breaks) from detection, tracking, and player cluster
+data, then exports ranked short video clips.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import subprocess
@@ -17,13 +19,23 @@ from .utils import VideoMeta, load_json
 
 logger = logging.getLogger("soccer360.highlights")
 
+# Event types that come from ball tracking vs cluster data
+_BALL_EVENT_TYPES = {"speed", "goal_box", "direction_change"}
+_CLUSTER_EVENT_TYPES = {
+    "cluster_convergence",
+    "cluster_velocity",
+    "cluster_goal_zone",
+    "cluster_density",
+}
+
 
 class HighlightDetector:
-    """Detect highlights using ball movement heuristics and export clips."""
+    """Detect highlights using ball movement and player cluster heuristics."""
 
     def __init__(self, config: dict):
         hl_cfg = config.get("highlights", {})
 
+        # Existing ball-based config
         self.speed_percentile = hl_cfg.get("speed_percentile", 95)
         self.direction_change_deg = hl_cfg.get("direction_change_deg", 90)
         self.goal_box_regions = hl_cfg.get("goal_box_regions", [
@@ -35,6 +47,30 @@ class HighlightDetector:
         self.min_clip_gap_sec = hl_cfg.get("min_clip_gap_sec", 5.0)
         self.min_clip_duration_sec = hl_cfg.get("min_clip_duration_sec", 3.0)
 
+        # Cluster-based detector config
+        self.cluster_convergence_window = hl_cfg.get("cluster_convergence_window", 10)
+        self.cluster_convergence_deg = hl_cfg.get("cluster_convergence_deg", 8.0)
+        self.cluster_velocity_window = hl_cfg.get("cluster_velocity_window", 5)
+        self.cluster_velocity_deg_per_sec = hl_cfg.get(
+            "cluster_velocity_deg_per_sec", 15.0
+        )
+        self.cluster_goal_zone_regions = hl_cfg.get("cluster_goal_zone_regions", None)
+        self.cluster_density_percentile = hl_cfg.get("cluster_density_percentile", 90)
+
+        # Scoring and ranking config
+        self.score_weights = hl_cfg.get("score_weights", {
+            "speed": 1.0,
+            "goal_box": 1.5,
+            "direction_change": 0.8,
+            "cluster_convergence": 1.2,
+            "cluster_velocity": 0.7,
+            "cluster_goal_zone": 1.3,
+            "cluster_density": 0.5,
+        })
+        self.combined_signal_bonus = hl_cfg.get("combined_signal_bonus", 1.5)
+        self.min_clip_score = hl_cfg.get("min_clip_score", 2.0)
+        self.max_clips = hl_cfg.get("max_clips", 20)
+
         exp_cfg = config.get("exporter", {})
         self.codec = exp_cfg.get("codec", "libx264")
         self.crf = exp_cfg.get("crf", 18)
@@ -43,27 +79,62 @@ class HighlightDetector:
         self.det_w = det_cfg.get("resolution", [1920, 960])[0]
         self.det_h = det_cfg.get("resolution", [1920, 960])[1]
 
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
+
     def detect_and_export(
         self,
         broadcast_path: Path,
         meta: VideoMeta,
         camera_path_file: Path,
-        tracks_path: Path,
+        tracks_path: Path | None,
         output_dir: Path,
+        player_cluster_path: Path | None = None,
     ):
-        """Detect highlight events and export clips from broadcast video."""
-        tracks = load_json(tracks_path)
-        camera_path = load_json(camera_path_file)
+        """Detect highlight events and export ranked clips."""
         fps = meta.fps
-
-        # Compute per-frame ball velocities (in detection pixel space)
-        velocities = self._compute_velocities(tracks, fps)
-
-        # Detect events
         events: list[dict] = []
-        events.extend(self._detect_speed_events(velocities, fps))
-        events.extend(self._detect_goal_box_events(tracks, fps))
-        events.extend(self._detect_direction_changes(velocities, fps))
+        detector_stats: dict[str, int] = {}
+
+        # Ball-based detectors (when tracks available)
+        if tracks_path is not None and tracks_path.exists():
+            tracks = load_json(tracks_path)
+            velocities = self._compute_velocities(tracks, fps)
+
+            speed_events = self._detect_speed_events(velocities, fps)
+            goal_box_events = self._detect_goal_box_events(tracks, fps)
+            direction_events = self._detect_direction_changes(velocities, fps)
+
+            events.extend(speed_events)
+            events.extend(goal_box_events)
+            events.extend(direction_events)
+
+            detector_stats["speed_events"] = len(speed_events)
+            detector_stats["goal_box_events"] = len(goal_box_events)
+            detector_stats["direction_change_events"] = len(direction_events)
+
+        # Cluster-based detectors (when cluster data available)
+        clusters = self._load_cluster_data(player_cluster_path)
+        if clusters is not None:
+            conv_events = self._detect_cluster_convergence(clusters, fps)
+            vel_events = self._detect_cluster_velocity(clusters, fps)
+            zone_events = self._detect_cluster_goal_zone(clusters, fps)
+            density_events = self._detect_cluster_density_spike(clusters, fps)
+
+            events.extend(conv_events)
+            events.extend(vel_events)
+            events.extend(zone_events)
+            events.extend(density_events)
+
+            detector_stats["cluster_convergence_events"] = len(conv_events)
+            detector_stats["cluster_velocity_events"] = len(vel_events)
+            detector_stats["cluster_goal_zone_events"] = len(zone_events)
+            detector_stats["cluster_density_events"] = len(density_events)
+
+        detector_stats["total_raw_events"] = len(events)
+        detector_stats["ball_tracking_available"] = tracks_path is not None
+        detector_stats["cluster_data_available"] = clusters is not None
 
         if not events:
             logger.info("No highlight events detected")
@@ -71,9 +142,18 @@ class HighlightDetector:
 
         logger.info("Detected %d raw highlight events", len(events))
 
-        # Cluster events into clips
+        # Cluster events into scored clips
         clips = self._cluster_events(events, fps)
-        logger.info("Clustered into %d highlight clips", len(clips))
+        logger.info(
+            "Clustered into %d highlight clips (score range: %.1f - %.1f)",
+            len(clips),
+            clips[-1]["score"] if clips else 0,
+            clips[0]["score"] if clips else 0,
+        )
+
+        if not clips:
+            logger.info("No clips above min_clip_score (%.1f)", self.min_clip_score)
+            return
 
         # Export each clip from the broadcast video
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -81,10 +161,34 @@ class HighlightDetector:
             clip_path = output_dir / f"highlight_{i:03d}.mp4"
             self._export_clip(broadcast_path, clip, clip_path)
             logger.info(
-                "Exported highlight %d: %.1fs - %.1fs (%s)",
-                i, clip["start_sec"], clip["end_sec"],
+                "Exported highlight %d (rank %d, score %.1f): %.1fs - %.1fs (%s)",
+                i, clip["rank"], clip["score"],
+                clip["start_sec"], clip["end_sec"],
                 ", ".join(clip["event_types"]),
             )
+
+        # Write manifest
+        self._write_manifest(output_dir, clips, detector_stats)
+
+    # ------------------------------------------------------------------
+    # Cluster data loading
+    # ------------------------------------------------------------------
+
+    def _load_cluster_data(self, path: Path | None) -> list[dict] | None:
+        """Load player cluster data if available."""
+        if path is None:
+            return None
+        if not path.exists():
+            return None
+        try:
+            return load_json(path)
+        except Exception:
+            logger.warning("Failed to load cluster data from %s", path)
+            return None
+
+    # ------------------------------------------------------------------
+    # Ball-based detectors (unchanged)
+    # ------------------------------------------------------------------
 
     def _compute_velocities(
         self, tracks: list[dict], fps: float
@@ -195,8 +299,141 @@ class HighlightDetector:
 
         return events
 
+    # ------------------------------------------------------------------
+    # Cluster-based detectors (NEW)
+    # ------------------------------------------------------------------
+
+    def _detect_cluster_convergence(
+        self, clusters: list[dict], fps: float
+    ) -> list[dict]:
+        """Detect rapid player convergence (set pieces, contested ball).
+
+        Triggers when player spread decreases by more than threshold
+        over a sliding window.
+        """
+        events = []
+        window = self.cluster_convergence_window
+        threshold = self.cluster_convergence_deg
+
+        for i in range(window, len(clusters)):
+            curr_c = clusters[i].get("cluster")
+            prev_c = clusters[i - window].get("cluster")
+            if curr_c is None or prev_c is None:
+                continue
+
+            decrease = prev_c["spread_x_deg"] - curr_c["spread_x_deg"]
+            if decrease >= threshold:
+                events.append({
+                    "frame": clusters[i]["frame"],
+                    "time_sec": clusters[i]["frame"] / fps,
+                    "type": "cluster_convergence",
+                    "value": decrease,
+                })
+
+        return events
+
+    def _detect_cluster_velocity(
+        self, clusters: list[dict], fps: float
+    ) -> list[dict]:
+        """Detect rapid cluster centroid movement (fast breaks, counter-attacks).
+
+        Computes centroid displacement in degrees over a sliding window.
+        """
+        events = []
+        window = self.cluster_velocity_window
+        threshold = self.cluster_velocity_deg_per_sec
+
+        for i in range(window, len(clusters)):
+            curr_c = clusters[i].get("cluster")
+            prev_c = clusters[i - window].get("cluster")
+            if curr_c is None or prev_c is None:
+                continue
+
+            dx_px = curr_c["x"] - prev_c["x"]
+            dy_px = curr_c["y"] - prev_c["y"]
+            # Convert pixel displacement to degrees
+            dx_deg = (dx_px / self.det_w) * 360.0
+            dy_deg = (dy_px / self.det_h) * 180.0
+            dist_deg = math.sqrt(dx_deg ** 2 + dy_deg ** 2)
+            duration_sec = window / fps
+            velocity_deg_per_sec = dist_deg / duration_sec if duration_sec > 0 else 0
+
+            if velocity_deg_per_sec >= threshold:
+                events.append({
+                    "frame": clusters[i]["frame"],
+                    "time_sec": clusters[i]["frame"] / fps,
+                    "type": "cluster_velocity",
+                    "value": velocity_deg_per_sec,
+                })
+
+        return events
+
+    def _detect_cluster_goal_zone(
+        self, clusters: list[dict], fps: float
+    ) -> list[dict]:
+        """Detect player cluster in goal zone (attacking pressure)."""
+        events = []
+        regions = self.cluster_goal_zone_regions or self.goal_box_regions
+
+        for entry in clusters:
+            c = entry.get("cluster")
+            if c is None:
+                continue
+            # Need meaningful attacking presence
+            if c["player_count"] < 6:
+                continue
+
+            nx = c["x"] / self.det_w
+            ny = c["y"] / self.det_h
+
+            for region in regions:
+                x1, y1, x2, y2 = region
+                if x1 <= nx <= x2 and y1 <= ny <= y2:
+                    events.append({
+                        "frame": entry["frame"],
+                        "time_sec": entry["frame"] / fps,
+                        "type": "cluster_goal_zone",
+                        "value": float(c["player_count"]),
+                    })
+                    break
+
+        return events
+
+    def _detect_cluster_density_spike(
+        self, clusters: list[dict], fps: float
+    ) -> list[dict]:
+        """Detect unusually high player count (set pieces, corners)."""
+        counts = [
+            entry["cluster"]["player_count"]
+            for entry in clusters
+            if entry.get("cluster") is not None
+        ]
+        if not counts:
+            return []
+
+        threshold = float(np.percentile(counts, self.cluster_density_percentile))
+
+        events = []
+        for entry in clusters:
+            c = entry.get("cluster")
+            if c is None:
+                continue
+            if c["player_count"] >= threshold:
+                events.append({
+                    "frame": entry["frame"],
+                    "time_sec": entry["frame"] / fps,
+                    "type": "cluster_density",
+                    "value": float(c["player_count"]),
+                })
+
+        return events
+
+    # ------------------------------------------------------------------
+    # Clustering, scoring, and export
+    # ------------------------------------------------------------------
+
     def _cluster_events(self, events: list[dict], fps: float) -> list[dict]:
-        """Cluster nearby events into highlight clips with margins."""
+        """Cluster nearby events into scored, ranked highlight clips."""
         if not events:
             return []
 
@@ -211,7 +448,7 @@ class HighlightDetector:
             else:
                 clusters.append([e])
 
-        # Convert clusters to clips with margins
+        # Convert clusters to scored clips with margins
         clips = []
         for cluster in clusters:
             start_sec = max(0, cluster[0]["time_sec"] - self.pre_margin_sec)
@@ -222,13 +459,39 @@ class HighlightDetector:
                 continue
 
             event_types = list(set(e["type"] for e in cluster))
+
+            # Compute score
+            total_score = sum(
+                self.score_weights.get(e["type"], 1.0) for e in cluster
+            )
+
+            # Combined signal bonus: clip has both ball and cluster events
+            has_ball = any(e["type"] in _BALL_EVENT_TYPES for e in cluster)
+            has_cluster = any(e["type"] in _CLUSTER_EVENT_TYPES for e in cluster)
+            if has_ball and has_cluster:
+                total_score *= self.combined_signal_bonus
+
+            if total_score < self.min_clip_score:
+                continue
+
             clips.append({
                 "start_sec": start_sec,
                 "end_sec": end_sec,
                 "duration": duration,
                 "event_count": len(cluster),
                 "event_types": event_types,
+                "score": round(total_score, 2),
+                "rank": 0,  # filled below
             })
+
+        # Sort by score descending, cap at max_clips
+        clips.sort(key=lambda c: c["score"], reverse=True)
+        clips = clips[: self.max_clips]
+
+        # Assign rank, then re-sort by time for sequential export
+        for i, clip in enumerate(clips):
+            clip["rank"] = i + 1
+        clips.sort(key=lambda c: c["start_sec"])
 
         return clips
 
@@ -245,3 +508,32 @@ class HighlightDetector:
             str(output_path),
         ]
         subprocess.run(cmd, check=True, capture_output=True)
+
+    def _write_manifest(
+        self,
+        output_dir: Path,
+        clips: list[dict],
+        detector_stats: dict,
+    ):
+        """Write highlights.json manifest with clip metadata and stats."""
+        manifest = {
+            "clip_count": len(clips),
+            "clips": [
+                {
+                    "filename": f"highlight_{i:03d}.mp4",
+                    "start_sec": clip["start_sec"],
+                    "end_sec": clip["end_sec"],
+                    "duration": clip["duration"],
+                    "score": clip["score"],
+                    "rank": clip["rank"],
+                    "event_types": clip["event_types"],
+                    "event_count": clip["event_count"],
+                }
+                for i, clip in enumerate(clips)
+            ],
+            "detector_stats": detector_stats,
+        }
+        manifest_path = output_dir / "highlights.json"
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        logger.info("Wrote highlight manifest: %s", manifest_path)

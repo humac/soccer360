@@ -313,14 +313,39 @@ Controls hybrid camera tracking that blends ball position with player cluster da
 
 ### Highlights
 
+**Ball-based detectors** (require ball tracking):
+
 | Key | Default | Purpose |
 |-----|---------|---------|
 | `highlights.speed_percentile` | `95` | Speed threshold percentile |
-| `highlights.direction_change_deg` | `90` | Direction change trigger |
-| `highlights.goal_box_regions` | (see config) | Normalized goal-box coordinates |
+| `highlights.direction_change_deg` | `90` | Direction change trigger (degrees) |
+| `highlights.goal_box_regions` | (see config) | Normalized goal-box coordinates `[x1, y1, x2, y2]` |
 | `highlights.pre_margin_sec` | `5.0` | Seconds before event in clip |
 | `highlights.post_margin_sec` | `3.0` | Seconds after event in clip |
 | `highlights.min_clip_gap_sec` | `5.0` | Minimum gap between clips (dedup) |
+| `highlights.min_clip_duration_sec` | `3.0` | Minimum clip length |
+
+**Cluster-based detectors** (require `player_cluster.json`, work even without ball tracking):
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `highlights.cluster_convergence_window` | `10` | Frames to measure spread decrease |
+| `highlights.cluster_convergence_deg` | `8.0` | Minimum spread decrease to trigger (degrees) |
+| `highlights.cluster_velocity_window` | `5` | Frames for centroid velocity computation |
+| `highlights.cluster_velocity_deg_per_sec` | `15.0` | Centroid speed threshold (degrees/sec) |
+| `highlights.cluster_goal_zone_regions` | `null` | Goal zone regions for cluster (null = reuse `goal_box_regions`) |
+| `highlights.cluster_density_percentile` | `90` | Player count percentile for density spikes |
+
+**Scoring and ranking:**
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `highlights.score_weights` | (see config) | Per-event-type weight multipliers |
+| `highlights.combined_signal_bonus` | `1.5` | Multiplier when clip has both ball and cluster events |
+| `highlights.min_clip_score` | `2.0` | Drop clips scoring below this |
+| `highlights.max_clips` | `20` | Maximum exported highlight clips |
+
+> **Tip:** If you get too many irrelevant highlights, increase `min_clip_score`. If you miss important moments, reduce it. The `score_weights` let you tune which event types matter most — `goal_box` and `cluster_goal_zone` are weighted highest by default since goal-area action is typically most interesting.
 
 ### Ingest and Archival
 

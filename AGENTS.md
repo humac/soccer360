@@ -45,7 +45,7 @@ src/
   hard_frames.py     Legacy hard-frame export
   camera.py          Camera path smoothing (hybrid ball+cluster blend + Kalman + EMA + deadband + dynamic FOV)
   reframer.py        360->perspective rendering (parallel segments with overlap)
-  highlights.py      Heuristic highlight detection and clip export
+  highlights.py      Highlight detection (ball + cluster signals, scoring/ranking, manifest)
   exporter.py        Final outputs, metadata, ingest archival bookkeeping
   watcher.py         Ingest daemon + persistent dedupe state + EventBus creation
   trainer.py         Fine-tuning + TensorRT export + manual hard-frame export command

@@ -19,6 +19,7 @@ Runtime modes in `src/pipeline.py`:
 - `src/detector.py`: model resolution, FoI, V1/legacy detection behavior
 - `src/tracker.py`: ByteTrack (legacy) + BallStabilizer (V1) — filters to class 32 (ball) only
 - `src/player_cluster.py`: center-of-play estimation from player cluster positions (class 0)
+- `src/highlights.py`: heuristic highlight detection — ball-based (speed, goal-box, direction) + cluster-based (convergence, velocity, goal zone, density) + scoring/ranking
 - `src/active_learning.py`: V1 hard-frame export triggers/gating
 - `src/watcher.py`: ingest queue daemon + persistent dedupe fingerprints + EventBus creation
 - `src/exporter.py`: metadata + ingest archival (`move`/`copy`/`leave`, collision policy)

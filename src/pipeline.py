@@ -148,6 +148,7 @@ class Pipeline:
                 self.event_bus.job_started(job_id, mode=self.mode)
 
             camera_path_file = work_dir / "camera_path.json"
+            player_cluster_path = None
 
             if self.mode == "normal":
                 # Decision: confirm mode before starting detection
@@ -262,7 +263,6 @@ class Pipeline:
                 timer.record_stat("track_frames_with_ball", ball_found)
 
                 # Phase 2.7: Player cluster (center of play)
-                player_cluster_path = None
                 if self.player_cluster is not None:
                     logger.info("--- Phase 2.7: Player Cluster (Center of Play) ---")
                     player_cluster_path = work_dir / "player_cluster.json"
@@ -308,12 +308,11 @@ class Pipeline:
             logger.info("--- Phase 6: Highlights ---")
             highlights_dir = work_dir / "highlights"
             with self._tracked_phase(timer, job_id, "highlights"):
-                if self.mode == "normal" and tracks_path is not None:
-                    self.highlights.detect_and_export(
-                        broadcast_path, meta, camera_path_file, tracks_path, highlights_dir
-                    )
-                else:
-                    logger.info("Skipping highlights in NO_DETECT mode (no tracks)")
+                self.highlights.detect_and_export(
+                    broadcast_path, meta, camera_path_file,
+                    tracks_path, highlights_dir,
+                    player_cluster_path=player_cluster_path,
+                )
 
             # Phase 7: Export to final destination
             logger.info("--- Phase 7: Export ---")

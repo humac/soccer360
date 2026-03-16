@@ -201,14 +201,22 @@ A fixed wide-angle view (120-degree FOV) showing most of the pitch. Useful for t
 
 **Location:** `/tank/highlights/<match_name>/`
 
-Short clips (typically 8-15 seconds each) capturing key moments:
+Short clips (typically 8-15 seconds each) capturing key moments. Clips are ranked by a scoring system and exported in chronological order.
+
+**Ball-based signals** (when ball tracking available):
 - Fast ball movement (shots, long passes)
 - Sharp direction changes (deflections, saves)
 - Goal-box activity (shots on goal, corner kicks)
 
-Each clip is a standalone MP4 file.
+**Player cluster signals** (when center-of-play data available):
+- Player convergence (rapid clustering — set pieces, contested ball)
+- Fast breaks (cluster centroid moving quickly across the pitch)
+- Attacking pressure (player cluster near goal zones)
+- Density spikes (unusually high player count — corners, free kicks)
 
-> **Note:** Highlights are only generated in normal processing mode. If the pipeline ran in NO_DETECT mode (no ball detection model available), no highlights are produced.
+Clips with both ball and cluster signals score higher and are prioritized. Each clip is a standalone MP4 file, and a `highlights.json` manifest is written with scores, ranks, and per-detector event counts.
+
+> **Note:** Highlights require at least one data source (ball tracks or player cluster data). In NO_DETECT mode without cluster data, no highlights are produced.
 
 ### Metadata and Diagnostics
 

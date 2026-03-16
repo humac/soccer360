@@ -97,6 +97,24 @@ def test_config() -> dict:
                 "post_margin_sec": 0.5,
                 "min_clip_gap_sec": 2.0,
                 "min_clip_duration_sec": 1.0,
+                "cluster_convergence_window": 5,
+                "cluster_convergence_deg": 5.0,
+                "cluster_velocity_window": 3,
+                "cluster_velocity_deg_per_sec": 10.0,
+                "cluster_goal_zone_regions": None,
+                "cluster_density_percentile": 80,
+                "score_weights": {
+                    "speed": 1.0,
+                    "goal_box": 1.5,
+                    "direction_change": 0.8,
+                    "cluster_convergence": 1.2,
+                    "cluster_velocity": 0.7,
+                    "cluster_goal_zone": 1.3,
+                    "cluster_density": 0.5,
+                },
+                "combined_signal_bonus": 1.5,
+                "min_clip_score": 0.5,
+                "max_clips": 10,
             },
             "exporter": {
                 "codec": "libx264",
@@ -290,4 +308,50 @@ def sample_tracks(tmp_work_dir: Path) -> Path:
     path = tmp_work_dir / "tracks.json"
     with open(path, "w") as f:
         json.dump(tracks, f)
+    return path
+
+
+@pytest.fixture
+def sample_cluster_data(tmp_work_dir: Path) -> Path:
+    """Create sample player cluster JSON with convergence and goal-zone events.
+
+    30 frames at 320x160 detection space:
+    - Frames 0-11: stable spread ~35 deg, centroid at mid-field
+    - Frames 12-18: convergence event (spread drops 40->10 deg)
+    - Frames 19-24: stable again, centroid drifting right
+    - Frames 25-29: centroid near right goal zone, high player count
+    """
+    clusters = []
+    for frame in range(30):
+        # Default: mid-field centroid with moderate spread
+        x = 160.0
+        y = 80.0
+        spread = 35.0
+        count = 10
+        conf = 0.7
+
+        if 12 <= frame <= 18:
+            # Convergence event: spread drops rapidly
+            spread = 40.0 - (frame - 12) * 5.0  # 40 -> 10
+            count = 12 + (frame - 12)  # increasing density
+        elif frame >= 25:
+            # Near right goal zone (x > 92% of 320 = 294.4)
+            x = 300.0
+            count = 15  # high player count
+            spread = 20.0
+
+        clusters.append({
+            "frame": frame,
+            "cluster": {
+                "x": x,
+                "y": y,
+                "spread_x_deg": spread,
+                "player_count": count,
+                "confidence": conf,
+            },
+        })
+
+    path = tmp_work_dir / "player_cluster.json"
+    with open(path, "w") as f:
+        json.dump(clusters, f)
     return path
