@@ -228,9 +228,9 @@ All pipeline parameters live in `configs/pipeline.yaml`. Override the config pat
 
 | Key | Default | Purpose |
 |-----|---------|---------|
-| `detection.path` | `yolov8s.pt` | YOLO model file |
+| `detection.path` | `/app/models/yolo26l.pt` | YOLO model file (currently YOLO11l) |
 | `detection.classes` | `[32, 0]` | COCO class IDs to detect (32 = sports ball, 0 = person) |
-| `detection.conf` | `0.35` | Minimum detection confidence |
+| `detection.conf` | `0.10` | Minimum detection confidence (low to capture hard frames) |
 | `detection.iou` | `0.5` | NMS IOU threshold |
 | `detection.img_size` | `960` | Inference image size |
 | `detection.half` | `true` | FP16 inference (supported on P40) |
@@ -296,7 +296,7 @@ Controls hybrid camera tracking that blends ball position with player cluster da
 
 > **Tip:** If the camera seems to wander away from ball action, reduce `ball_blend_weight` toward `0.0`. If the camera loses the action entirely when the ball is hard to detect, keep it at `0.15` or higher.
 
-> **Note:** Player detection uses the pretrained COCO model and is not retrained by the active learning loop. The YOLOv8s base model already handles person detection well on soccer fields.
+> **Note:** Player detection uses the pretrained COCO model and is not retrained by the active learning loop. The YOLO11l base model handles person detection on soccer fields, though spectator/parent filtering relies on confidence thresholds and FoI bounds.
 
 ### Rendering
 

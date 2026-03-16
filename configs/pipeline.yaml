@@ -177,7 +177,7 @@ active_learning:
   jump_trigger_px: 150
 
 # --- V1 Bootstrap Detection ---
-# COCO-pretrained YOLOv8s for sports ball (class 32) detection
+# COCO-pretrained YOLO for sports ball (class 32) + person (class 0) detection
 detection:
   path: "/app/models/yolo26l.pt"
   classes: [32, 0]           # COCO sports ball + person

@@ -64,7 +64,7 @@ Runtime modes in `src/pipeline.py`:
 - Camera blending priority: ball (high conf, 85%/15%) > ball+cluster (low conf, 50%/50%) > cluster only > drift-to-center
 - FOV adapts to player spread: wide spread → wider FOV, tight cluster → tighter FOV
 - Config section: `center_of_play:` with `enabled`, `player_class`, `min_player_conf`, `trim_fraction`, `min_players`, `ball_blend_weight`, `ema_alpha`, `fov_from_spread`, `spread_max_fov`, `spread_min_deg`, `spread_max_deg`
-- Detection config: `classes: [32, 0]`, `max_det: 50`
+- Detection model: YOLO11l (`yolo26l.pt`), COCO-pretrained, `classes: [32, 0]`, `max_det: 50`
 - Tracker/BallStabilizer filter to class 32 only — person detections do not affect ball tracking
 - Output: `player_cluster.json` (per-frame centroid, spread, player count)
 

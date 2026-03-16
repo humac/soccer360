@@ -62,9 +62,9 @@ Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 
 
 ### V1 Bootstrap Detection
 
-The V1 pipeline uses a COCO-pretrained YOLOv8m detecting both sports ball (class 32) and person (class 0) with conservative filtering and temporal stabilization. Person detections feed the center-of-play module; ball detections feed the tracker. This enables a train-then-upgrade cycle:
+The V1 pipeline uses YOLO (currently YOLOv11l via `yolo26l.pt`) detecting both sports ball (class 32) and person (class 0) with conservative filtering and temporal stabilization. Person detections feed the center-of-play module; ball detections feed the tracker. This enables a train-then-upgrade cycle:
 
-1. **Detect** -- YOLOv8m detects balls and players with class filter + y-range filter + best-per-frame selection (best ball per frame; all person detections passed through)
+1. **Detect** -- YOLO detects balls and players with class filter + y-range filter + best-per-frame selection (best ball per frame; all person detections passed through)
 2. **Stabilize** -- BallStabilizer applies persistence gate (require N of M frames), jump/speed rejection, and EMA smoothing
 3. **Export hard frames** -- ActiveLearningExporter flags low-confidence detections, lost ball runs, and jump rejections for labeling
 4. **Label** -- Annotate exported frames in Label Studio
@@ -216,7 +216,7 @@ All parameters are in `configs/pipeline.yaml`:
 - **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s), dotfile filtering, persistent processed-state dedupe file
 - **ingest** -- post-success archival (archive mode, collision handling, name template)
 - **active_learning** -- V1: three-trigger hard frame export (low confidence range, lost ball runs, jump rejections), gating (every_n, max cap)
-- **detection** -- V1 bootstrap: YOLO model path, COCO class filter (`[32, 0]`), confidence/IOU, image size, half precision, device
+- **detection** -- V1 bootstrap: YOLO model path (currently `yolo26l.pt`), COCO class filter (`[32, 0]`), confidence/IOU, image size, half precision, device
 - **center_of_play** -- hybrid camera tracking: player cluster computation, ball/cluster blend weights, FOV-from-spread, EMA smoothing
 - **filters** -- V1: y-range vertical band filter, max jump/speed sanity limits
 - **tracking** -- V1: EMA alpha, persistence gate (require_persistence, window size)
