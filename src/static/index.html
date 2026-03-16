@@ -729,6 +729,8 @@ loadLabelingStatus();
 loadTrainingStatus();
 loadModels();
 loadMedia();
+// Fetch initial GPU status immediately (SSE snapshots arrive every ~5s)
+fetch('/api/gpu').then(r => r.json()).then(d => updateGPU(d)).catch(() => {});
 setInterval(loadJobs, 10000);
 setInterval(loadLabelingStatus, 15000);
 setInterval(loadTrainingStatus, 5000);
