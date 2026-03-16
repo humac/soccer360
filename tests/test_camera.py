@@ -357,3 +357,188 @@ class TestCenterOfPlayHybrid:
             f"FOV {max_fov} should exceed camera.max_fov={config['camera']['max_fov']} "
             f"due to player spread"
         )
+
+
+# ---------------------------------------------------------------------------
+# Smoothness tests
+# ---------------------------------------------------------------------------
+
+class TestFOVSmoothing:
+    """Tests for FOV EMA smoothing to prevent zoom jitter."""
+
+    def test_fov_no_frame_to_frame_oscillation(self, test_config, tmp_work_dir):
+        """FOV should not oscillate between lost and found states."""
+        gen = CameraPathGenerator(test_config)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=2.0, total_frames=60, codec="h264",
+        )
+
+        # Alternating ball detected / lost every frame (worst case for oscillation)
+        tracks = []
+        for i in range(60):
+            if i % 2 == 0:
+                tracks.append({
+                    "frame": i,
+                    "ball": {"x": 160, "y": 80, "confidence": 0.5},
+                })
+            else:
+                tracks.append({"frame": i, "ball": None})
+
+        tracks_path = tmp_work_dir / "tracks_flicker.json"
+        with open(tracks_path, "w") as f:
+            json.dump(tracks, f)
+
+        output_path = tmp_work_dir / "camera_path_flicker.json"
+        gen.generate(tracks_path, meta, output_path)
+
+        with open(output_path) as f:
+            path = json.load(f)
+
+        # FOV changes between consecutive frames should be small due to EMA
+        for i in range(1, len(path)):
+            dfov = abs(path[i]["fov"] - path[i - 1]["fov"])
+            assert dfov < 3.0, (
+                f"FOV jump of {dfov:.1f}° at frame {i} "
+                f"({path[i-1]['fov']} -> {path[i]['fov']})"
+            )
+
+    def test_fov_gradual_transition_on_ball_loss(self, test_config, tmp_work_dir):
+        """FOV should widen gradually when ball is lost, not snap immediately."""
+        gen = CameraPathGenerator(test_config)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=2.0, total_frames=60, codec="h264",
+        )
+
+        # Ball detected for 15 frames, then lost for 45
+        tracks = []
+        for i in range(15):
+            tracks.append({
+                "frame": i,
+                "ball": {"x": 160, "y": 80, "confidence": 0.9},
+            })
+        for i in range(15, 60):
+            tracks.append({"frame": i, "ball": None})
+
+        tracks_path = tmp_work_dir / "tracks_gradual.json"
+        with open(tracks_path, "w") as f:
+            json.dump(tracks, f)
+
+        output_path = tmp_work_dir / "camera_path_gradual.json"
+        gen.generate(tracks_path, meta, output_path)
+
+        with open(output_path) as f:
+            path = json.load(f)
+
+        # Frame 15 is first lost frame; FOV should not snap to max_fov
+        fov_at_loss = path[15]["fov"]
+        max_fov = test_config["camera"]["max_fov"]
+        assert fov_at_loss < max_fov, (
+            f"FOV snapped to {fov_at_loss} on first lost frame "
+            f"(max_fov={max_fov}), should transition gradually"
+        )
+
+        # But eventually it should approach max_fov
+        fov_late = path[-1]["fov"]
+        assert fov_late > max_fov - 2.0, (
+            f"FOV should approach max_fov after sustained loss, got {fov_late}"
+        )
+
+
+class TestSpreadCarryforward:
+    """Tests for spread data carryforward across cluster gaps."""
+
+    def test_spread_gap_no_fov_drop(self, test_config, tmp_work_dir):
+        """FOV should not drop when cluster data has a 1-frame gap."""
+        config = deepcopy(test_config)
+        config["center_of_play"]["enabled"] = True
+        config["center_of_play"]["fov_from_spread"] = True
+
+        gen = CameraPathGenerator(config)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=1.0, total_frames=30, codec="h264",
+        )
+
+        tracks = []
+        clusters = []
+        for i in range(30):
+            tracks.append({
+                "frame": i,
+                "ball": {"x": 160, "y": 80, "confidence": 0.9},
+            })
+            # Gap at frames 15 and 16 (no cluster)
+            if i not in (15, 16):
+                clusters.append({
+                    "frame": i,
+                    "cluster": {"x": 160, "y": 80, "spread_x_deg": 50.0,
+                                 "player_count": 18, "confidence": 0.7},
+                })
+
+        tracks_path = tmp_work_dir / "tracks_gap.json"
+        with open(tracks_path, "w") as f:
+            json.dump(tracks, f)
+        cluster_path = _make_cluster_json(tmp_work_dir, clusters)
+
+        output_path = tmp_work_dir / "camera_path_gap.json"
+        gen.generate(tracks_path, meta, output_path, player_cluster_path=cluster_path)
+
+        with open(output_path) as f:
+            path = json.load(f)
+
+        # FOV at gap frames should not drop significantly vs. neighbors
+        fov_14 = path[14]["fov"]
+        fov_15 = path[15]["fov"]
+        fov_16 = path[16]["fov"]
+        fov_17 = path[17]["fov"]
+        assert abs(fov_15 - fov_14) < 2.0, (
+            f"FOV dropped at gap frame 15: {fov_14} -> {fov_15}"
+        )
+        assert abs(fov_16 - fov_15) < 2.0, (
+            f"FOV dropped at gap frame 16: {fov_15} -> {fov_16}"
+        )
+
+
+class TestSmoothSpeedThresholds:
+    """Tests for smooth (non-binary) speed threshold transitions."""
+
+    def test_no_pan_speed_flicker(self, test_config, tmp_work_dir):
+        """Pan speed limit should transition smoothly, not flicker."""
+        gen = CameraPathGenerator(test_config)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=2.0, total_frames=60, codec="h264",
+        )
+
+        # Ball moving at moderate speed (should be near the threshold zone)
+        tracks = []
+        for i in range(60):
+            x = 160 + i * 2  # gradual rightward movement
+            tracks.append({
+                "frame": i,
+                "ball": {"x": min(x, 310), "y": 80, "confidence": 0.8},
+            })
+
+        tracks_path = tmp_work_dir / "tracks_moderate.json"
+        with open(tracks_path, "w") as f:
+            json.dump(tracks, f)
+
+        output_path = tmp_work_dir / "camera_path_moderate.json"
+        gen.generate(tracks_path, meta, output_path)
+
+        with open(output_path) as f:
+            path = json.load(f)
+
+        # Check that yaw changes are smooth (no sudden speed reversals)
+        dyaws = [
+            angle_diff(path[i]["yaw"], path[i - 1]["yaw"])
+            for i in range(2, len(path))
+        ]
+        # Consecutive dyaw changes should not reverse sign abruptly by large amounts
+        for i in range(1, len(dyaws)):
+            accel = abs(dyaws[i] - dyaws[i - 1])
+            assert accel < 2.0, (
+                f"Camera acceleration spike at frame {i+2}: "
+                f"dyaw went {dyaws[i-1]:.2f} -> {dyaws[i]:.2f}"
+            )

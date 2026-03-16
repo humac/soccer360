@@ -72,6 +72,7 @@ def test_config() -> dict:
                 "lost_drift_frames": 90,
                 "field_center_yaw_deg": 0.0,
                 "field_center_pitch_deg": -5.0,
+                "fov_ema_alpha": 0.08,
                 "kalman": {
                     "process_noise": 0.1,
                     "measurement_noise": 1.0,

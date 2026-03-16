@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from .events import EventStore, create_event_store
-from .metrics import gpu_utilization_snapshot
+from .metrics import cpu_ram_snapshot, gpu_utilization_snapshot
 
 logger = logging.getLogger("soccer360.dashboard")
 
@@ -122,6 +122,11 @@ def create_app(config: dict | None = None) -> FastAPI:
     @app.get("/api/gpu")
     async def gpu_status():
         snap = gpu_utilization_snapshot()
+        return snap or {"available": False}
+
+    @app.get("/api/system")
+    async def system_status():
+        snap = cpu_ram_snapshot()
         return snap or {"available": False}
 
     @app.get("/api/decisions/pending")
@@ -454,7 +459,7 @@ def create_app(config: dict | None = None) -> FastAPI:
                         "data": json.dumps(d),
                     }
 
-                # Periodic GPU snapshot (every ~5 seconds = 5 iterations)
+                # Periodic hardware snapshots (every ~5 seconds = 5 iterations)
                 gpu_counter += 1
                 if gpu_counter >= 5:
                     gpu_counter = 0
@@ -463,6 +468,12 @@ def create_app(config: dict | None = None) -> FastAPI:
                         yield {
                             "event": "gpu_snapshot",
                             "data": json.dumps(snap),
+                        }
+                    sys_snap = cpu_ram_snapshot()
+                    if sys_snap:
+                        yield {
+                            "event": "system_snapshot",
+                            "data": json.dumps(sys_snap),
                         }
 
                 # Periodic status heartbeat

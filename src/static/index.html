@@ -166,6 +166,26 @@
     </div>
   </div>
 
+  <!-- CPU / RAM Status -->
+  <div class="card">
+    <h2>System</h2>
+    <div class="gauge-row">
+      <div class="gauge">
+        <div class="gauge-label">CPU</div>
+        <div class="gauge-bar"><div id="cpu-util-fill" class="gauge-fill" style="width:0%;background:var(--green)"></div></div>
+        <div class="gauge-value" id="cpu-util-val">--</div>
+      </div>
+      <div class="gauge">
+        <div class="gauge-label">RAM</div>
+        <div class="gauge-bar"><div id="ram-util-fill" class="gauge-fill" style="width:0%;background:#c084fc"></div></div>
+        <div class="gauge-value" id="ram-util-val">--</div>
+      </div>
+    </div>
+    <div style="margin-top:8px;font-size:0.75rem;color:var(--muted)">
+      CPUs: <span id="cpu-count">--</span>
+    </div>
+  </div>
+
   <!-- Quick Stats -->
   <div class="card">
     <h2>Stats</h2>
@@ -322,6 +342,11 @@ function connectSSE() {
     updateGPU(d);
   });
 
+  evtSource.addEventListener('system_snapshot', (e) => {
+    const d = JSON.parse(e.data);
+    updateSystem(d);
+  });
+
   evtSource.addEventListener('decision_pending', (e) => {
     const d = JSON.parse(e.data);
     showDecision(d);
@@ -388,6 +413,21 @@ function updateGPU(d) {
   document.getElementById('gpu-mem-fill').style.width = memPct + '%';
   document.getElementById('gpu-mem-val').textContent = memUsed + ' / ' + memTotal + ' MB';
   document.getElementById('gpu-temp').textContent = (d.temperature_c || '--') + '\u00B0C';
+}
+
+// --- System (CPU/RAM) ---
+function updateSystem(d) {
+  if (!d) return;
+  const cpuPct = d.cpu_utilization_pct || 0;
+  const ramPct = d.ram_utilization_pct || 0;
+  const ramUsed = d.ram_used_mb || 0;
+  const ramTotal = d.ram_total_mb || 1;
+
+  document.getElementById('cpu-util-fill').style.width = cpuPct + '%';
+  document.getElementById('cpu-util-val').textContent = cpuPct + '%';
+  document.getElementById('ram-util-fill').style.width = ramPct + '%';
+  document.getElementById('ram-util-val').textContent = ramUsed + ' / ' + ramTotal + ' MB';
+  if (d.cpu_count) document.getElementById('cpu-count').textContent = d.cpu_count;
 }
 
 // --- Decisions ---
@@ -731,6 +771,7 @@ loadModels();
 loadMedia();
 // Fetch initial GPU status immediately (SSE snapshots arrive every ~5s)
 fetch('/api/gpu').then(r => r.json()).then(d => updateGPU(d)).catch(() => {});
+fetch('/api/system').then(r => r.json()).then(d => updateSystem(d)).catch(() => {});
 setInterval(loadJobs, 10000);
 setInterval(loadLabelingStatus, 15000);
 setInterval(loadTrainingStatus, 5000);

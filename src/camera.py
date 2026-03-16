@@ -68,6 +68,7 @@ class CameraPathGenerator:
         self.deadband_deg = cam_cfg.get("deadband_deg", 0.5)
         self.velocity_threshold = cam_cfg.get("velocity_threshold_deg_per_sec", 2.0)
         self.lost_fov_widen = cam_cfg.get("lost_fov_widen", True)
+        self.fov_ema_alpha = cam_cfg.get("fov_ema_alpha", 0.08)
 
         kalman_cfg = cam_cfg.get("kalman", {})
         self.process_noise = kalman_cfg.get("process_noise", 0.1)
@@ -156,10 +157,14 @@ class CameraPathGenerator:
             cluster_by_frame = {
                 c["frame"]: c.get("cluster") for c in clusters
             }
+            last_spread = None
             for i, entry in enumerate(clamped):
                 cl = cluster_by_frame.get(i)
                 if cl is not None:
-                    entry["spread_x_deg"] = cl.get("spread_x_deg", 0.0)
+                    last_spread = cl.get("spread_x_deg", 0.0)
+                    entry["spread_x_deg"] = last_spread
+                elif last_spread is not None:
+                    entry["spread_x_deg"] = last_spread
         camera_path = self._compute_fov(clamped, fps)
 
         logger.info("Camera path generated: %d entries", len(camera_path))
@@ -371,11 +376,12 @@ class CameraPathGenerator:
             prev = clamped[-1]
             curr = entries[i].copy()
 
-            # Use faster limit during rapid ball motion
+            # Smooth transition between normal and fast max speed
             ball_speed = math.sqrt(
                 curr.get("d_yaw", 0) ** 2 + curr.get("d_pitch", 0) ** 2
             )
-            max_delta = max_delta_fast if ball_speed > max_delta_normal * 2 else max_delta_normal
+            speed_ratio = min(ball_speed / (max_delta_normal * 2), 1.0)
+            max_delta = max_delta_normal + (max_delta_fast - max_delta_normal) * speed_ratio
 
             dyaw = angle_diff(curr["yaw"], prev["yaw"])
             dpitch = curr["pitch"] - prev["pitch"]
@@ -386,10 +392,12 @@ class CameraPathGenerator:
             if abs(dpitch) < deadband:
                 dpitch = 0.0
 
-            # Velocity threshold: don't move camera if ball barely moved
-            if ball_speed < vel_threshold and not curr.get("lost", False):
-                dyaw *= 0.3  # reduce but don't zero (allow slow drift)
-                dpitch *= 0.3
+            # Smooth gain reduction when ball speed is low
+            if not curr.get("lost", False):
+                gain_ratio = min(ball_speed / vel_threshold, 1.0)
+                gain = 0.3 + 0.7 * gain_ratio
+                dyaw *= gain
+                dpitch *= gain
 
             # Clamp to max speed
             dyaw = np.clip(dyaw, -max_delta, max_delta)
@@ -407,28 +415,31 @@ class CameraPathGenerator:
 
         Fast ball -> wider FOV (keep action in frame).
         Slow ball -> narrower FOV (tighter framing).
-        Ball lost -> immediately widen FOV to max (if lost_fov_widen enabled).
+        Ball lost -> target max FOV (smoothed via EMA to avoid snap).
+
+        All FOV values are EMA-smoothed to prevent frame-to-frame oscillation.
         """
         result = []
+        fov_alpha = self.fov_ema_alpha
+        prev_fov = self.default_fov
 
-        for entry in entries:
+        for i, entry in enumerate(entries):
             speed = math.sqrt(
                 entry.get("d_yaw", 0) ** 2 + entry.get("d_pitch", 0) ** 2
             )
 
             # Map speed to FOV range
             speed_normalized = min(speed / 5.0, 1.0)
-            fov = self.min_fov + (self.max_fov - self.min_fov) * speed_normalized
+            target_fov = self.min_fov + (self.max_fov - self.min_fov) * speed_normalized
 
             if entry.get("lost", False):
                 if self.lost_fov_widen:
-                    # Immediately widen FOV when ball is lost to increase
-                    # chance of keeping action visible
-                    fov = self.max_fov
+                    # Target max FOV when lost (EMA will smooth the transition)
+                    target_fov = self.max_fov
                 else:
                     lost_count = entry.get("lost_count", 0)
                     if lost_count > self.lost_coast_frames:
-                        fov = self.default_fov
+                        target_fov = self.default_fov
 
             # Widen FOV based on player spread when available
             spread = entry.get("spread_x_deg")
@@ -440,7 +451,14 @@ class CameraPathGenerator:
                 spread_fov = self.min_fov + (
                     self.cop_spread_max_fov - self.min_fov
                 ) * t
-                fov = max(fov, spread_fov)
+                target_fov = max(target_fov, spread_fov)
+
+            # EMA smoothing: blend target with previous FOV
+            if i == 0:
+                fov = target_fov
+            else:
+                fov = prev_fov + fov_alpha * (target_fov - prev_fov)
+            prev_fov = fov
 
             result.append({
                 "yaw": wrap_angle(entry["yaw"]),

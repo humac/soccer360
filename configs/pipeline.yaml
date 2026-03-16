@@ -12,7 +12,7 @@ paths:
 
 model:
   path: /app/models/ball_best.pt
-  base_model: yolov8s.pt
+  base_model: yolov8m.pt
   tensorrt_path: /app/models/ball_best.engine
   # Inference backend: fp32 (default baseline) or tensorrt_int8 (optimization)
   backend: fp32
@@ -36,9 +36,9 @@ field_of_interest:
   # fixed: use center_yaw_deg as-is; auto: compute from first N seconds of detections
   center_mode: fixed
   center_yaw_deg: 0
-  yaw_window_deg: 200        # +/-100 from center
-  pitch_min_deg: -45
-  pitch_max_deg: 20
+  yaw_window_deg: 160        # +/-80 from center (tighter to exclude sideline spectators)
+  pitch_min_deg: -35
+  pitch_max_deg: 15
   auto_sample_seconds: 30    # seconds to sample for auto center mode
   auto_min_conf: 0.25        # min detection confidence for auto-center sampling
 
@@ -68,11 +68,13 @@ camera:
   field_center_yaw_deg: 0.0
   field_center_pitch_deg: -5.0
   # Deadband: ignore movements smaller than this to prevent micro-oscillation
-  deadband_deg: 0.5
+  deadband_deg: 1.5
   # Minimum velocity threshold to start camera movement (deg/sec)
-  velocity_threshold_deg_per_sec: 2.0
+  velocity_threshold_deg_per_sec: 3.0
   # Immediately widen FOV when ball is lost
   lost_fov_widen: true
+  # FOV smoothing (lower = smoother zoom transitions, 0.08 ≈ 12-frame half-life)
+  fov_ema_alpha: 0.08
   kalman:
     process_noise: 0.1
     measurement_noise: 1.0
@@ -167,19 +169,19 @@ active_learning:
   # Only export candidate frames whose frame_index % export_every_n_frames == 0
   export_every_n_frames: 2
   # Low-confidence band: detections in [low_conf_min, low_conf_max] are hard frames
-  low_conf_min: 0.20
+  low_conf_min: 0.10
   low_conf_max: 0.50
   # Lost-ball run: export one representative frame when streak reaches this many frames
-  lost_run_frames: 15
+  lost_run_frames: 5
   # Jump/speed rejection export threshold (only export if distance >= this)
-  jump_trigger_px: 200
+  jump_trigger_px: 150
 
 # --- V1 Bootstrap Detection ---
 # COCO-pretrained YOLOv8s for sports ball (class 32) detection
 detection:
-  path: "yolov8s.pt"
+  path: "/app/models/yolo26l.pt"
   classes: [32, 0]           # COCO sports ball + person
-  conf: 0.35
+  conf: 0.10
   iou: 0.5
   img_size: 960
   max_det: 50
@@ -199,18 +201,18 @@ filters:
 
 # V1 ball stabilization: persistence gate + EMA smoothing
 tracking:
-  ema_alpha: 0.35
-  require_persistence: 2     # require N detections in window to accept
-  window: 3                  # rolling window size
+  ema_alpha: 0.25
+  require_persistence: 3     # require N detections in window to accept
+  window: 5                  # rolling window size
 
 # --- Center of Play ---
 # Hybrid camera tracking: blend ball position with player cluster centroid
 center_of_play:
   enabled: true
   player_class: 0             # COCO person class
-  min_player_conf: 0.30       # minimum confidence for player detections
-  trim_fraction: 0.10         # discard 10% outliers from each end (removes GKs)
-  min_players: 4              # need >= 4 players for valid cluster
+  min_player_conf: 0.45       # minimum confidence for player detections (filters spectators)
+  trim_fraction: 0.15         # discard 15% outliers from each end (removes GKs + sideline)
+  min_players: 3              # need >= 3 players for valid cluster
   ball_blend_weight: 0.15     # when ball detected: 85% ball, 15% cluster
   ema_alpha: 0.20             # temporal smoothing for cluster centroid
   fov_from_spread: true       # adapt FOV based on player spread

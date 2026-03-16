@@ -38,6 +38,59 @@ class PhaseTimer:
         }
 
 
+def cpu_ram_snapshot() -> dict | None:
+    """Capture CPU and RAM utilization from /proc. Returns None if unavailable."""
+    try:
+        # CPU utilization from /proc/stat (two samples, 100ms apart)
+        def read_cpu():
+            with open("/proc/stat") as f:
+                parts = f.readline().split()
+            # user, nice, system, idle, iowait, irq, softirq, steal
+            vals = [int(p) for p in parts[1:9]]
+            idle = vals[3] + vals[4]  # idle + iowait
+            total = sum(vals)
+            return idle, total
+
+        idle1, total1 = read_cpu()
+        time.sleep(0.1)
+        idle2, total2 = read_cpu()
+
+        d_idle = idle2 - idle1
+        d_total = total2 - total1
+        cpu_pct = round(100.0 * (1.0 - d_idle / d_total), 1) if d_total > 0 else 0.0
+
+        # CPU count
+        cpu_count = 0
+        with open("/proc/stat") as f:
+            for line in f:
+                if line.startswith("cpu") and line[3:4].isdigit():
+                    cpu_count += 1
+
+        # RAM from /proc/meminfo
+        meminfo = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key, _, val = line.partition(":")
+                val = val.strip()
+                if val.endswith(" kB"):
+                    meminfo[key] = int(val[:-3])
+
+        total_mb = meminfo.get("MemTotal", 0) // 1024
+        available_mb = meminfo.get("MemAvailable", meminfo.get("MemFree", 0)) // 1024
+        used_mb = total_mb - available_mb
+        ram_pct = round(100.0 * used_mb / total_mb, 1) if total_mb > 0 else 0.0
+
+        return {
+            "cpu_utilization_pct": cpu_pct,
+            "cpu_count": cpu_count,
+            "ram_used_mb": used_mb,
+            "ram_total_mb": total_mb,
+            "ram_utilization_pct": ram_pct,
+        }
+    except Exception:
+        return None
+
+
 def gpu_utilization_snapshot() -> dict | None:
     """Capture GPU utilization via nvidia-smi. Returns None if unavailable."""
     try:
