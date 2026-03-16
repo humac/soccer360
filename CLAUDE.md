@@ -25,7 +25,8 @@ Runtime modes in `src/pipeline.py`:
 - `src/exporter.py`: metadata + ingest archival (`move`/`copy`/`leave`, collision policy)
 - `src/events.py`: EventStore (SQLite) + EventBus (null-safe pipeline wrapper) + decision queue
 - `src/dashboard.py`: FastAPI monitoring dashboard + REST API + SSE stream + training management
-- `src/metrics.py`: PhaseTimer (context-manager timing) + gpu_utilization_snapshot (nvidia-smi)
+- `src/camera.py`: camera path generation — hybrid ball+cluster → Kalman → EMA → deadband → FOV EMA smoothing
+- `src/metrics.py`: PhaseTimer (context-manager timing) + gpu_utilization_snapshot (nvidia-smi) + cpu_ram_snapshot (/proc)
 - `src/static/index.html`: single-page dashboard UI (vanilla JS/CSS, EventSource SSE)
 - `scripts/verify_container_assets.sh`: canonical container build/runtime verifier
 - `scripts/install.sh`: calls verifier as canonical worker build path
@@ -67,6 +68,20 @@ Runtime modes in `src/pipeline.py`:
 - Tracker/BallStabilizer filter to class 32 only — person detections do not affect ball tracking
 - Output: `player_cluster.json` (per-frame centroid, spread, player count)
 
+## Camera Smoothing Pipeline
+
+Multi-stage smoothing in `src/camera.py` prevents jitter in the broadcast output:
+
+1. Hybrid ball+cluster blending (priority: ball high-conf > ball+cluster > cluster only > drift)
+2. Kalman filter (4-state: yaw, pitch, velocity) with configurable process/measurement noise
+3. EMA post-smoothing on yaw/pitch (`camera.ema_alpha`)
+4. Deadband + smooth velocity gain ramp (linear interpolation, not binary threshold)
+5. Smooth pan speed interpolation between normal and fast limits (no binary flicker)
+6. **FOV EMA smoothing** (`camera.fov_ema_alpha: 0.08`) — prevents zoom oscillation; lost→found FOV transitions are gradual, not instant
+7. Spread data carryforward across cluster gaps (no FOV drops on missing frames)
+
+Key config: `camera.fov_ema_alpha`, `camera.deadband_deg`, `camera.velocity_threshold_deg_per_sec`, `camera.ema_alpha`
+
 ## Monitoring Dashboard
 
 - **Port 8088** (avoids Label Studio on 8080)
@@ -74,7 +89,9 @@ Runtime modes in `src/pipeline.py`:
 - `dashboard` Docker Compose service reuses `soccer360-worker:local` image
 - EventBus usage in pipeline is always guarded by `if self.event_bus:` — CLI path unchanged
 - SQLite WAL mode store at `dashboard.db_path` (default `/tank/data/dashboard.db`)
-- SSE endpoint (`/api/events`) streams phase events, GPU snapshots, decisions, status heartbeats
+- SSE endpoint (`/api/events`) streams phase events, GPU snapshots, system snapshots (CPU/RAM), decisions, status heartbeats
+- `/api/system` endpoint + `system_snapshot` SSE events provide CPU utilization, RAM usage, core count (from `/proc`)
+- Dashboard UI: GPU gauges, System card (CPU/RAM gauges), pipeline progress, job history, training management
 - Decision hooks in pipeline: mode confirmation (30s), post-detection review (60s), hard frame labeling (120s)
 - Training management API: `/api/training/labeling-status`, `/api/training/build-dataset`, `/api/training/train`, `/api/training/models`
 - Config section: `dashboard:` with `enabled`, `db_path`, `port`

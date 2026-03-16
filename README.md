@@ -62,9 +62,9 @@ Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 
 
 ### V1 Bootstrap Detection
 
-The V1 pipeline uses a COCO-pretrained YOLOv8s detecting both sports ball (class 32) and person (class 0) with conservative filtering and temporal stabilization. Person detections feed the center-of-play module; ball detections feed the tracker. This enables a train-then-upgrade cycle:
+The V1 pipeline uses a COCO-pretrained YOLOv8m detecting both sports ball (class 32) and person (class 0) with conservative filtering and temporal stabilization. Person detections feed the center-of-play module; ball detections feed the tracker. This enables a train-then-upgrade cycle:
 
-1. **Detect** -- YOLOv8s detects balls and players with class filter + y-range filter + best-per-frame selection (best ball per frame; all person detections passed through)
+1. **Detect** -- YOLOv8m detects balls and players with class filter + y-range filter + best-per-frame selection (best ball per frame; all person detections passed through)
 2. **Stabilize** -- BallStabilizer applies persistence gate (require N of M frames), jump/speed rejection, and EMA smoothing
 3. **Export hard frames** -- ActiveLearningExporter flags low-confidence detections, lost ball runs, and jump rejections for labeling
 4. **Label** -- Annotate exported frames in Label Studio
@@ -209,7 +209,7 @@ All parameters are in `configs/pipeline.yaml`:
 - **detector** -- batch size, detection resolution, confidence threshold, frame skipping, tiling
 - **field_of_interest** -- enable/disable, center mode (fixed/auto), yaw window, pitch range, auto-center sampling
 - **tracker** -- ByteTrack thresholds, track buffer, ball selection sanity checks (detector.resolution pixel space)
-- **camera** -- pan speed limits, FOV range, Kalman filter noise, deadband, velocity threshold, ball-lost behavior
+- **camera** -- pan speed limits, FOV range, FOV EMA smoothing (`fov_ema_alpha`), Kalman filter noise, deadband, velocity threshold, ball-lost behavior
 - **reframer** -- output resolution, source downscale, worker count, segment overlap, tactical view (FOV 120)
 - **highlights** -- ball detectors (speed, direction, goal-box), cluster detectors (convergence, velocity, goal zone, density), scoring weights, clip margins, max clips
 - **exporter** -- codec, CRF quality, encoder (cpu/nvenc), raw file handling
@@ -229,17 +229,17 @@ The virtual camera uses a multi-stage smoothing pipeline:
 
 1. **Hybrid ball + cluster blending** -- when ball detected: 85% ball / 15% player cluster; low confidence: 50/50; ball lost: 100% cluster; both lost: drift to center
 2. **Kalman filter** (4-state: yaw, pitch, velocity) -- handles noise and predicts through ball occlusions
-3. **EMA post-smoothing** -- removes residual jitter
+3. **EMA post-smoothing** -- removes residual jitter on yaw/pitch
 4. **Deadband** -- ignores movements below configurable angular threshold to prevent micro-oscillation
-5. **Velocity threshold** -- camera doesn't react to tiny ball movements
-6. **Pan speed clamping** -- enforces broadcast-quality maximum angular velocity (60 deg/s normal, 120 deg/s fast action)
-7. **Dynamic FOV** -- widens during fast ball movement, tightens during slow play, immediately widens when ball is lost; also adapts to player spread when `fov_from_spread` enabled
+5. **Smooth velocity gain** -- linear ramp from 0.3× to 1.0× based on ball speed (no binary step function)
+6. **Smooth pan speed interpolation** -- linearly blends between normal (60 deg/s) and fast (120 deg/s) limits based on ball speed (no binary flicker)
+7. **FOV EMA smoothing** -- all FOV changes are smoothed via EMA (`fov_ema_alpha: 0.08`, ~12-frame half-life). Lost→found transitions are gradual, not instant snaps. Spread data is carried forward across cluster gaps to prevent FOV drops on missing frames.
 
 Ball-lost fallback (with center of play enabled):
 
 - **Player cluster available**: camera follows center of play (no drift to field center)
 - **No cluster**: coast on predicted velocity (frames 1-30), velocity decays (31-90), drift toward field center (91+)
-- **FOV**: widens to maximum immediately; adapts to player spread when cluster available
+- **FOV**: targets maximum when lost, but EMA smoothing produces a gradual widen rather than an instant snap; adapts to player spread when cluster available
 
 ## Weekly Improvement Loop (Active Learning)
 
@@ -372,10 +372,12 @@ A web-based monitoring UI on port 8088 provides real-time pipeline visibility an
 **Features:**
 
 - Real-time pipeline progress (9-phase progress bar with timing)
-- GPU utilization gauges (updated via SSE)
+- GPU utilization gauges (updated via SSE every ~5s)
+- CPU and RAM utilization gauges (from `/proc/stat` and `/proc/meminfo`, no psutil dependency)
 - Interactive decision prompts (approve/reject with countdown timers)
 - Job history with phase-level metrics
 - Active learning management (labeling status, dataset build, model training)
+- Media player for reviewing processed outputs
 
 **Start the dashboard:**
 
@@ -609,7 +611,7 @@ src/
   detector.py     YOLO streaming batch detection + FoI filtering + model resolution
   tracker.py      ByteTrack ball tracking (two-stage association, Kalman box filter)
   player_cluster.py  Player cluster computation (center of play, trimmed mean, EMA)
-  camera.py       Camera path generation (hybrid blend + Kalman + EMA + deadband + dynamic FOV)
+  camera.py       Camera path generation (hybrid blend + Kalman + EMA + deadband + FOV EMA smoothing)
   reframer.py     360-to-perspective rendering (parallel segments, overlap warmup)
   highlights.py   Heuristic highlight detection (ball + cluster signals, scoring/ranking)
   exporter.py     Output organization + metadata + artifact preservation
@@ -619,7 +621,7 @@ src/
   utils.py             FFmpeg streaming I/O, config, equirectangular angle helpers
   events.py            EventStore (SQLite WAL) + EventBus + decision queue
   dashboard.py         FastAPI monitoring dashboard + REST API + SSE + training mgmt
-  metrics.py           PhaseTimer (per-phase timing) + GPU utilization snapshots
+  metrics.py           PhaseTimer (per-phase timing) + GPU/CPU/RAM utilization snapshots
   static/
     index.html         Single-page dashboard UI (vanilla JS/CSS, SSE)
 

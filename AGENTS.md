@@ -43,7 +43,7 @@ src/
   player_cluster.py  Center-of-play: trimmed-mean player cluster + EMA smoothing
   active_learning.py V1 hard-frame candidate selection and export
   hard_frames.py     Legacy hard-frame export
-  camera.py          Camera path smoothing (hybrid ball+cluster blend + Kalman + EMA + deadband + dynamic FOV)
+  camera.py          Camera path smoothing (hybrid ball+cluster blend + Kalman + EMA + deadband + FOV EMA smoothing)
   reframer.py        360->perspective rendering (parallel segments with overlap)
   highlights.py      Highlight detection (ball + cluster signals, scoring/ranking, manifest)
   exporter.py        Final outputs, metadata, ingest archival bookkeeping
@@ -53,7 +53,7 @@ src/
   utils.py           ffmpeg streaming I/O, angle math, JSON/JSONL helpers
   events.py          EventStore (SQLite WAL) + EventBus (null-safe) + decision queue
   dashboard.py       FastAPI dashboard: REST API + SSE stream + training management
-  metrics.py         PhaseTimer (context-manager timing) + gpu_utilization_snapshot
+  metrics.py         PhaseTimer (context-manager timing) + gpu_utilization_snapshot + cpu_ram_snapshot
   static/
     index.html       Single-page monitoring dashboard (vanilla JS/CSS, EventSource SSE)
 ```
@@ -104,8 +104,8 @@ FastAPI-based web UI on port 8088 for real-time pipeline monitoring and interact
 
 - `src/events.py`: `EventStore` persists to SQLite (`/tank/data/dashboard.db`); `EventBus` wraps it with null-safety (never raises, logs warnings). Thread-safe: shared connection for `:memory:`, per-thread for file-based.
 - `src/dashboard.py`: `create_app(config)` returns FastAPI app. REST endpoints + SSE `/api/events` stream.
-- `src/metrics.py`: `PhaseTimer` (context-manager per-phase timing + stats recording), `gpu_utilization_snapshot()` (parses `nvidia-smi` CSV).
-- `src/static/index.html`: Vanilla JS SPA. Dark theme. Connects via `EventSource`. Sections: pipeline progress bar, GPU gauges, stats, active learning/training controls, job history.
+- `src/metrics.py`: `PhaseTimer` (context-manager per-phase timing + stats recording), `gpu_utilization_snapshot()` (parses `nvidia-smi` CSV), `cpu_ram_snapshot()` (reads `/proc/stat` + `/proc/meminfo`, no psutil dependency).
+- `src/static/index.html`: Vanilla JS SPA. Dark theme. Connects via `EventSource`. Sections: pipeline progress bar, GPU gauges, System card (CPU/RAM gauges), stats, active learning/training controls, media player, job history.
 
 ### REST API
 
@@ -115,9 +115,10 @@ FastAPI-based web UI on port 8088 for real-time pipeline monitoring and interact
 | `/api/jobs` | GET | Recent jobs list (default limit 50) |
 | `/api/jobs/{job_id}` | GET | Job detail with phase timings |
 | `/api/gpu` | GET | Live GPU snapshot |
+| `/api/system` | GET | Live CPU/RAM snapshot (from /proc) |
 | `/api/decisions/pending` | GET | Pending decision prompts |
 | `/api/decisions/{id}/resolve` | POST | Resolve a decision (approved/rejected) |
-| `/api/events` | GET | SSE stream (phase events, GPU snapshots, decisions, heartbeats) |
+| `/api/events` | GET | SSE stream (phase events, GPU snapshots, system snapshots, decisions, heartbeats) |
 | `/api/training/labeling-status` | GET | Per-match frame/label counts from `/tank/labeling/` |
 | `/api/training/status` | GET | Training state (idle/building/running/completed/failed) |
 | `/api/training/models` | GET | Available `.pt` models in models dir |
