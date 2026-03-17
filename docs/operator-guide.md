@@ -15,6 +15,7 @@ A guide for day-to-day operation of the Soccer360 pipeline: ingesting match reco
   - [Dropping a File for Processing](#dropping-a-file-for-processing)
   - [Safe Copy Method](#safe-copy-method)
 - [Monitoring Processing](#monitoring-processing)
+  - [Using the Dashboard](#using-the-dashboard)
   - [Checking the Worker Status](#checking-the-worker-status)
   - [Viewing Logs](#viewing-logs)
   - [Understanding Processing Phases](#understanding-processing-phases)
@@ -77,7 +78,7 @@ A typical 1-hour match at 5.7K resolution takes approximately 60-90 minutes to p
 Before ingesting, ensure your video meets these requirements:
 
 | Requirement | Details |
-|-------------|---------|
+| ----------- | ------- |
 | Format | MP4 or MOV |
 | Projection | Equirectangular (full 360x180) |
 | Resolution | 5760x2880 recommended (other equirectangular resolutions work) |
@@ -119,6 +120,26 @@ cp match1.mp4 match2.mp4 match3.mp4 /tank/ingest/
 
 ## Monitoring Processing
 
+### Using the Dashboard
+
+The Soccer360 Dashboard provides real-time visibility into pipeline operations from your browser:
+
+```text
+http://<server-address>:8088
+```
+
+The dashboard shows:
+
+- **Pipeline progress** -- a progress bar for the active job with per-phase timing
+- **GPU, CPU, and RAM utilization** -- live gauges updated every few seconds
+- **Decision prompts** -- approve/reject buttons when the pipeline needs input (with countdown timers that auto-proceed)
+- **Job history** -- all completed and failed jobs with timing details
+- **Active learning** -- labeling status per match, Upload/Import buttons, Build Dataset and Train controls
+
+The dashboard streams events in real time -- no need to refresh the page.
+
+> **Tip:** If a job appears stuck as "running" in the dashboard after a server restart, don't worry. The system automatically cleans up stale jobs on startup, marking them as "failed (Abandoned: service restarted)".
+
 ### Checking the Worker Status
 
 See if the worker service is running and healthy:
@@ -129,13 +150,13 @@ docker compose ps worker
 
 You should see the worker with status `Up` and `(healthy)`. The health check runs every 60 seconds and verifies that storage mounts and GPU are accessible. If the status shows `(unhealthy)`, contact your administrator -- the worker may have lost access to `/tank`, `/scratch`, or the GPU.
 
-Similarly, check Label Studio:
+Similarly, check Label Studio and the dashboard:
 
 ```bash
-docker compose ps labelstudio
+docker compose ps
 ```
 
-Label Studio also has a health check and should show `(healthy)` when ready to accept connections.
+All services should show `(healthy)` when running normally.
 
 ### Viewing Logs
 
@@ -148,7 +169,7 @@ docker compose logs -f worker
 Key log messages to watch for:
 
 | Log Message | Meaning |
-|-------------|---------|
+| ----------- | ------- |
 | `Processing: <filename>` | Pipeline has started on a new file |
 | `Model resolved: <path> (source=<source>)` | Which detection model is being used |
 | `Phase 'detection' completed in 1234.567s` | Ball detection finished with elapsed time |
@@ -163,7 +184,7 @@ Press `Ctrl+C` to stop following logs (the worker keeps running).
 ### Understanding Processing Phases
 
 | Phase | What Happens | Duration (typical) |
-|-------|-------------|-------------------|
+| ----- | ------------ | ------------------ |
 | 1. Detection | YOLO finds the ball and players in each frame using the GPU | 15-25 min |
 | 2. Tracking | Ball positions are stabilized and smoothed | < 1 min |
 | 2.5. Hard frames | Difficult frames exported for future labeling | < 1 min |
@@ -179,7 +200,7 @@ Press `Ctrl+C` to stop following logs (the worker keeps running).
 
 After processing completes, find outputs at:
 
-```
+```text
 /tank/processed/<match_name>/
 ```
 
@@ -204,11 +225,13 @@ A fixed wide-angle view (120-degree FOV) showing most of the pitch. Useful for t
 Short clips (typically 8-15 seconds each) capturing key moments. Clips are ranked by a scoring system and exported in chronological order.
 
 **Ball-based signals** (when ball tracking available):
+
 - Fast ball movement (shots, long passes)
 - Sharp direction changes (deflections, saves)
 - Goal-box activity (shots on goal, corner kicks)
 
 **Player cluster signals** (when center-of-play data available):
+
 - Player convergence (rapid clustering — set pieces, contested ball)
 - Fast breaks (cluster centroid moving quickly across the pitch)
 - Attacking pressure (player cluster near goal zones)
@@ -223,6 +246,7 @@ Clips with both ball and cluster signals score higher and are prioritized. Each 
 **File:** `metadata.json`
 
 Contains processing details for troubleshooting:
+
 - Processing mode (`v1_bootstrap`, `legacy`, or `no_detect`)
 - Model path and source used
 - Per-phase timing breakdown (how long each phase took)
@@ -276,7 +300,7 @@ The `phase_metrics` section in `metadata.json` is especially useful for understa
 The pipeline has three processing modes depending on model availability:
 
 | Mode | Ball Tracking | Broadcast | Tactical | Highlights | When |
-|------|:---:|:---:|:---:|:---:|------|
+| ---- | :-----------: | :-------: | :------: | :--------: | ---- |
 | **V1 Bootstrap** | Yes | Auto-follow | Yes | Yes | Detection model available (default) |
 | **Legacy** | Yes | Auto-follow | Yes | Yes | Config uses legacy tracker |
 | **NO_DETECT** | No | Static framing | Yes | No | No model available |
@@ -308,8 +332,9 @@ Label Studio runs alongside the pipeline for annotating hard frames:
 3. **Create a bounding box** around the ball in each image
    - If no ball is visible, skip the frame
    - Draw a tight box around the ball only
-4. **Export annotations** in YOLO format when done
-5. **Build dataset and train** using the dashboard's Active Learning section or the command-line scripts
+4. **Export annotations** in YOLO format (downloads a ZIP file)
+5. **Upload labels** -- click the green **Upload** button next to the match in the dashboard and select the ZIP, or extract manually to `/tank/labeling/<match>/labels/`
+6. **Build dataset and train** using the dashboard's Active Learning section or the command-line scripts
 
 > **Tip:** Even 5-10 minutes of labeling per week makes a meaningful difference. Focus on frames where you can clearly see a ball that the model missed.
 
@@ -318,10 +343,11 @@ For detailed step-by-step instructions including Label Studio setup, labeling te
 ### The Weekly Improvement Cycle
 
 1. **Games are processed** -- hard frames are auto-exported
-2. **Import hard frames** -- `bash scripts/labelstudio_import.sh <match>` for each new match
+2. **Import hard frames** -- click **Import** in the dashboard or run `bash scripts/labelstudio_import.sh <match>`
 3. **You label hard frames** -- 5-10 minutes in Label Studio
-4. **Build dataset + train** -- use the dashboard or run `bash scripts/build_dataset.sh` then `bash scripts/train_ball.sh`
-5. **Next games are better** -- the worker automatically uses the improved model
+4. **Upload labels** -- click **Upload** in the dashboard and select the YOLO export ZIP
+5. **Build dataset + train** -- use the dashboard or run `bash scripts/build_dataset.sh` then `bash scripts/train_ball.sh`
+6. **Next games are better** -- the worker automatically uses the improved model
 
 ## Reprocessing a Match
 
@@ -352,6 +378,7 @@ docker compose run --rm worker soccer360 process /path/to/match.mp4 --no-cleanup
 **Symptoms:** File is in `/tank/ingest/` but nothing happens.
 
 **Possible causes:**
+
 - **File still copying.** The watcher waits 50 seconds of stable file size. Wait and check logs.
 - **Wrong extension.** Only `.mp4`, `.mov`, and `.insv` are accepted.
 - **Hidden file.** Files starting with `.` (dot) are ignored.
@@ -364,6 +391,7 @@ docker compose run --rm worker soccer360 process /path/to/match.mp4 --no-cleanup
 **Symptoms:** Logs show the pipeline started but no progress for a long time.
 
 **Possible causes:**
+
 - **Phase 1 (Detection) is the longest phase.** A 1-hour match can take 15-25 minutes for detection alone. Check logs for frame progress.
 - **GPU memory issue.** If the GPU runs out of memory, detection may fail silently. Ask your administrator to check GPU status.
 - **Corrupt video file.** FFmpeg may hang on corrupt input. Try `ffprobe /tank/ingest/<file>` to verify the file is readable.
@@ -371,7 +399,7 @@ docker compose run --rm worker soccer360 process /path/to/match.mp4 --no-cleanup
 ### Output Quality Issues
 
 | Issue | Likely Cause | Remedy |
-|-------|-------------|--------|
+| ----- | ------------ | ------ |
 | Camera not following the action | Detection model missing balls and few players detected | Label hard frames to improve ball model; check `player_cluster.json` for cluster coverage |
 | Camera jittery / oscillating | Ball detections are noisy | Check FoI settings; may need wider yaw window |
 | Camera follows players but misses ball | Ball detection weak, center-of-play fallback active | Label hard frames; check `track_frames_with_ball` ratio in metadata |

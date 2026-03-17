@@ -27,7 +27,8 @@ A step-by-step guide for using Label Studio to annotate hard frames and improve 
   - [3.6 Tips for Accurate Labels](#36-tips-for-accurate-labels)
 - [Part 4: Exporting Labels](#part-4-exporting-labels)
   - [4.1 Exporting in YOLO Format](#41-exporting-in-yolo-format)
-  - [4.2 Placing Exported Labels](#42-placing-exported-labels)
+  - [4.2 Uploading Labels via the Dashboard (Recommended)](#42-uploading-labels-via-the-dashboard-recommended)
+  - [4.3 Placing Labels Manually (Alternative)](#43-placing-labels-manually-alternative)
 - [Part 5: Building the Dataset and Training](#part-5-building-the-dataset-and-training)
   - [5.1 Using the Dashboard (Recommended)](#51-using-the-dashboard-recommended)
   - [5.2 Using the Command Line](#52-using-the-command-line)
@@ -45,7 +46,7 @@ A step-by-step guide for using Label Studio to annotate hard frames and improve 
 
 Soccer360 automatically identifies frames where the ball detection model struggled -- these are called **hard frames**. By labeling the ball position in these frames and retraining, the model improves over time. This is the active learning loop:
 
-```
+```text
 Process videos --> Hard frames exported --> Label in Label Studio --> Build dataset --> Train model --> Better results
 ```
 
@@ -91,7 +92,7 @@ Each listed directory is a match with hard frames ready for labeling.
 
 Open your web browser and navigate to:
 
-```
+```text
 http://<server-address>:8080
 ```
 
@@ -191,7 +192,7 @@ Before importing tasks, set up the correct annotation template:
 </View>
 ```
 
-7. Click **Save**
+1. Click **Save**
 
 > **Warning:** The label name must be exactly `ball` (lowercase). The training pipeline expects this specific label.
 
@@ -204,12 +205,13 @@ Before importing tasks, set up the correct annotation template:
 5. Label Studio will show the number of tasks imported
 
 > **Tip:** If you prefer, you can also use Label Studio's **Local Storage** sync feature:
+>
 > 1. First, run `bash scripts/labelstudio_import.sh <match_name>` to generate the `tasks.json` file
-> 2. In Label Studio, go to Settings -> Cloud Storage -> Add Source Storage
-> 3. Choose **Local files**
-> 4. Set the absolute path to `/label-studio/data/labeling/<match_name>/labelstudio/`
-> 5. Click **Test Connection** to verify, then **Add Storage**
-> 6. Click **Sync Storage** to import tasks
+> 1. In Label Studio, go to Settings -> Cloud Storage -> Add Source Storage
+> 1. Choose **Local files**
+> 1. Set the absolute path to `/label-studio/data/labeling/<match_name>/labelstudio/`
+> 1. Click **Test Connection** to verify, then **Add Storage**
+> 1. Click **Sync Storage** to import tasks
 
 After import, the Data Manager shows all frames with their status (unlabeled/labeled).
 
@@ -247,20 +249,11 @@ If the import script found predicted bounding boxes for a frame, you'll see a pr
 
 You'll encounter frames where labeling isn't straightforward:
 
-**Ball is partially occluded (behind a player)**
-- Draw the box where the ball is, even if partially hidden. The model needs to learn these cases.
-
-**Ball is blurry or motion-smeared**
-- Draw the box around the center of the blur streak. An approximate box is better than no box.
-
-**No ball visible in the frame**
-- This happens with lost ball run triggers. Submit with no annotation -- this teaches the model that there is nothing to detect here.
-
-**Multiple balls visible (e.g., spare balls on the sideline)**
-- Only label the **game ball** (the one in play on the field). Ignore sideline/spare balls.
-
-**Ball is at the very edge of the frame**
-- Label it even if partially cropped. Include as much of the visible ball as possible.
+- **Ball is partially occluded (behind a player)** -- Draw the box where the ball is, even if partially hidden. The model needs to learn these cases.
+- **Ball is blurry or motion-smeared** -- Draw the box around the center of the blur streak. An approximate box is better than no box.
+- **No ball visible in the frame** -- This happens with lost ball run triggers. Submit with no annotation -- this teaches the model that there is nothing to detect here.
+- **Multiple balls visible (e.g., spare balls on the sideline)** -- Only label the **game ball** (the one in play on the field). Ignore sideline/spare balls.
+- **Ball is at the very edge of the frame** -- Label it even if partially cropped. Include as much of the visible ball as possible.
 
 ### 3.5 Keyboard Shortcuts
 
@@ -298,9 +291,25 @@ After labeling all (or some) frames in a project:
 
 The ZIP contains a `labels/` directory with one `.txt` file per labeled image.
 
-### 4.2 Placing Exported Labels
+### 4.2 Uploading Labels via the Dashboard (Recommended)
 
-Extract the YOLO label files to the correct location:
+The simplest way to get labels back to the server is the **Upload** button in the dashboard:
+
+1. Open the Soccer360 Dashboard at `http://<server-address>:8088`
+2. Scroll to the **Active Learning** section
+3. Find your match in the list
+4. Click the green **Upload** button next to the match name
+5. Select the YOLO export ZIP file you downloaded from Label Studio
+6. The button shows the number of labels extracted (e.g., "47 labels")
+7. The label count updates automatically in the match row
+
+The dashboard extracts the `.txt` label files from the ZIP and places them in `/tank/labeling/<match_name>/labels/` automatically. No manual file handling needed.
+
+> **Tip:** This is the recommended method because it handles file naming and placement automatically and gives immediate feedback on how many labels were extracted.
+
+### 4.3 Placing Labels Manually (Alternative)
+
+If you prefer to handle files manually (e.g., via SSH), extract the YOLO label files to the correct location:
 
 ```bash
 # Extract the ZIP (replace with your actual downloaded filename)
@@ -315,6 +324,7 @@ rm -rf /tmp/ls-export/
 ```
 
 > **Important:** The label `.txt` files must have the same base name as their corresponding frame images. For example:
+>
 > - Image: `/tank/labeling/LastGame-Test/frames/frame_000014.jpg`
 > - Label: `/tank/labeling/LastGame-Test/labels/frame_000014.txt`
 
@@ -330,7 +340,7 @@ cat /tank/labeling/<match_name>/labels/frame_000014.txt
 
 A typical YOLO label line looks like:
 
-```
+```text
 0 0.523 0.341 0.015 0.028
 ```
 
@@ -349,10 +359,11 @@ Once you have labeled frames from one or more matches, you can build a training 
 The Soccer360 Dashboard at `http://<server-address>:8088` has a built-in training interface:
 
 1. Open the dashboard and scroll to the **Active Learning** section
-2. Review the **Labeling Status** -- it shows how many frames are labeled per match
-3. Click **1. Build Dataset** -- this combines all labeled matches into train/val splits
-4. Once the build completes, click **2. Train Model** (adjust epochs if desired, default is 50)
-5. Training progress is shown in the log area below the buttons
+2. Review the **Labeling Status** -- it shows frame counts, imported task counts, and label counts per match
+3. If you haven't uploaded labels yet, click **Upload** next to the match and select your YOLO export ZIP
+4. Click **1. Build Dataset** -- this combines all labeled matches into train/val splits
+5. Once the build completes, click **2. Train Model** (adjust epochs if desired, default is 50)
+6. Training progress is shown in the log area below the buttons
 
 > **Note:** Training uses the GPU and can take 30 minutes to 2 hours depending on dataset size and number of epochs. The pipeline continues to work while training runs.
 
@@ -360,7 +371,7 @@ The Soccer360 Dashboard at `http://<server-address>:8088` has a built-in trainin
 
 Alternatively, run the scripts directly on the server:
 
-**Step 1: Build the dataset**
+#### Step 1: Build the dataset
 
 ```bash
 bash scripts/build_dataset.sh
@@ -370,7 +381,7 @@ This scans all matches under `/tank/labeling/`, collects paired image/label file
 
 Output:
 
-```
+```text
 ================================================
 Soccer360 Dataset Builder
   Scanning: /tank/labeling
@@ -386,7 +397,7 @@ Dataset built: 38 train, 9 val
 YAML: /tank/labeling/dataset/dataset.yaml
 ```
 
-**Step 2: Train the model**
+#### Step 2: Train the model
 
 ```bash
 bash scripts/train_ball.sh 50
@@ -405,11 +416,11 @@ After training, the next video processed will use the improved model. To verify:
 1. **Check the dashboard** -- the Available Models list under Active Learning shows all `.pt` files with the active model marked
 2. **Check the logs** -- look for the model resolution line:
 
-```
+```text
 Model resolved: /tank/models/ball_best.pt (source=default)
 ```
 
-3. **Reprocess a previous match** to compare results:
+1. **Reprocess a previous match** to compare results:
 
 ```bash
 docker compose run --rm worker soccer360 process /tank/ingest/<match>.mp4
@@ -431,10 +442,11 @@ For the best results, follow this weekly rhythm:
 **Practical workflow:**
 
 1. **Process games** -- drop videos into `/tank/ingest/`, the worker handles the rest
-2. **Import** -- run `bash scripts/labelstudio_import.sh <match>` for each new match
+2. **Import** -- click **Import** in the dashboard (or run `bash scripts/labelstudio_import.sh <match>`)
 3. **Label** -- open Label Studio, label frames whenever you have a few minutes
-4. **Train** -- use the dashboard's Build Dataset + Train buttons (or run the scripts)
-5. **Next games are better** -- the worker automatically picks up `ball_best.pt`
+4. **Upload** -- click **Upload** in the dashboard and select the YOLO export ZIP (or extract manually)
+5. **Train** -- use the dashboard's Build Dataset + Train buttons (or run the scripts)
+6. **Next games are better** -- the worker automatically picks up `ball_best.pt`
 
 > **Tip:** You don't need to label every hard frame. Even labeling 20-30 frames per match yields meaningful improvement. Focus on frames where you can clearly see the ball.
 
@@ -444,7 +456,7 @@ For the best results, follow this weekly rhythm:
 
 ### Directory Structure
 
-```
+```text
 /tank/labeling/
   <match_name>/
     frames/                      Auto-exported hard frame images
@@ -487,7 +499,7 @@ Additional gating:
 
 Each `.txt` label file contains one line per object:
 
-```
+```text
 <class_id> <x_center> <y_center> <width> <height>
 ```
 
@@ -497,7 +509,7 @@ Example: `0 0.523 0.341 0.015 0.028`
 
 ### Troubleshooting
 
-**Label Studio won't load images**
+#### Label Studio won't load images
 
 The images are served from the container's local filesystem. Verify the volume mount:
 
@@ -507,13 +519,13 @@ docker compose exec labelstudio ls /label-studio/data/labeling/
 
 You should see your match directories. If not, check that `/tank/labeling` is correctly mounted in `docker-compose.yml`.
 
-**"No tasks" after import**
+#### "No tasks" after import
 
 - Make sure you used the correct `tasks.json` from `/tank/labeling/<match>/labelstudio/`
 - Check that the labeling interface is configured (Settings -> Labeling Interface)
 - Try re-running `bash scripts/labelstudio_import.sh <match>`
 
-**Labels don't match images after export**
+#### Labels don't match images after export
 
 YOLO export file names must match the frame file names exactly. If Label Studio renames them during export:
 
@@ -529,7 +541,7 @@ for f in *.txt; do
 done
 ```
 
-**Build dataset shows "No image/label pairs found"**
+#### Build dataset shows "No image/label pairs found"
 
 This means there are no matches where both `frames/*.jpg` and `labels/*.txt` exist with matching names. Check:
 
@@ -542,11 +554,11 @@ for d in /tank/labeling/*/; do
 done
 ```
 
-**Training fails with "Dataset not built"**
+#### Training fails with "Dataset not built"
 
 Run `bash scripts/build_dataset.sh` first (or click Build Dataset in the dashboard). The training script needs `/tank/labeling/dataset/dataset.yaml` to exist.
 
-**Model doesn't seem better after training**
+#### Model doesn't seem better after training
 
 - Check that `ball_best.pt` was updated: `ls -la /tank/models/ball_best.pt`
 - Make sure you labeled enough frames (20+ is a good minimum across all matches)

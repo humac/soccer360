@@ -9,7 +9,7 @@ Soccer360 is a **CLI-based video processing pipeline** (not a web application). 
 ## User Roles
 
 | Role | Description | Interface |
-|------|-------------|-----------|
+| ---- | ----------- | --------- |
 | **Operator** | Day-to-day user: ingests videos, monitors processing, retrieves outputs, labels hard frames | CLI commands, file system (ingest folder), Label Studio web UI |
 | **Administrator** | Sets up server, configures pipeline, manages Docker, handles GPU/model lifecycle, troubleshoots | Shell access, Docker Compose, YAML config, scripts |
 
@@ -18,7 +18,7 @@ Soccer360 is a **CLI-based video processing pipeline** (not a web application). 
 ### Operator Features
 
 | Feature | How It Works | Config Section |
-|---------|-------------|----------------|
+| ------- | ----------- | -------------- |
 | Video ingest | Drop `.mp4`/`.mov` into `/tank/ingest/` | `watcher`, `paths.ingest` |
 | Automatic processing | Watcher daemon detects new files, runs pipeline | `watcher` |
 | Manual processing | `soccer360 process <path>` for one-off runs | CLI |
@@ -30,7 +30,7 @@ Soccer360 is a **CLI-based video processing pipeline** (not a web application). 
 ### Administrator Features
 
 | Feature | How It Works | Config Section |
-|---------|-------------|----------------|
+| ------- | ----------- | -------------- |
 | Installation | `scripts/install.sh` | N/A |
 | Container verification | `make verify-container-assets` | N/A |
 | Model management | Place models in `/tank/models/`, configure resolution | `model`, `detector`, `detection` |
@@ -46,9 +46,11 @@ Soccer360 is a **CLI-based video processing pipeline** (not a web application). 
 No traditional database. All state is file-based:
 
 ### Input
+
 - `/tank/ingest/*.mp4` — raw 360-degree video files
 
 ### Processing Artifacts (per match)
+
 - `detections.jsonl` — per-frame YOLO detections (ball class 32 + person class 0)
 - `tracks.json` — tracked/stabilized ball positions (ball only)
 - `player_cluster.json` — per-frame player cluster centroid and spread (center-of-play)
@@ -58,17 +60,20 @@ No traditional database. All state is file-based:
 - `metadata.json` — pipeline execution record (mode, timings, status)
 
 ### Output (per match)
+
 - `broadcast.mp4` — auto-follow broadcast-style view
 - `tactical_wide.mp4` — fixed wide-angle tactical view
 - `highlight_*.mp4` — highlight clips (normal mode only)
 
 ### Active Learning
+
 - `/tank/labeling/<match>/frames/` — exported hard-frame JPEGs
 - `/tank/labeling/<match>/labels/` — YOLO-format annotations
 - `/tank/labeling/<match>/hard_frames.json` — manifest
 - `/tank/labeling/dataset/` — consolidated train/val dataset
 
 ### Persistent State
+
 - `watcher_processed_ingest.json` — dedupe fingerprints (prevents reprocessing)
 - `/tank/models/ball_best.pt` — active fine-tuned model
 - `/tank/archive_raw/` — archived original recordings
@@ -100,13 +105,14 @@ Single config file: `configs/pipeline.yaml` with 18 top-level sections covering 
 
 ## External Integrations
 
+- **Monitoring Dashboard** — FastAPI-based web UI (port 8088) for real-time pipeline monitoring, GPU/CPU/RAM gauges, decision handling, job history, active learning management (import, upload labels, build dataset, train)
 - **Label Studio** — separate Docker service for annotation (port 8080)
 - **NVIDIA GPU** — Tesla P40 via nvidia-docker runtime
 - **FFmpeg** — streaming video I/O (system binary, not Python package)
 
 ## Key Operational Paths
 
-```
+```text
 /tank/ingest/          -> queue folder (input)
 /scratch/work/         -> NVMe temp space (auto-cleaned)
 /tank/processed/       -> final outputs

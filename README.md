@@ -262,7 +262,8 @@ bash scripts/labelstudio_import.sh match2
 # 3. Label in Label Studio
 #    Open http://<server>:8080
 #    Create project, import tasks.json, label ball bounding boxes
-#    Export annotations in YOLO format to /tank/labeling/<match>/labels/
+#    Export annotations in YOLO format
+#    Upload the ZIP via the dashboard Upload button, or extract to /tank/labeling/<match>/labels/
 
 # 4. Build dataset from all labeled matches
 bash scripts/build_dataset.sh
@@ -389,11 +390,11 @@ docker compose up -d dashboard
 soccer360 dashboard --port 8088
 ```
 
-Open `http://<server>:8088` in a browser. The dashboard streams events from the pipeline via SSE — no polling, no refresh needed.
+Open `http://<server>:8088` in a browser. The dashboard streams events from the pipeline via SSE — no polling, no refresh needed. On startup, the EventStore automatically marks any stale `running`/`queued` jobs from prior restarts as `failed`, preventing zombie jobs in the history.
 
 **Decision hooks:** When the pipeline reaches a decision point (mode confirmation, post-detection review, hard frame labeling), a notification banner appears with approve/reject buttons and a countdown timer. If no response is given, the pipeline auto-proceeds with the default option.
 
-**Training management:** The Active Learning section shows labeling progress per match, and provides buttons to build a YOLO dataset and trigger model training — all from the browser.
+**Training management:** The Active Learning section shows labeling progress per match (including task count from Label Studio imports), and provides buttons to upload YOLO-format label ZIPs from Label Studio exports, build a YOLO dataset, and trigger model training — all from the browser.
 
 **Configuration** (`configs/pipeline.yaml`):
 
@@ -672,6 +673,7 @@ tests/
 | fastapi | Monitoring dashboard REST API |
 | uvicorn | ASGI server for dashboard |
 | sse-starlette | Server-Sent Events for real-time streaming |
+| python-multipart | File upload handling (label ZIP uploads) |
 
 ## Testing
 

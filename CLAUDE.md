@@ -23,7 +23,7 @@ Runtime modes in `src/pipeline.py`:
 - `src/active_learning.py`: V1 hard-frame export triggers/gating
 - `src/watcher.py`: ingest queue daemon + persistent dedupe fingerprints + EventBus creation
 - `src/exporter.py`: metadata + ingest archival (`move`/`copy`/`leave`, collision policy)
-- `src/events.py`: EventStore (SQLite) + EventBus (null-safe pipeline wrapper) + decision queue
+- `src/events.py`: EventStore (SQLite) + EventBus (null-safe pipeline wrapper) + decision queue + stale job cleanup on startup
 - `src/dashboard.py`: FastAPI monitoring dashboard + REST API + SSE stream + training management
 - `src/camera.py`: camera path generation — hybrid ball+cluster → Kalman → EMA → deadband → FOV EMA smoothing
 - `src/metrics.py`: PhaseTimer (context-manager timing) + gpu_utilization_snapshot (nvidia-smi) + cpu_ram_snapshot (/proc)
@@ -93,9 +93,9 @@ Key config: `camera.fov_ema_alpha`, `camera.deadband_deg`, `camera.velocity_thre
 - `/api/system` endpoint + `system_snapshot` SSE events provide CPU utilization, RAM usage, core count (from `/proc`)
 - Dashboard UI: GPU gauges, System card (CPU/RAM gauges), pipeline progress, job history, training management
 - Decision hooks in pipeline: mode confirmation (30s), post-detection review (60s), hard frame labeling (120s)
-- Training management API: `/api/training/labeling-status`, `/api/training/build-dataset`, `/api/training/train`, `/api/training/models`
+- Training management API: `/api/training/labeling-status`, `/api/training/upload-labels/{match_name}`, `/api/training/build-dataset`, `/api/training/train`, `/api/training/models`
 - Config section: `dashboard:` with `enabled`, `db_path`, `port`
-- Dependencies: `fastapi>=0.109`, `uvicorn>=0.27`, `sse-starlette>=2.0`
+- Dependencies: `fastapi>=0.109`, `uvicorn>=0.27`, `sse-starlette>=2.0`, `python-multipart>=0.0.6`
 
 ## Non-Negotiable Conventions
 
