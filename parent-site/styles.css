@@ -647,3 +647,203 @@ button {
         grid-column: 1 / -1;
     }
 }
+
+/* ==========================================================================
+   Options View & Video Elements
+   ========================================================================== */
+
+.options-container {
+    max-width: 800px;
+    margin: 4rem auto;
+    padding: 2rem;
+    background: var(--surface-light, var(--bg-panel));
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+}
+
+.options-container h2 {
+    font-family: var(--font-heading);
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+    color: var(--text-main);
+}
+
+.options-container p {
+    color: var(--text-muted);
+    margin-bottom: 2rem;
+    font-size: 0.95rem;
+}
+
+.options-card {
+    background: var(--bg-card);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+}
+
+.options-card h3 {
+    font-family: var(--font-heading);
+    font-size: 1.2rem;
+    margin-bottom: 1rem;
+    color: var(--text-main);
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-row {
+    display: flex;
+    gap: 1rem;
+}
+
+.form-row .form-group {
+    flex: 1;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 0.75rem;
+    background: var(--bg-dark);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+    color: var(--text-main);
+    font-family: var(--font-body);
+    font-size: 1rem;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.btn-primary, .btn-secondary, .btn-danger {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 4px;
+    font-family: var(--font-heading);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: var(--text-main);
+}
+
+.btn-primary:hover {
+    background: var(--accent-hover);
+}
+
+.btn-secondary {
+    background: transparent;
+    color: var(--text-main);
+    border: 1px solid var(--border-light);
+    margin-left: 0.5rem;
+}
+
+.btn-secondary:hover {
+    background: rgba(255,255,255,0.05);
+}
+
+.btn-danger {
+    background: transparent;
+    color: #ff4a4a;
+    border: 1px solid #ff4a4a;
+}
+
+.btn-danger:hover {
+    background: rgba(255, 74, 74, 0.1);
+}
+
+.mt-2 { margin-top: 1rem; }
+.mt-4 { margin-top: 2rem; }
+
+/* Configured Games List */
+.games-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.config-game-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    background: var(--bg-dark);
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+}
+
+.config-game-info strong {
+    display: block;
+    color: var(--text-main);
+    margin-bottom: 0.25rem;
+}
+
+.config-game-info span {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+/* Video Styles */
+.main-video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+    display: none; /* Hidden until loaded */
+}
+
+.main-video.active {
+    display: block;
+}
+
+.match-card-edit-btn {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255,255,255,0.2);
+    color: var(--text-muted);
+    border-radius: 4px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    z-index: 10;
+    opacity: 0;
+}
+
+.match-card:hover .match-card-edit-btn {
+    opacity: 1;
+}
+
+.match-card-edit-btn:hover {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: white;
+}
+
+.game-header h2 {
+    display: flex;
+    align-items: center;
+}
+

@@ -96,6 +96,7 @@ class EventStore:
             conn = self._conn()
             conn.executescript(_SCHEMA)
             conn.commit()
+            self._cleanup_stale_jobs(conn)
 
     def _conn(self) -> sqlite3.Connection:
         """Get a connection (shared for memory, per-thread for files)."""
@@ -121,6 +122,32 @@ class EventStore:
         if conn is not None:
             conn.close()
             self._local.conn = None
+
+    def _cleanup_stale_jobs(self, conn: sqlite3.Connection):
+        """Mark any jobs/phases left as 'running' or 'queued' from a prior process as failed.
+
+        This handles the case where the service was restarted (rebuild, crash, etc.)
+        while a job was in progress, leaving it permanently stuck as 'running'.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            stale_jobs = conn.execute(
+                "SELECT job_id FROM jobs WHERE status IN ('running', 'queued')"
+            ).fetchall()
+            if stale_jobs:
+                conn.execute(
+                    "UPDATE jobs SET status='failed', completed_at=?, error='Abandoned: service restarted' "
+                    "WHERE status IN ('running', 'queued')",
+                    (now,),
+                )
+                conn.execute(
+                    "UPDATE phase_events SET status='failed', completed_at=? "
+                    "WHERE status='running'",
+                    (now,),
+                )
+                conn.commit()
+                job_ids = [r["job_id"] for r in stale_jobs]
+                logger.info("Cleaned up %d stale job(s) on startup: %s", len(job_ids), job_ids)
 
     def _execute_write(self, sql: str, params: tuple = ()) -> int:
         """Execute a write statement with proper locking. Returns lastrowid."""

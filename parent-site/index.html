@@ -16,6 +16,7 @@
         <div class="logo">SOCCER<span>360</span></div>
         <div class="nav-links">
             <a href="#" class="active" data-view="season">Season</a>
+            <a href="#" data-view="options">Options</a>
             <a href="#" data-view="about">Documentation</a>
         </div>
     </nav>
@@ -40,68 +41,14 @@
                     <button class="filter-btn">Away</button>
                 </div>
                 <div class="stats-overview">
-                    <span class="stat"><span>Played</span> 12</span>
-                    <span class="stat"><span>Wins</span> 8</span>
-                    <span class="stat"><span>Draws</span> 3</span>
+                    <span class="stat"><span>Played</span> <span id="stat-played">0</span></span>
+                    <span class="stat"><span>Wins</span> <span id="stat-wins">0</span></span>
+                    <span class="stat"><span>Draws</span> <span id="stat-draws">0</span></span>
                 </div>
             </div>
 
-            <div class="matches-grid">
-                <!-- Match Card 1 -->
-                <div class="match-card" onclick="app.openGame('game-01')">
-                    <div class="card-bg"></div>
-                    <div class="match-date">OCT 14, 2026</div>
-                    <div class="match-teams">
-                        <h2>CITY <span>VS</span> UNITED</h2>
-                    </div>
-                    <div class="match-meta">
-                        <span class="badge score">3 - 1</span>
-                        <span class="badge mode">TACTICAL + BROADCAST</span>
-                    </div>
-                    <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
-                </div>
-
-                <!-- Match Card 2 -->
-                <div class="match-card" onclick="app.openGame('game-02')">
-                    <div class="card-bg"></div>
-                    <div class="match-date">OCT 09, 2026</div>
-                    <div class="match-teams">
-                        <h2>ROVERS <span>VS</span> CITY</h2>
-                    </div>
-                    <div class="match-meta">
-                        <span class="badge score">0 - 2</span>
-                        <span class="badge mode">TACTICAL + BROADCAST</span>
-                    </div>
-                    <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
-                </div>
-
-                <!-- Match Card 3 -->
-                <div class="match-card" onclick="app.openGame('game-03')">
-                    <div class="card-bg"></div>
-                    <div class="match-date">SEP 30, 2026</div>
-                    <div class="match-teams">
-                        <h2>CITY <span>VS</span> ATHLETIC</h2>
-                    </div>
-                    <div class="match-meta">
-                        <span class="badge score">1 - 1</span>
-                        <span class="badge mode">NO_DETECT MODE</span>
-                    </div>
-                    <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
-                </div>
-                
-                <!-- Match Card 4 -->
-                <div class="match-card" onclick="app.openGame('game-04')">
-                    <div class="card-bg"></div>
-                    <div class="match-date">SEP 22, 2026</div>
-                    <div class="match-teams">
-                        <h2>WANDERERS <span>VS</span> CITY</h2>
-                    </div>
-                    <div class="match-meta">
-                        <span class="badge score">0 - 4</span>
-                        <span class="badge mode">TACTICAL + BROADCAST</span>
-                    </div>
-                    <div class="hover-reveal">VIEW MATCH <span>&rarr;</span></div>
-                </div>
+            <div class="matches-grid" id="matches-grid">
+                <!-- Matches will be dynamically populated here -->
             </div>
         </section>
 
@@ -114,16 +61,23 @@
             <div class="game-layout">
                 <div class="video-container">
                     <div class="player-wrapper">
-                        <!-- Placeholder Video Box -->
-                        <div class="video-placeholder">
+                        <video id="game-video" controls class="main-video">
+                            Your browser does not support the video tag.
+                        </video>
+                        <div class="video-placeholder" id="video-placeholder" style="display: none;">
                             <div class="play-indicator"></div>
-                            <span class="player-label">BROADCAST.MP4 (AUTO-FOLLOW)</span>
+                            <span class="player-label">VIDEO NOT AVAILABLE</span>
                         </div>
                     </div>
                     
                     <div class="player-controls">
-                        <button class="active">Broadcast</button>
-                        <button>Tactical Wide</button>
+                        <div id="segment-selector" class="segment-pill-group" style="margin-bottom: 0.5rem; display: none;">
+                            <!-- Segments like "1st Half", "2nd Half" here -->
+                        </div>
+                        <div class="view-toggle">
+                            <button class="active">Broadcast</button>
+                            <button>Tactical Wide</button>
+                        </div>
                     </div>
                 </div>
 
@@ -139,28 +93,8 @@
 
                     <div class="highlights-section">
                         <h3>KEY HIGHLIGHTS</h3>
-                        <div class="highlight-list">
-                            <div class="highlight-item">
-                                <div class="h-time">12:44</div>
-                                <div class="h-desc">Goal - Strike from outside box</div>
-                                <button class="action-btn play-h">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 9-14 9V3z"/></svg>
-                                </button>
-                            </div>
-                            <div class="highlight-item">
-                                <div class="h-time">34:11</div>
-                                <div class="h-desc">Yellow Card - Tactical Foul</div>
-                                <button class="action-btn play-h">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 9-14 9V3z"/></svg>
-                                </button>
-                            </div>
-                            <div class="highlight-item">
-                                <div class="h-time">78:02</div>
-                                <div class="h-desc">Goal - Header from corner</div>
-                                <button class="action-btn play-h">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 9-14 9V3z"/></svg>
-                                </button>
-                            </div>
+                        <div class="highlight-list" id="highlights-list">
+                            <!-- Highlights will be dynamically populated here -->
                         </div>
                     </div>
 
@@ -198,5 +132,67 @@
             </div>
         </section>
     </main>
+
+    <!-- Options View Modal/Overlay (placed outside main sections or inside, we'll use a section) -->
+    <section id="options-view" class="view">
+        <div class="options-container">
+            <h2>Game Management Options</h2>
+            <p>Configure matches to display on the season view by providing paths to processed outputs.</p>
+            
+            <div class="options-card">
+                <h3>Global Settings</h3>
+                <div class="form-group">
+                    <label>Dashboard API Base URL</label>
+                    <input type="text" id="opt-dashboard-url" placeholder="http://localhost:8088">
+                </div>
+            </div>
+
+            <div class="options-card mt-4">
+                <h3>Add New Match</h3>
+                <form id="add-game-form">
+                    <div class="form-group">
+                        <label>Game Title</label>
+                        <input type="text" id="opt-title" placeholder="e.g. OSU Steel vs OSU Iron 1st Half" required>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Date</label>
+                            <input type="text" id="opt-date" placeholder="e.g. OCT 14, 2026" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Score</label>
+                            <input type="text" id="opt-score" placeholder="e.g. 3 - 1">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Base Output Path (Absolute path to the processed folder)</label>
+                        <input type="text" id="opt-path" placeholder="e.g. /tank/processed/OSU Steel vs OSU Iron 1st Half" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Status/Mode Badge</label>
+                        <input type="text" id="opt-mode" placeholder="e.g. TACTICAL + BROADCAST" value="TACTICAL + BROADCAST">
+                    </div>
+                    <div class="form-group">
+                        <label>Highlights JSON (Optional - Paste content of highlights.json)</label>
+                        <textarea id="opt-highlights" style="width: 100%; height: 100px; background: var(--bg-dark); border: 1px solid var(--border-light); color: var(--text-main); font-family: monospace; border-radius: 4px; padding: 0.5rem;" placeholder='{"clips": [...]}'></textarea>
+                    </div>
+                    
+                    <input type="hidden" id="opt-edit-id">
+                    <button type="submit" id="opt-submit-btn" class="btn-primary">Add Match</button>
+                    <button type="button" id="opt-cancel-edit" class="btn-secondary" style="display:none; margin-left: 0.5rem;">Cancel Edit</button>
+                    <button type="button" id="load-auto-btn" class="btn-secondary" style="float: right;">Auto Detect (Needs metadata.json)</button>
+                </form>
+            </div>
+
+            <div class="options-card mt-4">
+                <h3>Configured Matches</h3>
+                <div id="configured-games-list" class="games-list">
+                    <!-- Configured games populated here -->
+                </div>
+                <button type="button" id="clear-games-btn" class="btn-danger mt-2">Clear All Games</button>
+            </div>
+        </div>
+    </section>
+
 </body>
 </html>

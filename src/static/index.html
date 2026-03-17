@@ -568,14 +568,26 @@ async function loadLabelingStatus() {
         'onclick="importTasks(\'' + escapeHtml(m.name) + '\',this)" title="Generate tasks.json for Label Studio">' +
         (imported ? 'Re-import' : 'Import') + '</button>';
 
+      const uploadBtn = '<button class="btn" style="font-size:0.7rem;padding:1px 8px;background:var(--green);color:#fff" ' +
+        'onclick="uploadLabels(\'' + escapeHtml(m.name) + '\',this)" title="Upload YOLO labels ZIP from Label Studio export">' +
+        'Upload</button>';
+
+      let labelText;
+      if (m.labeled > 0) {
+        labelText = m.labeled + '/' + m.frames + ' labeled';
+      } else if (m.tasks_count > 0) {
+        labelText = m.tasks_count + ' tasks ready \u00b7 0 labeled';
+      } else {
+        labelText = '0/' + m.frames + ' labeled';
+      }
       const labelInfo = '<span style="color:var(--muted);font-size:0.75rem" title="Labeled frames">' +
-        m.labeled + '/' + m.frames + ' labeled</span>';
+        labelText + '</span>';
 
       return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">' +
         '<span style="color:' + statusColor + ';font-size:0.8rem" title="' + statusTip + '">' + statusIcon + '</span>' +
         '<span style="flex:1;font-weight:500">' + escapeHtml(m.name) + '</span>' +
-        '<span style="min-width:100px;text-align:right">' + labelInfo + '</span>' +
-        '<span style="min-width:70px;text-align:right">' + importBtn + '</span>' +
+        '<span style="min-width:130px;text-align:right">' + labelInfo + '</span>' +
+        '<span style="display:flex;gap:4px;min-width:140px;justify-content:flex-end">' + importBtn + uploadBtn + '</span>' +
         '</div>';
     }).join('');
   } catch(e) {
@@ -657,6 +669,41 @@ async function importTasks(matchName, btnEl) {
     btnEl.disabled = false;
     btnEl.textContent = 'Import';
   }
+}
+
+async function uploadLabels(matchName, btn) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.zip';
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    btn.disabled = true;
+    btn.textContent = 'Uploading...';
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const resp = await fetch('/api/training/upload-labels/' + encodeURIComponent(matchName), {
+        method: 'POST', body: form
+      });
+      const d = await resp.json();
+      if (resp.ok) {
+        btn.textContent = d.labels_extracted + ' labels';
+        btn.style.background = 'var(--green)';
+        setTimeout(() => { btn.disabled = false; btn.textContent = 'Upload'; }, 3000);
+        loadLabelingStatus();
+      } else {
+        alert('Upload failed: ' + (d.detail || 'Unknown error'));
+        btn.textContent = 'Upload';
+        btn.disabled = false;
+      }
+    } catch(e) {
+      alert('Upload error: ' + e.message);
+      btn.textContent = 'Upload';
+      btn.disabled = false;
+    }
+  };
+  input.click();
 }
 
 async function buildDataset() {

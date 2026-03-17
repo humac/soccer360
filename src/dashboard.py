@@ -13,7 +13,10 @@ import subprocess
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+import tempfile
+import zipfile
+
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
@@ -47,12 +50,19 @@ def _scan_labeling_status(labeling_dir: Path) -> dict:
 
         if frame_count > 0:
             tasks_json = match_dir / "labelstudio" / "tasks.json"
+            tasks_count = 0
+            if tasks_json.exists():
+                try:
+                    tasks_count = len(json.loads(tasks_json.read_text()))
+                except Exception:
+                    pass
             matches.append({
                 "name": match_dir.name,
                 "frames": frame_count,
                 "labeled": label_count,
                 "pct_labeled": round(label_count / frame_count * 100, 1) if frame_count > 0 else 0,
                 "tasks_imported": tasks_json.exists(),
+                "tasks_count": tasks_count,
             })
             total_frames += frame_count
             total_labeled += label_count
@@ -239,6 +249,56 @@ def create_app(config: dict | None = None) -> FastAPI:
         tasks_file.write_text(json.dumps(tasks, indent=2))
 
         return {"ok": True, "match": match_name, "tasks": len(tasks)}
+
+    @app.post("/api/training/upload-labels/{match_name}")
+    async def upload_labels(match_name: str, file: UploadFile):
+        """Upload a ZIP of YOLO-format label .txt files for a match."""
+        if ".." in match_name or "/" in match_name:
+            raise HTTPException(status_code=400, detail="Invalid match name")
+        match_dir = labeling_dir / match_name
+        frames_dir = match_dir / "frames"
+        if not frames_dir.is_dir():
+            raise HTTPException(
+                status_code=404,
+                detail=f"No frames found for '{match_name}'. Process a video first.",
+            )
+
+        # Save uploaded file to a temp location and extract
+        labels_dir = match_dir / "labels"
+        labels_dir.mkdir(parents=True, exist_ok=True)
+        extracted = 0
+
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=True) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp.flush()
+
+            try:
+                with zipfile.ZipFile(tmp.name, "r") as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        # Only extract .txt files (YOLO labels)
+                        name = Path(info.filename).name
+                        if not name.endswith(".txt") or name.startswith("."):
+                            continue
+                        # Path traversal safety: use only the basename
+                        if ".." in info.filename:
+                            continue
+                        dest = labels_dir / name
+                        dest.write_bytes(zf.read(info.filename))
+                        extracted += 1
+            except zipfile.BadZipFile:
+                raise HTTPException(status_code=400, detail="Invalid ZIP file")
+
+        if extracted == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No .txt label files found in ZIP. Export from Label Studio in YOLO format.",
+            )
+
+        logger.info("Uploaded %d label files for match '%s'", extracted, match_name)
+        return {"ok": True, "match": match_name, "labels_extracted": extracted}
 
     @app.get("/api/training/status")
     async def training_status():
