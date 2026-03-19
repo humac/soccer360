@@ -54,7 +54,7 @@ You don't need to edit anything manually. Drop the video in, wait for processing
 ### What You Need
 
 - A 360-degree match recording in **equirectangular MP4 format** (typically 5760x2880 or similar)
-- Network access to the server's `/tank/ingest/` folder (or SSH/SCP access)
+- Network access to the server's `/tank/ingest/` folder, or to `/tank/stagging/` if you prefer to stage files before queueing them from the UI
 - Access to the server for checking logs (optional but recommended)
 
 > **Note:** If you recorded with an Insta360 camera, you must first stitch and export to equirectangular MP4 using Insta360 Studio before ingesting. Raw `.insv` files cannot be processed directly.
@@ -118,6 +118,16 @@ You can drop multiple files at once. They are processed sequentially in the orde
 cp match1.mp4 match2.mp4 match3.mp4 /tank/ingest/
 ```
 
+### Staging a File First
+
+If you want the file visible in the dashboard before it enters the processing queue:
+
+1. Copy the file to `/tank/stagging/`
+2. Open the dashboard at `http://<server-address>:8088`
+3. In the **Staging** panel, click **Send To Ingest** for the file you want to queue
+
+This is useful when you want to upload multiple files ahead of time but control exactly when each one starts.
+
 ## Monitoring Processing
 
 ### Using the Dashboard
@@ -135,6 +145,8 @@ The dashboard shows:
 - **Decision prompts** -- approve/reject buttons when the pipeline needs input (with countdown timers that auto-proceed)
 - **Job history** -- all completed and failed jobs with timing details
 - **Active learning** -- labeling status per match, Upload/Import buttons, Build Dataset and Train controls
+- **Staging** -- view files already uploaded to `/tank/stagging` and move one into ingest with **Send To Ingest**
+- **Processed match reset** -- remove a completed match from the UI with an explicit **Are you sure?** confirmation, restore one source video to `/tank/stagging`, and requeue it when ready
 
 The dashboard streams events in real time -- no need to refresh the page.
 
@@ -346,24 +358,25 @@ For detailed step-by-step instructions including Label Studio setup, labeling te
 2. **Import hard frames** -- click **Import** in the dashboard or run `bash scripts/labelstudio_import.sh <match>`
 3. **You label hard frames** -- 5-10 minutes in Label Studio
 4. **Upload labels** -- click **Upload** in the dashboard and select the YOLO export ZIP
-5. **Build dataset + train** -- use the dashboard or run `bash scripts/build_dataset.sh` then `bash scripts/train_ball.sh`
-6. **Next games are better** -- the worker automatically uses the improved model
+5. **Build dataset + train** -- use the dashboard, or run `bash scripts/build_dataset.sh` then `soccer360 train --epochs 50 --data /tank/labeling/dataset/dataset.yaml`
+6. **Next games are better** -- set the dashboard ingest selector to `Auto` or pin the improved model before the next ingest or reprocess run
 
 ## Reprocessing a Match
 
-To reprocess a match with an updated model or different settings:
+The easiest way to reprocess a completed match is now the dashboard:
 
-```bash
-docker compose run --rm worker soccer360 process /tank/ingest/match.mp4
-```
+1. Open the processed match in the media section
+2. Click **Remove Processed Match**
+3. Confirm the **Are you sure?** dialog
+4. The dashboard removes processed outputs, highlights, labels, built dataset, related dashboard history, and the relevant watcher dedupe entry
+5. One original source video is restored to `/tank/stagging/<match>_reprocess.ext`
+6. In the **Staging** panel, click **Send To Ingest** to queue the restored file again
 
-Or, if the original was archived:
+If you need to bypass the watcher entirely, an administrator can still run a one-off job against an archived source file:
 
 ```bash
 docker compose run --rm worker soccer360 process /tank/archive_raw/match_<job_id>.mp4
 ```
-
-> **Note:** If the watcher has already processed this file, you may need to ask your administrator to reset the dedupe state first. See the Admin Guide for details.
 
 To keep intermediate scratch files for debugging:
 
@@ -383,7 +396,7 @@ docker compose run --rm worker soccer360 process /path/to/match.mp4 --no-cleanup
 - **Wrong extension.** Only `.mp4`, `.mov`, and `.insv` are accepted.
 - **Hidden file.** Files starting with `.` (dot) are ignored.
 - **Staging suffix.** Files ending in `.part`, `.tmp`, or `.uploading` are ignored (remove the suffix).
-- **Already processed.** The watcher remembers files it has processed. Check with your administrator about resetting dedupe state.
+- **Already processed.** Use the dashboard's reset/requeue flow for a completed match, or ask your administrator about the dedupe state if you need a broader reset.
 - **Worker not running.** Check with `docker compose ps worker`.
 
 ### Processing Seems Stuck

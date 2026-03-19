@@ -19,10 +19,14 @@ class TestResolveModelPathV1:
         models_dir = tmp_path / "models"
         models_dir.mkdir()
         (models_dir / "ball_best.pt").write_bytes(b"model_data")
-        base = tmp_path / "yolov8s.pt"
+        base = tmp_path / "yolo26l.pt"
         base.write_bytes(b"base_data")
 
-        config = {"detection": {"path": "yolov8s.pt"}, "mode": {"allow_no_model": True}}
+        config = {
+            "detector": {"runtime_override_path": str(tmp_path / "ingest_model_selection.json")},
+            "detection": {"path": "yolo26l.pt"},
+            "mode": {"allow_no_model": True},
+        }
         path, mode = resolve_model_path_v1(
             config, models_dir=str(models_dir), base_model_path=str(base)
         )
@@ -30,13 +34,17 @@ class TestResolveModelPathV1:
         assert path == str(models_dir / "ball_best.pt")
 
     def test_baked_fallback(self, tmp_path):
-        """When no ball_best.pt, baked yolov8s.pt should be used."""
+        """When no ball_best.pt, baked yolo26l.pt should be used."""
         models_dir = tmp_path / "models"
         models_dir.mkdir()
-        base = tmp_path / "yolov8s.pt"
+        base = tmp_path / "yolo26l.pt"
         base.write_bytes(b"base_data")
 
-        config = {"detection": {"path": "yolov8s.pt"}, "mode": {"allow_no_model": True}}
+        config = {
+            "detector": {"runtime_override_path": str(tmp_path / "ingest_model_selection.json")},
+            "detection": {"path": "yolo26l.pt"},
+            "mode": {"allow_no_model": True},
+        }
         path, mode = resolve_model_path_v1(
             config, models_dir=str(models_dir), base_model_path=str(base)
         )
@@ -48,7 +56,11 @@ class TestResolveModelPathV1:
         models_dir = tmp_path / "models"
         models_dir.mkdir()
 
-        config = {"detection": {"path": "yolov8s.pt"}, "mode": {"allow_no_model": True}}
+        config = {
+            "detector": {"runtime_override_path": str(tmp_path / "ingest_model_selection.json")},
+            "detection": {"path": "yolo26l.pt"},
+            "mode": {"allow_no_model": True},
+        }
         path, mode = resolve_model_path_v1(
             config,
             models_dir=str(models_dir),
@@ -62,7 +74,11 @@ class TestResolveModelPathV1:
         models_dir = tmp_path / "models"
         models_dir.mkdir()
 
-        config = {"detection": {"path": "yolov8s.pt"}, "mode": {"allow_no_model": False}}
+        config = {
+            "detector": {"runtime_override_path": str(tmp_path / "ingest_model_selection.json")},
+            "detection": {"path": "yolo26l.pt"},
+            "mode": {"allow_no_model": False},
+        }
         with pytest.raises(RuntimeError):
             resolve_model_path_v1(
                 config,
@@ -79,6 +95,7 @@ class TestResolveModelPathV1:
         custom.write_bytes(b"custom_data")
 
         config = {
+            "detector": {"runtime_override_path": str(tmp_path / "ingest_model_selection.json")},
             "detection": {"path": str(custom)},
             "mode": {"allow_no_model": True},
         }

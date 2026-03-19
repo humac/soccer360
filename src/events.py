@@ -302,6 +302,24 @@ class EventStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def get_active_jobs_by_input_stem(self, input_stem: str) -> list[dict]:
+        """Return queued/running jobs whose input filename stem matches."""
+        target = str(input_stem or "").strip()
+        if not target:
+            return []
+
+        with self._read_lock() as conn:
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE status IN ('queued', 'running') ORDER BY id DESC"
+            ).fetchall()
+
+        matches = []
+        for row in rows:
+            input_path = row["input_path"] or ""
+            if Path(str(input_path)).stem == target:
+                matches.append(dict(row))
+        return matches
+
     def get_job(self, job_id: str) -> dict | None:
         with self._read_lock() as conn:
             row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
@@ -359,6 +377,30 @@ class EventStore:
         with self._read_lock() as conn:
             row = conn.execute("SELECT MAX(id) FROM phase_events").fetchone()
             return row[0] or 0
+
+    def delete_jobs(self, job_ids: list[str]) -> int:
+        """Delete jobs and all associated rows. Returns deleted job count."""
+        normalized = []
+        seen = set()
+        for job_id in job_ids:
+            if not isinstance(job_id, str) or not job_id or job_id in seen:
+                continue
+            normalized.append(job_id)
+            seen.add(job_id)
+
+        if not normalized:
+            return 0
+
+        placeholders = ",".join("?" for _ in normalized)
+        params = tuple(normalized)
+        with self._lock:
+            conn = self._conn()
+            conn.execute(f"DELETE FROM phase_events WHERE job_id IN ({placeholders})", params)
+            conn.execute(f"DELETE FROM metrics_snapshots WHERE job_id IN ({placeholders})", params)
+            conn.execute(f"DELETE FROM decisions WHERE job_id IN ({placeholders})", params)
+            cur = conn.execute(f"DELETE FROM jobs WHERE job_id IN ({placeholders})", params)
+            conn.commit()
+            return cur.rowcount
 
 
 class EventBus:

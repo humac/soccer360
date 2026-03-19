@@ -32,6 +32,7 @@ RUN if ! grep -qE '^[^:]+:[^:]*:1000:' /etc/group; then \
 # Dependencies layer: changes only when requirements-docker.txt changes.
 RUN --mount=type=cache,target=/root/.cache/pip python -m pip install --upgrade pip
 COPY requirements-docker.txt .
+COPY requirements-test.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install \
       --index-url https://pypi.org/simple \
@@ -47,6 +48,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
       --extra-index-url https://download.pytorch.org/whl/cu121 \
       -c /tmp/torch-constraints.txt \
       -r requirements-docker.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+      --index-url https://pypi.org/simple \
+      -r requirements-test.txt
 
 # Bake yolov8s.pt BEFORE copying src/ so code changes don't invalidate this layer.
 RUN MATCHES="" \
@@ -67,6 +72,7 @@ RUN MATCHES="" \
 # Application source: changes often, but deps + model layers stay cached.
 COPY pyproject.toml .
 COPY src/ src/
+COPY tests/ tests/
 COPY configs/ configs/
 COPY scripts/ scripts/
 COPY models/ models/

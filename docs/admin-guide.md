@@ -156,6 +156,7 @@ Create the required directory structure:
 ```bash
 # Persistent storage (4TB SSD)
 mkdir -p /tank/ingest
+mkdir -p /tank/stagging
 mkdir -p /tank/processed
 mkdir -p /tank/highlights
 mkdir -p /tank/models
@@ -167,7 +168,7 @@ mkdir -p /tank/logs
 mkdir -p /scratch/work
 
 # Set ownership (pipeline runs as UID 1000)
-chown -R 1000:1000 /tank/ingest /tank/processed /tank/highlights
+chown -R 1000:1000 /tank/ingest /tank/stagging /tank/processed /tank/highlights
 chown -R 1000:1000 /tank/models /tank/labeling /tank/archive_raw /tank/logs
 chown -R 1000:1000 /scratch/work
 ```
@@ -209,6 +210,16 @@ The verifier checks:
 - GPU kernel smoke test (CUDA conv2d)
 - Writable `.ultralytics` directory
 
+Useful test commands:
+
+```bash
+# Fast targeted host-side slice
+pytest tests/test_dashboard.py tests/test_events.py tests/test_watcher.py -q
+
+# Full container test run (worker entrypoint is soccer360, so use python)
+docker compose run --rm --entrypoint python worker -m pytest tests/ -v
+```
+
 ## Configuration
 
 ### Configuration File
@@ -220,6 +231,7 @@ All pipeline parameters live in `configs/pipeline.yaml`. Override the config pat
  | Key | Default | Purpose |
 | ----- | --------- | --------- |
  | `paths.ingest` | `/tank/ingest` | Queue folder for incoming videos |
+ | `paths.stagging` | `/tank/stagging` | Holding folder for UI-managed import/requeue |
  | `paths.scratch` | `/scratch/work` | Fast NVMe temp space (auto-cleaned) |
  | `paths.processed` | `/tank/processed` | Final output directory |
  | `paths.highlights` | `/tank/highlights` | Highlight clip directory |
@@ -403,7 +415,8 @@ In V1 bootstrap mode (when the `detection` section is present), the model is res
 
 1. **`detector.model_path`** -- explicit override (must exist if set to a non-default path)
 2. **`detection.path`** -- legacy config path
-3. **Default resolver** -- checks `/tank/models/ball_best.pt` first, then falls back to baked `/app/yolov8s.pt`
+3. **Default resolver** -- checks `/tank/models/ball_best.pt` first, then falls back to baked `/app/models/yolo26l.pt`
+4. **Runtime selector** -- the dashboard ingest selector can use `Auto` or a pinned model for future ingest jobs without editing the config file
 
 The runtime logs the resolved model once per job:
 
@@ -582,13 +595,13 @@ Consolidate all labeled matches into a YOLO dataset:
 bash scripts/build_dataset.sh
 ```
 
-This creates `/tank/labeling/dataset/` with train/val splits and `dataset.yaml`.
+This creates `/tank/labeling/dataset/` with train/val splits and `dataset.yaml`. The dashboard's **Build Dataset** button now runs the same workflow with native Python logic instead of shelling out to Docker from inside the container.
 
 ### Training a New Model
 
 ```bash
 # Train for 50 epochs (default)
-bash scripts/train_ball.sh 50
+soccer360 train --epochs 50 --data /tank/labeling/dataset/dataset.yaml
 ```
 
 Training:
@@ -598,9 +611,11 @@ Training:
 - Promotes best weights to `/tank/models/ball_best.pt`
 - Logs to `/tank/logs/`
 
+`bash scripts/train_ball.sh 50` remains available as a helper wrapper around the same training flow.
+
 ### Model Promotion
 
-The training script automatically promotes the best checkpoint to `ball_best.pt`. The worker picks up the new model on the next pipeline run -- no restart required.
+The training script automatically promotes the best checkpoint to `ball_best.pt`. Future ingest jobs use it only if the ingest selector is set to `Auto` or pinned to `ball_best.pt`; otherwise the worker continues following the configured detection model.
 
 ## Dedupe State Management
 
@@ -612,7 +627,17 @@ The dedupe marker is written when processing completes successfully. Even if arc
 
 ### Forcing Reprocessing
 
-To make the watcher reprocess previously completed files:
+Preferred per-match workflow:
+
+1. Use the dashboard's **Remove Processed Match** action
+2. Confirm the destructive **Are you sure?** prompt
+3. The dashboard deletes processed outputs, highlights, labeling data, built dataset, dashboard history, and the relevant watcher dedupe entries
+4. One archived/original source is restored to `/tank/stagging/<match>_reprocess.ext`
+5. Use the dashboard **Staging** panel to move the restored file back into ingest
+
+Use the manual global state reset below only when you need a broad administrative reset.
+
+To make the watcher reprocess previously completed files in bulk:
 
 ```bash
 # 1. Stop the watcher
@@ -684,7 +709,7 @@ make verify-container-assets
 The container runs as UID/GID `1000:1000`. All `/tank/*` directories should be owned by this user:
 
 ```bash
-chown -R 1000:1000 /tank/ingest /tank/processed /tank/highlights
+chown -R 1000:1000 /tank/ingest /tank/stagging /tank/processed /tank/highlights
 chown -R 1000:1000 /tank/models /tank/labeling /tank/archive_raw /tank/logs
 chown -R 1000:1000 /scratch/work
 ```
@@ -720,6 +745,8 @@ The web dashboard at `http://<server>:8088` provides real-time visibility into p
 - **Decision prompts** -- interactive approve/reject for pipeline decision points (mode confirmation, post-detection review, hard frame labeling) with countdown timers
 - **Job history** -- completed and failed jobs with per-phase timing breakdown
 - **Active learning** -- labeling status per match (frame counts, task counts, label counts), Upload button for YOLO label ZIPs, Build Dataset and Train buttons
+- **Staging** -- list files in `/tank/stagging` and move the selected file into ingest
+- **Processed match reset** -- destructive per-match cleanup with explicit confirmation before removing outputs/history and restoring a source file for requeue
 - **Media player** -- preview processed broadcast/tactical outputs
 
 The dashboard streams events via SSE (Server-Sent Events) -- no polling or manual refresh needed.
@@ -1042,12 +1069,13 @@ All commands accept `--config` / `-c` for custom config path.
  | `configs/pipeline.yaml` | Main configuration |
  | `configs/model_config.yaml` | YOLO training config |
  | `/tank/models/ball_best.pt` | Active fine-tuned model |
- | `/app/yolov8s.pt` | Baked COCO baseline model (in container) |
+ | `/app/models/yolo26l.pt` | Baked COCO baseline model (in container) |
  | `/tank/data/dashboard.db` | Dashboard SQLite state (WAL mode) |
  | `/tank/processed/.state/watcher_processed_ingest.json` | Dedupe state |
  | `/tank/logs/soccer360.log` | Pipeline log |
  | `scripts/verify_container_assets.sh` | Container verifier |
  | `scripts/install.sh` | Installation script |
- | `scripts/train_ball.sh` | Training script |
- | `scripts/build_dataset.sh` | Dataset builder |
+ | `/tank/stagging/` | UI-managed staging/requeue folder |
+ | `scripts/train_ball.sh` | Training helper wrapper |
+ | `scripts/build_dataset.sh` | Shell dataset builder helper |
  | `scripts/labelstudio_import.sh` | Label Studio importer |

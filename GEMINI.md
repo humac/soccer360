@@ -36,6 +36,7 @@ Soccer360 ingests 360 match video and outputs:
 - `src/active_learning.py`: V1 frame export triggers (`low_conf`, `lost_run`, `jump_reject`)
 - `src/watcher.py`: ingest queue handling + persistent dedupe fingerprint store
 - `src/exporter.py`: finalization + ingest archival status in `metadata.json`
+- `src/dashboard.py`: FastAPI dashboard also handles staging import and processed-match reset
 - `scripts/verify_container_assets.sh`: canonical image/runtime verifier
 - `scripts/install.sh`: uses verifier for worker build path
 
@@ -59,7 +60,7 @@ Soccer360 ingests 360 match video and outputs:
   - runtime log format: `Model resolved: <path> (source=<source>)`
 - Dockerfile pins Pascal-compatible PyTorch from cu121 (`torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121`) and constrains requirements install to those versions.
 - Verifier prints torch/CUDA + GPU capability diagnostics, treats arch-list mismatch as warning-only, and uses CUDA conv2d smoke as the authoritative gate (`GPU_SMOKE=1` by default, `GPU_SMOKE=0` to skip).
-- Verifier resolves model path in-container using runtime Python logic (`src.utils.load_config` + `resolve_v1_model_path_and_source`), emits only `CONFIG_PATH`/`MODEL_PATH`/`MODEL_SOURCE` on stdout, validates selected `MODEL_PATH` with `test -s`, and only enforces baked `/app/yolov8s.pt` checks when that path is selected.
+- Verifier resolves model path in-container using runtime Python logic (`src.utils.load_config` + `resolve_v1_model_path_and_source`), emits only `CONFIG_PATH`/`MODEL_PATH`/`MODEL_SOURCE` on stdout, validates selected `MODEL_PATH` with `test -s`, and only enforces baked `/app/models/yolo26l.pt` checks when that path is selected.
 - Resolver failures are fail-fast and include attempted `CONFIG_PATH`, resolver exit code, and captured stderr. Use `VERBOSE=1` to print captured resolver stderr/noise diagnostics when non-empty.
 - Resolver exit codes are deterministic: `11` (config path/readability), `12` (config parse/load), `13` (resolver import/runtime resolution).
 - Canonical explicit Roboflow path is `/app/models/roboflow/football_players_v1.pt`; in default compose runtime `/app/models` is mounted from host `/tank/models`, so place weights at `/tank/models/roboflow/football_players_v1.pt`.
@@ -76,10 +77,17 @@ Soccer360 ingests 360 match video and outputs:
 
 - Main config: `configs/pipeline.yaml`
 - Keep config changes synced with module defaults and `tests/conftest.py`
+- `paths.stagging` defaults to `/tank/stagging` for the UI-managed requeue flow
 - Tests run in Docker:
 
 ```bash
-docker compose run --rm worker pytest tests/ -v
+docker compose run --rm --entrypoint python worker -m pytest tests/ -v
+```
+
+Fast host-side slice:
+
+```bash
+pytest tests/test_dashboard.py tests/test_events.py tests/test_watcher.py -q
 ```
 
 Worker service entrypoint is `soccer360`; for Python diagnostics use:

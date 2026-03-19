@@ -7,7 +7,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import numpy as np
 import pytest
 import yaml
 
@@ -24,6 +23,7 @@ def test_config() -> dict:
                 "highlights": f"{tmpdir}/highlights",
                 "models": f"{tmpdir}/models",
                 "labeling": f"{tmpdir}/labeling",
+                "stagging": f"{tmpdir}/stagging",
                 "archive_raw": f"{tmpdir}/archive_raw",
                 "logs": None,
             },
@@ -33,6 +33,7 @@ def test_config() -> dict:
                 "use_tensorrt": False,
             },
             "detector": {
+                "runtime_override_path": f"{tmpdir}/data/ingest_model_selection.json",
                 "batch_size": 4,
                 "resolution": [320, 160],
                 "confidence_threshold": 0.25,
@@ -215,6 +216,7 @@ def synthetic_video(tmp_path_factory) -> Path:
     3 seconds at 10 fps, 640x320 resolution (small for fast tests).
     A white circle moves across the frame from left to right.
     """
+    np = pytest.importorskip("numpy")
     tmpdir = tmp_path_factory.mktemp("video")
     output = tmpdir / "test_equirect.mp4"
 

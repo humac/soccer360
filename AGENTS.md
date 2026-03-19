@@ -68,7 +68,7 @@ src/
 2. `detection.path` (legacy, source=`detection.path`)
 3. default path resolution (source=`default`):
 4. `{paths.models}/ball_best.pt` if present
-5. `/app/yolov8s.pt` baked fallback
+5. `/app/models/yolo26l.pt` baked fallback
 6. `None` only when `mode.allow_no_model: true` (NO_DETECT)
 7. otherwise raise `RuntimeError`
 
@@ -77,9 +77,10 @@ Notes:
 - `detector.model_path` is canonical; `detection.path` is backward-compatible fallback.
 - Non-default `detector.model_path` is explicit override.
 - Explicit non-default `detector.model_path` must exist and be a file; otherwise V1 model resolution raises `RuntimeError`.
-- `detector.model_path: /app/yolov8s.pt` behaves like default path selection.
+- `detector.model_path: /app/models/yolo26l.pt` behaves like default path selection.
 - Runtime logs once per job: `Model resolved: <path> (source=<source>)`.
-- Source enum is stable: `detector.model_path`, `detection.path`, `default`.
+- Source enum includes `detector.model_path`, `detection.path`, `default`, `runtime.auto`, `runtime.pinned`.
+- `detector.runtime_override_path` stores the dashboard/CLI shared ingest-model selection state.
 - Canonical container path for explicit Roboflow usage: `/app/models/roboflow/football_players_v1.pt`.
 - In default compose runtime, `/app/models` is bind-mounted from host `/tank/models`; place Roboflow weights at `/tank/models/roboflow/football_players_v1.pt`.
 
@@ -105,7 +106,7 @@ FastAPI-based web UI on port 8088 for real-time pipeline monitoring and interact
 - `src/events.py`: `EventStore` persists to SQLite (`/tank/data/dashboard.db`); `EventBus` wraps it with null-safety (never raises, logs warnings). Thread-safe: shared connection for `:memory:`, per-thread for file-based. On startup (file-based stores), `_cleanup_stale_jobs()` marks any `running`/`queued` jobs as `failed` with "Abandoned: service restarted" to prevent stale jobs after service restarts.
 - `src/dashboard.py`: `create_app(config)` returns FastAPI app. REST endpoints + SSE `/api/events` stream.
 - `src/metrics.py`: `PhaseTimer` (context-manager per-phase timing + stats recording), `gpu_utilization_snapshot()` (parses `nvidia-smi` CSV), `cpu_ram_snapshot()` (reads `/proc/stat` + `/proc/meminfo`, no psutil dependency).
-- `src/static/index.html`: Vanilla JS SPA. Dark theme. Connects via `EventSource`. Sections: pipeline progress bar, GPU gauges, System card (CPU/RAM gauges), stats, active learning/training controls, media player, job history.
+- `src/static/index.html`: Vanilla JS SPA. Dark theme. Connects via `EventSource`. Sections: pipeline progress bar, GPU gauges, System card (CPU/RAM gauges), stats, active learning/training controls, staging import panel, media player, processed-match reset controls, job history.
 
 ### REST API
 
@@ -125,6 +126,9 @@ FastAPI-based web UI on port 8088 for real-time pipeline monitoring and interact
 | `/api/training/upload-labels/{match_name}` | POST | Upload YOLO-format label ZIP for a match |
 | `/api/training/build-dataset` | POST | Trigger dataset build (subprocess) |
 | `/api/training/train` | POST | Trigger model training (subprocess, configurable epochs) |
+| `/api/staging/files` | GET | List eligible top-level staged videos in `/tank/stagging` |
+| `/api/staging/import` | POST | Move a selected staged file into `/tank/ingest` |
+| `/api/media/matches/{match_name}/reset` | POST | Delete a processed match family and restore one source video to `/tank/stagging` |
 
 ### Decision Hooks in Pipeline
 
@@ -192,6 +196,7 @@ Primary runtime config: `configs/pipeline.yaml`.
 Key sections currently used in production:
 
 - `paths`, `model`, `detector`, `field_of_interest`, `tracker`, `camera`, `center_of_play`, `reframer`, `highlights`, `exporter`, `watcher`, `ingest`, `active_learning`, `detection`, `filters`, `tracking`, `mode`, `logging`, `dashboard`
+- `paths.stagging` defaults to `/tank/stagging` and is used by the dashboard staging/reprocess UI
 
 When adding/changing config:
 
@@ -237,7 +242,7 @@ Canonical worker build verification is `scripts/verify_container_assets.sh`:
   - `12`: config load/parse failure
   - `13`: resolver import/runtime resolution failure
 - Verifier validates `test -s "$MODEL_PATH"` and logs selected model file size.
-- Baked `/app/yolov8s.pt` checks are conditional: enforced only when `MODEL_PATH=/app/yolov8s.pt`.
+- Baked `/app/models/yolo26l.pt` checks are conditional: enforced only when `MODEL_PATH=/app/models/yolo26l.pt`.
 - Verifies runtime identity lookup with `python -c "import getpass; print(getpass.getuser())"`
 - Prints runtime torch/CUDA diagnostics + `nvidia-smi` GPU name/compute capability when available
 - Arch-list mismatch is warning-only; CUDA smoke test is the authoritative gate
@@ -250,7 +255,13 @@ Canonical worker build verification is `scripts/verify_container_assets.sh`:
 Run tests in Docker:
 
 ```bash
-docker compose run --rm worker pytest tests/ -v
+docker compose run --rm --entrypoint python worker -m pytest tests/ -v
+```
+
+Fast host-side slice for lightweight environments:
+
+```bash
+pytest tests/test_dashboard.py tests/test_events.py tests/test_watcher.py -q
 ```
 
 Useful maintenance checks:
@@ -277,7 +288,7 @@ docker compose run --rm --no-deps --entrypoint python worker -c "import os; from
 
 ## Common Pitfalls
 
-1. No local venv workflow: run test/runtime commands in Docker.
+1. Docker service entrypoint is `soccer360`: use `docker compose run --rm --entrypoint python worker -m pytest ...` for container test runs.
 2. Do not break the `(-180, 180]` angle convention.
 3. Tracker/stabilizer thresholds are in detector-space pixels, not source resolution.
 4. Keep frame I/O streaming (ffmpeg pipes); do not introduce disk frame dumps.

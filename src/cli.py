@@ -9,7 +9,19 @@ import click
 
 logger = logging.getLogger("soccer360.cli")
 
-from .utils import load_config, setup_logging
+
+def _load_cli_utils():
+    """Import CLI runtime helpers lazily so `--help` works in thin envs."""
+    try:
+        from .utils import load_config, setup_logging
+    except ModuleNotFoundError as exc:
+        if exc.name == "yaml":
+            raise click.ClickException(
+                "PyYAML is required to run Soccer360 commands. "
+                "Install project dependencies or use the Docker workflow."
+            )
+        raise
+    return load_config, setup_logging
 
 
 @click.group()
@@ -22,6 +34,7 @@ from .utils import load_config, setup_logging
 @click.pass_context
 def cli(ctx: click.Context, config: str):
     """Soccer360 -- Automated 360 soccer video processing."""
+    load_config, setup_logging = _load_cli_utils()
     ctx.ensure_object(dict)
     cfg = load_config(config)
 
@@ -32,10 +45,12 @@ def cli(ctx: click.Context, config: str):
     paths.setdefault("highlights", "/tank/highlights")
     paths.setdefault("models", "/tank/models")
     paths.setdefault("labeling", "/tank/labeling")
+    paths.setdefault("stagging", "/tank/stagging")
     paths.setdefault("archive_raw", "/tank/archive_raw")
     paths.setdefault("logs", "/tank/logs")
 
     Path("/scratch/work").mkdir(parents=True, exist_ok=True)
+    Path(paths["stagging"]).mkdir(parents=True, exist_ok=True)
     log_dir = Path("/tank/logs")
     log_dir.mkdir(parents=True, exist_ok=True)
     paths["logs"] = str(log_dir)
@@ -72,13 +87,29 @@ def process(ctx: click.Context, file_path: str, no_cleanup: bool):
 @cli.command()
 @click.option("--epochs", default=50, help="Training epochs.")
 @click.option("--data", required=True, type=click.Path(exists=True), help="YOLO dataset YAML path.")
+@click.option("--base-model", default=None, type=click.Path(), help="Optional local base model .pt path.")
+@click.option("--output-model-name", default=None, help="Optional promoted model filename (defaults to ball_best.pt).")
+@click.option("--update-active/--no-update-active", default=True, help="Also copy the trained best weights to ball_best.pt for inference.")
 @click.pass_context
-def train(ctx: click.Context, epochs: int, data: str):
+def train(
+    ctx: click.Context,
+    epochs: int,
+    data: str,
+    base_model: str | None,
+    output_model_name: str | None,
+    update_active: bool,
+):
     """Retrain / fine-tune the YOLO ball detection model."""
     from .trainer import Trainer
 
     trainer = Trainer(ctx.obj["config"])
-    trainer.run(data=data, epochs=epochs)
+    trainer.run(
+        data=data,
+        epochs=epochs,
+        base_model=base_model,
+        output_model_name=output_model_name,
+        update_active=update_active,
+    )
 
 
 @cli.command("export-hard-frames")

@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from .utils import VideoMeta, extract_frame, load_detections_jsonl, probe_video
-
 logger = logging.getLogger("soccer360.trainer")
 
 
@@ -14,11 +12,21 @@ class Trainer:
     """Fine-tune YOLO ball detection model and export hard frames."""
 
     def __init__(self, config: dict):
+        self.config = config
         model_cfg = config.get("model", {})
-        self.base_model = model_cfg.get("base_model", "yolov8s.pt")
+        training_cfg = config.get("training", {})
+        self.base_model = model_cfg.get("base_model", "yolo26l.pt")
         self.model_dir = Path(config["paths"].get("models", "/tank/models"))
+        self.train_workers = int(training_cfg.get("workers", 0))
 
-    def run(self, data: str, epochs: int = 50):
+    def run(
+        self,
+        data: str,
+        epochs: int = 50,
+        base_model: str | Path | None = None,
+        output_model_name: str | None = None,
+        update_active: bool = True,
+    ):
         """Fine-tune YOLO model on labeled ball dataset.
 
         Args:
@@ -29,32 +37,111 @@ class Trainer:
 
         version = self._next_version()
         run_name = f"ball_model_{version}"
+        resolved_base_model = self._resolve_training_base_model(base_model)
 
-        logger.info("Starting training: %s (base=%s, epochs=%d)", run_name, self.base_model, epochs)
+        logger.info(
+            "Starting training: %s (base=%s, epochs=%d)",
+            run_name,
+            resolved_base_model,
+            epochs,
+        )
 
-        model = YOLO(self.base_model)
+        model = YOLO(str(resolved_base_model))
         results = model.train(
             data=data,
             epochs=epochs,
             imgsz=640,
             batch=16,
             device="cuda:0",
+            workers=self.train_workers,
             project=str(self.model_dir),
             name=run_name,
             exist_ok=False,
             patience=10,
         )
 
-        # Copy best weights to a standard location
+        # Copy best weights to the requested model slot(s)
         best_path = self.model_dir / run_name / "weights" / "best.pt"
         if best_path.exists():
-            latest = self.model_dir / "ball_best.pt"
             import shutil
-            shutil.copy2(str(best_path), str(latest))
-            logger.info("Best model saved: %s (copied to %s)", best_path, latest)
+            target_name = self._resolve_output_model_name(output_model_name)
+            target_path = self.model_dir / target_name
+            shutil.copy2(str(best_path), str(target_path))
+
+            if update_active and target_name != "ball_best.pt":
+                active_path = self.model_dir / "ball_best.pt"
+                shutil.copy2(str(best_path), str(active_path))
+                logger.info(
+                    "Best model saved: %s (copied to %s and active %s)",
+                    best_path,
+                    target_path,
+                    active_path,
+                )
+            else:
+                logger.info("Best model saved: %s (copied to %s)", best_path, target_path)
 
         logger.info("Training complete: %s", run_name)
         return results
+
+    def _resolve_training_base_model(self, override: str | Path | None = None) -> Path:
+        """Resolve a local base model path for offline-safe training."""
+        configured_value = override if override is not None else self.base_model
+        configured = Path(str(configured_value))
+        candidate_paths: list[Path] = []
+
+        if configured.is_absolute():
+            candidate_paths.append(configured)
+        else:
+            candidate_paths.append(Path.cwd() / configured)
+            candidate_paths.append(Path("/app") / configured)
+
+        active_model = self.model_dir / "ball_best.pt"
+        baked_default = Path("/app/models/yolo26l.pt")
+
+        for candidate in candidate_paths:
+            if candidate.is_file():
+                return candidate
+
+        if active_model.is_file():
+            logger.info(
+                "Configured training base model '%s' is not available locally; "
+                "falling back to active model %s",
+                configured_value,
+                active_model,
+            )
+            return active_model
+
+        if baked_default.is_file():
+            logger.info(
+                "Configured training base model '%s' is not available locally; "
+                "falling back to baked default %s",
+                configured_value,
+                baked_default,
+            )
+            return baked_default
+
+        raise RuntimeError(
+            "Training base model is not available locally. "
+            f"Configured base_model={configured_value!r}. "
+            "Set model.base_model to a local .pt file or ensure /app/models/yolo26l.pt exists."
+        )
+
+    def _resolve_output_model_name(self, override: str | None = None) -> str:
+        """Resolve a safe model filename for the promoted checkpoint."""
+        name = (override or "ball_best").strip()
+        if (
+            not name
+            or name in {".", ".."}
+            or name.startswith(".")
+            or "/" in name
+            or "\\" in name
+            or ".." in name
+            or Path(name).name != name
+        ):
+            raise ValueError(f"Invalid output model name: {override!r}")
+        if not name.lower().endswith(".pt"):
+            name += ".pt"
+        return name
 
     def export_tensorrt(self, model_path: str | Path, int8: bool = True):
         """Export YOLO model to TensorRT engine.
@@ -91,6 +178,8 @@ class Trainer:
           - Frames with detections below confidence threshold
           - Frames with NO detections at all (ball completely lost)
         """
+        from .utils import extract_frame, load_detections_jsonl, probe_video
+
         video_path = Path(video_path)
         meta = probe_video(video_path)
         detections = load_detections_jsonl(detections_path)

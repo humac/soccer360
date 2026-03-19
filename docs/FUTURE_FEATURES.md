@@ -3,6 +3,8 @@
 ## Overview
 - Purpose: maintain a practical roadmap for reliability, active learning, quality/performance, and operations.
 - Scope: future work only; no immediate implementation.
+- Historical note: several earlier backlog items are now implemented in the live repo, including dashboard-managed staging import, processed-match reset/requeue, dashboard-native dataset building, and container test parity. Use `README.md`, `docs/operator-guide.md`, and `docs/admin-guide.md` for current operational behavior.
+- Related roadmap: the longer editable dashboard settings plan lives in [FUTURE_DETECTION_SETTINGS.md](./FUTURE_DETECTION_SETTINGS.md). The live dashboard currently exposes a readonly detection-settings page only.
 - Environment assumptions:
 - Paths: `/tank/ingest`, `/scratch/work`, `/tank/processed`, `/tank/highlights`, `/tank/models`, `/tank/labeling`, `/tank/logs`, `/tank/archive_raw`, `/backup`
 - Primary GPU: device `1` (Tesla P40) for inference/training.
@@ -29,7 +31,7 @@
 
 #### P0-02 Model store + fallback
 - Problem: missing model can crash pipeline.
-- Proposed Solution: resolve model in order `/tank/models/ball_best.pt` -> `/app/models/ball_base.pt` -> `NO_DETECT`; log chosen mode/path.
+- Proposed Solution: resolve model in order `/tank/models/ball_best.pt` -> `/app/models/yolo26l.pt` -> `NO_DETECT`; log chosen mode/path.
 - Config/Paths Impact: model path resolution, `/tank/models`, `/app/models`.
 - Acceptance Criteria:
 - Logs always show model source and path/mode.

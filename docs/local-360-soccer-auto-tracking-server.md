@@ -1,5 +1,7 @@
 # Local 360 Soccer Auto-Tracking & Processing Server
 
+> Current repo note: Soccer360 now defaults to baked `/app/models/yolo26l.pt` and also supports dashboard-managed ingest model selection.
+
 ## Overview
 This server functions as a fully automated local sports video processing system designed for **zero-touch processing**.
 

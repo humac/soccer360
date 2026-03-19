@@ -11,7 +11,10 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Generator
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - lightweight host test envs may skip video-array paths
+    np = None
 import yaml
 
 

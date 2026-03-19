@@ -39,7 +39,7 @@ echo "  GPU:        $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/n
 echo ""
 echo "Creating directory structure..."
 
-for dir in /tank/ingest /tank/processed /tank/highlights /tank/archive_raw /tank/models /tank/labeling /tank/logs /scratch/work; do
+for dir in /tank/ingest /tank/processed /tank/highlights /tank/archive_raw /tank/models /tank/labeling /tank/stagging /tank/logs /scratch/work; do
     if [ ! -d "$dir" ]; then
         sudo mkdir -p "$dir"
         sudo chown "$USER:$USER" "$dir"

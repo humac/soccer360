@@ -69,7 +69,7 @@ The V1 pipeline uses YOLO26l (`yolo26l.pt`, the latest Ultralytics YOLO generati
 3. **Export hard frames** -- ActiveLearningExporter flags low-confidence detections, lost ball runs, and jump rejections for labeling
 4. **Label** -- Annotate exported frames in Label Studio
 5. **Train** -- Fine-tune with `soccer360 train`, producing `ball_best.pt`
-6. **Upgrade** -- Drop `ball_best.pt` in `/tank/models/`; next run auto-uses it
+6. **Upgrade** -- Save `ball_best.pt` in `/tank/models/`, then set ingest selection to `Auto` or pin it in the dashboard if you want future jobs to use it
 
 **Temporal stabilization** prevents false positives from reaching the camera path:
 
@@ -90,7 +90,8 @@ The V1 pipeline uses YOLO26l (`yolo26l.pt`, the latest Ultralytics YOLO generati
 
 1. `detector.model_path` (canonical override)
 2. `detection.path` (legacy fallback)
-3. `default` resolver path (`/tank/models/ball_best.pt` when present, else baked `/app/yolov8s.pt`)
+3. `default` resolver path (`/tank/models/ball_best.pt` when present, else baked `/app/models/yolo26l.pt`)
+4. dashboard/CLI runtime ingest selection can optionally override config with `Auto` or a pinned model
 
 Default behavior is unchanged unless `detector.model_path` is set, or a legacy
 `detection.path` override is already in use.
@@ -99,10 +100,11 @@ Notes:
 
 - `detector.model_path` set to a non-default path is treated as explicit override.
 - Explicit non-default `detector.model_path` must exist and be a file; otherwise V1 model resolution fails fast with `RuntimeError`.
-- `detector.model_path: /app/yolov8s.pt` keeps normal default/fine-tuned behavior.
+- `detector.model_path: /app/models/yolo26l.pt` keeps normal default/fine-tuned behavior.
 - Current contract is `.pt` weights only (ONNX/TRT model-path selection is out of scope here).
 - Runtime logs one line per job: `Model resolved: <path> (source=<source>)`.
-- Source enum is stable: `detector.model_path`, `detection.path`, `default`.
+- Source enum includes `detector.model_path`, `detection.path`, `default`, `runtime.auto`, and `runtime.pinned`.
+- The dashboard ingest selector writes shared runtime state at `detector.runtime_override_path`, so dashboard-triggered jobs and CLI `watch`/`process` runs use the same selection.
 
 ### Roboflow Model Placement (Default Compose Runtime)
 
@@ -187,8 +189,9 @@ All commands accept `--config` / `-c` to specify a custom config file (default: 
   +-- highlights/           Highlight clips
   |   +-- <match_name>/
   +-- models/               Trained YOLO models (versioned, timestamped)
-  |   +-- ball_best.pt      Active model (auto-picked up by worker)
+  |   +-- ball_best.pt      Active fine-tuned model (use dashboard ingest selector to apply it to future jobs)
   |   +-- ball_model_YYYYMMDD_HHMM/  Versioned training runs
+  +-- stagging/             Hold videos for manual UI import into ingest
   +-- labeling/             Hard frames + labels for training
   |   +-- <match_name>/
   |       +-- frames/       Auto-exported hard frames (JPEG)
@@ -204,7 +207,7 @@ All commands accept `--config` / `-c` to specify a custom config file (default: 
 
 All parameters are in `configs/pipeline.yaml`:
 
-- **paths** -- ingest, scratch, processed, models, etc.
+- **paths** -- ingest, stagging, scratch, processed, models, etc.
 - **model** -- YOLO model path, TensorRT toggle, inference backend (`fp32` or `tensorrt_int8`)
 - **detector** -- batch size, detection resolution, confidence threshold, frame skipping, tiling
 - **field_of_interest** -- enable/disable, center mode (fixed/auto), yaw window, pitch range, auto-center sampling
@@ -248,7 +251,7 @@ The system improves over time through a simple weekly cycle:
 1. **Process games** -- hard frames are exported automatically
 2. **Label 5-10 minutes** -- annotate ball bounding boxes in Label Studio
 3. **Build dataset + train** -- one command each
-4. **Next games are better** -- worker auto-picks up the new model
+4. **Next games are better** -- set the dashboard ingest selector to `Auto` or pin the new model before future jobs
 
 ```bash
 # 1. Process games (hard frames exported to /tank/labeling/<match>/frames/)
@@ -266,19 +269,24 @@ bash scripts/labelstudio_import.sh match2
 #    Upload the ZIP via the dashboard Upload button, or extract to /tank/labeling/<match>/labels/
 
 # 4. Build dataset from all labeled matches
+#    Recommended: use the dashboard "Build Dataset" button
 bash scripts/build_dataset.sh
 
 # 5. Train (50 epochs by default)
-bash scripts/train_ball.sh 50
+#    Recommended: use the dashboard "Train Model" button
+soccer360 train --epochs 50 --data /tank/labeling/dataset/dataset.yaml
 
-# 6. Next games automatically use /tank/models/ball_best.pt
-#    To reprocess a match with the new model:
-docker compose run --rm worker soccer360 process /tank/ingest/match.mp4
+# 6. Set Dashboard -> Ingest Detection Model to Auto or pin /tank/models/ball_best.pt
+#    To reprocess a completed match, use Dashboard -> Remove Processed Match.
+#    It restores one source video to /tank/stagging/<match>_reprocess.ext.
+#    Then use Dashboard -> Staging -> Send To Ingest.
 ```
 
 ### Ingest Queue and Archival
 
 `/tank/ingest/` is a **queue folder**: drop raw 360 videos here for processing. After a successful run, the original file is automatically archived to `/tank/archive_raw/` (when enabled), keeping the ingest folder clean with only pending jobs.
+
+`/tank/stagging/` is a **holding folder** for videos you want visible in the UI without immediately starting the watcher. The dashboard's **Staging** panel lists files in `/tank/stagging` and moves the selected file into `/tank/ingest/` when you click **Send To Ingest**.
 
 **Safe ingest:** Use atomic copy to avoid processing partial files:
 
@@ -325,7 +333,18 @@ Lower values reduce startup overhead for high-volume deployments.
 If archival fails (e.g. permissions), the pipeline still succeeds -- processed outputs are preserved, the ingest file stays in place, and `metadata.json` records `ingest_archive_status: "failed"`.
 This also applies to `archive_mode: copy` / `leave` and `archive_collision: skip`: persistent watcher dedupe prevents restart loops even when the ingest file remains present.
 
-### Reset Dedupe State (Force Reprocess)
+### Reset Dedupe State (Admin-Only Bulk Reprocess)
+
+The preferred per-match reprocess flow is now the dashboard:
+
+1. Open the processed match in the dashboard
+2. Click **Remove Processed Match**
+3. Confirm the **Are you sure?** prompt
+4. The dashboard deletes processed outputs, highlights, labeling data, built dataset, dashboard history, and the related watcher dedupe entries
+5. One original source video is restored to `/tank/stagging/<match>_reprocess.ext`
+6. Use **Send To Ingest** in the dashboard Staging panel to queue it again
+
+Use the manual dedupe reset below only for broader administrative resets affecting many files.
 
 If you intentionally want the watcher to process previously completed ingest files again:
 
@@ -378,6 +397,8 @@ A web-based monitoring UI on port 8088 provides real-time pipeline visibility an
 - Interactive decision prompts (approve/reject with countdown timers)
 - Job history with phase-level metrics
 - Active learning management (labeling status, dataset build, model training)
+- Staging management (`/tank/stagging` -> `/tank/ingest`)
+- Remove Processed Match workflow with explicit confirmation before deletion
 - Media player for reviewing processed outputs
 
 **Start the dashboard:**
@@ -394,7 +415,7 @@ Open `http://<server>:8088` in a browser. The dashboard streams events from the 
 
 **Decision hooks:** When the pipeline reaches a decision point (mode confirmation, post-detection review, hard frame labeling), a notification banner appears with approve/reject buttons and a countdown timer. If no response is given, the pipeline auto-proceeds with the default option.
 
-**Training management:** The Active Learning section shows labeling progress per match (including task count from Label Studio imports), and provides buttons to upload YOLO-format label ZIPs from Label Studio exports, build a YOLO dataset, and trigger model training — all from the browser.
+**Training management:** The Active Learning section shows labeling progress per match (including task count from Label Studio imports), and provides buttons to upload YOLO-format label ZIPs from Label Studio exports, build a YOLO dataset, and trigger model training — all from the browser. The dashboard builds the dataset with native Python logic and runs training with `python -m src.cli train`, so it does not depend on nested `docker compose` calls inside the container.
 
 **Configuration** (`configs/pipeline.yaml`):
 
@@ -481,7 +502,7 @@ Both modes:
   - `12`: config parse/load failure
   - `13`: resolver import/runtime resolution failure
 - Validate selected `MODEL_PATH` is non-empty (`test -s`) and log file size.
-- Enforce baked `/app/yolov8s.pt` checks only when `MODEL_PATH=/app/yolov8s.pt`; otherwise skip baked-model checks and validate only the selected path.
+- Enforce baked `/app/models/yolo26l.pt` checks only when `MODEL_PATH=/app/models/yolo26l.pt`; otherwise skip baked-model checks and validate only the selected path.
 - Always validate `/app/.ultralytics` is writable.
 - Validate runtime identity resolution via `python -c "import getpass; print(getpass.getuser())"`.
 - Print runtime torch/CUDA diagnostics and GPU capability (`nvidia-smi --query-gpu=name,compute_cap`) when available.
@@ -574,7 +595,7 @@ Expected verifier lines with Roboflow selected:
 - `resolved_model_path=/app/models/roboflow/football_players_v1.pt`
 - `resolved_model_source=detector.model_path`
 - `resolved_model_size_bytes=<non-zero>`
-- `Resolved model is not /app/yolov8s.pt; skipping baked yolov8s.pt checks`
+- `Resolved model is not /app/models/yolo26l.pt; skipping baked yolo26l.pt checks`
 
 **Dependency sync check** (standalone):
 
@@ -621,7 +642,7 @@ src/
   trainer.py           YOLO fine-tuning + TensorRT export
   utils.py             FFmpeg streaming I/O, config, equirectangular angle helpers
   events.py            EventStore (SQLite WAL) + EventBus + decision queue
-  dashboard.py         FastAPI monitoring dashboard + REST API + SSE + training mgmt
+  dashboard.py         FastAPI monitoring dashboard + REST API + SSE + training/staging/reset mgmt
   metrics.py           PhaseTimer (per-phase timing) + GPU/CPU/RAM utilization snapshots
   static/
     index.html         Single-page dashboard UI (vanilla JS/CSS, SSE)
@@ -633,9 +654,11 @@ configs/
 scripts/
   install.sh              Server installation (directories, Docker build, verification)
   train.sh                Legacy model training wrapper
-  train_ball.sh           Active learning training (timestamp-versioned)
-  build_dataset.sh        Build YOLO dataset from labeled matches
+  train_ball.sh           Helper wrapper around `soccer360 train` (timestamp-versioned)
+  build_dataset.sh        Shell dataset builder helper (dashboard uses native Python builder)
   labelstudio_import.sh   Generate Label Studio task JSON from hard frames
+
+requirements-test.txt      Test-only Python dependencies baked into the worker image
 
 tests/
   conftest.py              Shared pytest fixtures
@@ -678,12 +701,15 @@ tests/
 ## Testing
 
 ```bash
+# Run a fast targeted slice on the host
+pytest tests/test_dashboard.py tests/test_events.py tests/test_watcher.py -q
+
 # Run all tests inside Docker
-docker compose run --rm worker pytest tests/ -v
+docker compose run --rm --entrypoint python worker -m pytest tests/ -v
 
-# Run specific test module
-docker compose run --rm worker pytest tests/test_detector.py -v
+# Run a specific test module inside Docker
+docker compose run --rm --entrypoint python worker -m pytest tests/test_detector.py -v
 
-# Run with coverage
-docker compose run --rm worker pytest tests/ --cov=src --cov-report=term-missing
+# Run with coverage inside Docker
+docker compose run --rm --entrypoint python worker -m pytest tests/ --cov=src --cov-report=term-missing
 ```

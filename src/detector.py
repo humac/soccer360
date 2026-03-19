@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
 import logging
 import math
 from pathlib import Path
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - lightweight host test envs may skip numpy-heavy paths
+    np = None
 
 from .utils import (
     FFmpegFrameReader,
@@ -18,8 +23,9 @@ from .utils import (
 )
 
 logger = logging.getLogger("soccer360.detector")
-DEFAULT_V1_MODEL_PATH = "/app/yolov8s.pt"
-DEFAULT_V1_MODEL_ALIASES = {DEFAULT_V1_MODEL_PATH, "yolov8s.pt"}
+DEFAULT_V1_MODEL_PATH = "/app/models/yolo26l.pt"
+DEFAULT_V1_MODEL_ALIASES = {DEFAULT_V1_MODEL_PATH, "yolo26l.pt"}
+DEFAULT_V1_RUNTIME_OVERRIDE_PATH = "/tank/data/ingest_model_selection.json"
 
 
 def resolve_model_path(config: dict) -> tuple[str | None, str]:
@@ -37,7 +43,7 @@ def resolve_model_path(config: dict) -> tuple[str | None, str]:
     import shutil
 
     tank_model = Path(config.get("paths", {}).get("models", "/tank/models")) / "ball_best.pt"
-    config_model = Path(config.get("model", {}).get("path", "yolov8s.pt"))
+    config_model = Path(config.get("model", {}).get("path", "yolo26l.pt"))
     base_model = Path("/app/models/ball_base.pt")
 
     if tank_model.exists():
@@ -67,9 +73,9 @@ def resolve_model_path_v1(
 ) -> tuple[str | None, str]:
     """Resolve model for V1 bootstrap detection.
 
-    Priority (when detection.path is the default "yolov8s.pt"):
+    Priority (when detection.path is the default "yolo26l.pt"):
       1. {models_dir}/ball_best.pt  (fine-tuned model)
-      2. {base_model_path}          (baked canonical yolov8s.pt)
+      2. {base_model_path}          (baked canonical yolo26l.pt)
       3. None -> NO_DETECT (if mode.allow_no_model)
       4. RuntimeError (if allow_no_model is false)
 
@@ -124,6 +130,166 @@ def _configured_v1_model_candidate(config: dict) -> tuple[str, str]:
     return DEFAULT_V1_MODEL_PATH, "default"
 
 
+def resolve_v1_runtime_override_path(config: dict) -> Path:
+    """Return the persisted ingest-model selection path."""
+    det_cfg = config.get("detector", {})
+    configured = _normalize_model_path(det_cfg.get("runtime_override_path"))
+    if configured:
+        path = Path(configured)
+        if not path.is_absolute():
+            return Path(DEFAULT_V1_RUNTIME_OVERRIDE_PATH).parent / path
+        return path
+    return Path(DEFAULT_V1_RUNTIME_OVERRIDE_PATH)
+
+
+def load_v1_runtime_model_selection(config: dict) -> dict:
+    """Load persisted ingest-model selection state.
+
+    Returns a normalized payload:
+      {"mode": "config"|"auto"|"pinned", "path": <str|None>, "selection_path": <str>}
+    """
+    selection_path = resolve_v1_runtime_override_path(config)
+    default_payload = {
+        "mode": "config",
+        "path": None,
+        "selection_path": str(selection_path),
+    }
+    if not selection_path.is_file():
+        return default_payload
+
+    try:
+        payload = json.loads(selection_path.read_text())
+    except Exception:
+        logger.warning("Invalid ingest model selection file ignored: %s", selection_path)
+        return default_payload
+
+    if not isinstance(payload, dict):
+        return default_payload
+
+    mode = _normalize_model_path(payload.get("mode")).lower()
+    if mode not in {"config", "auto", "pinned"}:
+        return default_payload
+
+    selected_path = _normalize_model_path(payload.get("path")) or None
+    if mode != "pinned":
+        selected_path = None
+
+    return {
+        "mode": mode,
+        "path": selected_path,
+        "selection_path": str(selection_path),
+    }
+
+
+def save_v1_runtime_model_selection(
+    config: dict,
+    *,
+    mode: str,
+    path: str | None = None,
+) -> dict:
+    """Persist ingest-model selection state.
+
+    Mode "config" clears the override file and restores config-only behavior.
+    """
+    normalized_mode = _normalize_model_path(mode).lower()
+    if normalized_mode not in {"config", "auto", "pinned"}:
+        raise ValueError(f"Unsupported runtime selection mode: {mode}")
+    if normalized_mode == "pinned" and not _normalize_model_path(path):
+        raise ValueError("Pinned runtime selection requires a model path")
+
+    selection_path = resolve_v1_runtime_override_path(config)
+    if normalized_mode == "config":
+        if selection_path.exists():
+            selection_path.unlink()
+        return {
+            "mode": "config",
+            "path": None,
+            "selection_path": str(selection_path),
+        }
+
+    selection_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = selection_path.parent / f".{selection_path.name}.tmp-{Path(selection_path).stem}"
+    payload = {
+        "mode": normalized_mode,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if normalized_mode == "pinned":
+        payload["path"] = str(path)
+
+    tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp_path.replace(selection_path)
+    return {
+        "mode": normalized_mode,
+        "path": payload.get("path"),
+        "selection_path": str(selection_path),
+    }
+
+
+def is_v1_model_selection_locked_by_config(
+    config: dict,
+    *,
+    base_model_path: str = DEFAULT_V1_MODEL_PATH,
+) -> bool:
+    """Whether an explicit detector.model_path prevents runtime selection changes."""
+    configured_path, configured_source = _configured_v1_model_candidate(config)
+    return (
+        configured_source == "detector.model_path"
+        and configured_path not in _v1_default_aliases(base_model_path)
+    )
+
+
+def _resolve_v1_runtime_selection_model_path(
+    config: dict,
+    *,
+    selection: dict,
+    models_dir: str,
+    base_model_path: str,
+    allow_no_model: bool,
+) -> tuple[str | None, str] | None:
+    """Resolve persisted ingest-model selection, if any."""
+    mode = selection.get("mode")
+    fine_tuned = Path(models_dir) / "ball_best.pt"
+
+    if mode == "pinned":
+        selected_path = _normalize_model_path(selection.get("path"))
+        if selected_path:
+            candidate_path = _resolve_runtime_path(selected_path)
+            if Path(candidate_path).is_file():
+                return candidate_path, "runtime.pinned"
+            logger.warning(
+                "Pinned ingest model override %s not found, falling back to config resolution",
+                candidate_path,
+            )
+        return None
+
+    if mode == "auto":
+        if fine_tuned.is_file():
+            return str(fine_tuned), "runtime.auto"
+
+        configured_path, configured_source = _configured_v1_model_candidate(config)
+        candidate_path = _resolve_runtime_path(configured_path)
+        default_aliases = _v1_default_aliases(base_model_path)
+
+        if (
+            configured_source == "detection.path"
+            and configured_path not in default_aliases
+            and Path(candidate_path).is_file()
+        ):
+            return candidate_path, "runtime.auto"
+
+        base_model = Path(base_model_path)
+        if base_model.is_file():
+            return str(base_model), "runtime.auto"
+        if allow_no_model:
+            return None, "runtime.auto"
+        raise RuntimeError(
+            f"No ball detection model found for runtime auto selection (checked {fine_tuned}, "
+            f"{candidate_path}, {base_model}) and mode.allow_no_model is false"
+        )
+
+    return None
+
+
 def resolve_v1_model_path_and_source(
     config: dict,
     models_dir: str = "/app/models",
@@ -166,6 +332,17 @@ def resolve_v1_model_path_and_source(
                 "use default model resolution."
             )
         return candidate_path, "detector.model_path"
+
+    runtime_selection = load_v1_runtime_model_selection(config)
+    runtime_resolved = _resolve_v1_runtime_selection_model_path(
+        config,
+        selection=runtime_selection,
+        models_dir=models_dir,
+        base_model_path=base_model_path,
+        allow_no_model=allow_no_model,
+    )
+    if runtime_resolved is not None:
+        return runtime_resolved
 
     # Legacy explicit detection.path override remains supported.
     if (

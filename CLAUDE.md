@@ -51,7 +51,7 @@ Runtime modes in `src/pipeline.py`:
   - runtime log format: `Model resolved: <path> (source=<source>)`
 - Dockerfile pins Pascal-safe PyTorch from cu121 (`torch==2.4.1+cu121`, `torchvision==0.19.1+cu121`, `torchaudio==2.4.1+cu121`) and constrains requirements install to that trio.
 - Verifier now prints torch/CUDA + GPU capability diagnostics, treats arch-list mismatch as warning, and uses CUDA conv2d smoke as the authoritative gate (`GPU_SMOKE=1` default, `GPU_SMOKE=0` to skip).
-- Verifier resolves model path in-container using runtime Python logic (`src.utils.load_config` + `resolve_v1_model_path_and_source`), emits only `CONFIG_PATH`/`MODEL_PATH`/`MODEL_SOURCE` on stdout, validates selected `MODEL_PATH` via `test -s`, and only enforces baked `/app/yolov8s.pt` checks when that path is actually selected.
+- Verifier resolves model path in-container using runtime Python logic (`src.utils.load_config` + `resolve_v1_model_path_and_source`), emits only `CONFIG_PATH`/`MODEL_PATH`/`MODEL_SOURCE` on stdout, validates selected `MODEL_PATH` via `test -s`, and only enforces baked `/app/models/yolo26l.pt` checks when that path is actually selected.
 - Resolver failures are fail-fast and include attempted `CONFIG_PATH`, resolver exit code, and captured stderr. Use `VERBOSE=1` to print captured resolver stderr/noise diagnostics when non-empty.
 - Resolver exit codes are deterministic: `11` (config path/readability), `12` (config parse/load), `13` (resolver import/runtime resolution).
 - Canonical explicit Roboflow path is `/app/models/roboflow/football_players_v1.pt`; in default compose runtime `/app/models` is mounted from host `/tank/models`, so place weights at `/tank/models/roboflow/football_players_v1.pt`.
@@ -91,9 +91,10 @@ Key config: `camera.fov_ema_alpha`, `camera.deadband_deg`, `camera.velocity_thre
 - SQLite WAL mode store at `dashboard.db_path` (default `/tank/data/dashboard.db`)
 - SSE endpoint (`/api/events`) streams phase events, GPU snapshots, system snapshots (CPU/RAM), decisions, status heartbeats
 - `/api/system` endpoint + `system_snapshot` SSE events provide CPU utilization, RAM usage, core count (from `/proc`)
-- Dashboard UI: GPU gauges, System card (CPU/RAM gauges), pipeline progress, job history, training management
+- Dashboard UI: GPU gauges, System card (CPU/RAM gauges), pipeline progress, job history, training management, staging import, processed-match reset
 - Decision hooks in pipeline: mode confirmation (30s), post-detection review (60s), hard frame labeling (120s)
 - Training management API: `/api/training/labeling-status`, `/api/training/upload-labels/{match_name}`, `/api/training/build-dataset`, `/api/training/train`, `/api/training/models`
+- Additional dashboard APIs: `/api/staging/files`, `/api/staging/import`, `/api/media/matches/{match_name}/reset`
 - Config section: `dashboard:` with `enabled`, `db_path`, `port`
 - Dependencies: `fastapi>=0.109`, `uvicorn>=0.27`, `sse-starlette>=2.0`, `python-multipart>=0.0.6`
 
@@ -109,10 +110,17 @@ Key config: `camera.fov_ema_alpha`, `camera.deadband_deg`, `camera.velocity_thre
 
 - Runtime config: `configs/pipeline.yaml`
 - If adding config keys: update config file, module defaults, and `tests/conftest.py`
+- `paths.stagging` defaults to `/tank/stagging` for the UI-managed requeue flow
 - Test in Docker:
 
 ```bash
-docker compose run --rm worker pytest tests/ -v
+docker compose run --rm --entrypoint python worker -m pytest tests/ -v
+```
+
+Fast host-side regression slice:
+
+```bash
+pytest tests/test_dashboard.py tests/test_events.py tests/test_watcher.py -q
 ```
 
 Compose service entrypoint is `soccer360`; for Python checks use:

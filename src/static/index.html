@@ -29,6 +29,13 @@
     display: flex; align-items: center; gap: 16px;
     margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border);
   }
+  .nav-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+  .nav-link:hover { text-decoration: underline; }
   .header .status-badge {
     padding: 4px 12px; border-radius: 12px; font-size: 0.85rem; font-weight: 500;
   }
@@ -120,6 +127,7 @@
 
 <div class="header">
   <h1>Soccer360</h1>
+  <a class="nav-link" href="/settings/detection">Detection Settings</a>
   <span id="pipeline-badge" class="status-badge badge-idle">Idle</span>
   <span id="sse-badge" class="status-badge badge-disconnected">Disconnected</span>
   <span style="flex:1"></span>
@@ -143,6 +151,36 @@
       <div class="phase-block" data-phase="tactical_reframe">Tactic</div>
       <div class="phase-block" data-phase="highlights">Hilite</div>
       <div class="phase-block" data-phase="export">Export</div>
+    </div>
+  </div>
+
+  <!-- Staging -->
+  <div class="card card-full">
+    <h2>Staging</h2>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <button class="btn" style="background:var(--green);color:#000" onclick="triggerStagingUpload()">
+        Upload To Staging
+      </button>
+      <span style="font-size:0.75rem;color:var(--muted)">Upload a video here first, then choose the ingest model and click Send To Ingest.</span>
+      <input id="staging-upload-input" type="file" accept=".mp4,.mov,.insv" style="display:none" onchange="uploadToStaging(this)">
+    </div>
+    <div id="staging-summary" style="font-size:0.85rem;margin-bottom:8px;color:var(--muted)">Loading...</div>
+    <div id="staging-files" style="font-size:0.8rem;max-height:220px;overflow-y:auto"></div>
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+      <label style="font-size:0.82rem;color:var(--muted);display:block;margin-bottom:6px">Ingest Detection Model</label>
+      <div id="inference-model-summary" style="font-size:0.78rem;color:var(--muted);margin-bottom:8px">Loading...</div>
+      <select id="inference-model-select"
+        style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
+        <option value="config">Loading models...</option>
+      </select>
+      <div id="inference-model-note" style="font-size:0.72rem;color:var(--muted);margin-top:6px">
+        Choose what the next ingest jobs use, then send a staged file into ingest.
+      </div>
+      <div style="margin-top:8px">
+        <button id="apply-inference-model-btn" class="btn" style="background:var(--accent);color:#fff" onclick="applyInferenceModelSelection()">
+          Apply Ingest Model
+        </button>
+      </div>
     </div>
   </div>
 
@@ -255,6 +293,25 @@
               style="width:60px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px">
           </label>
         </div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:4px">Training Base Model</label>
+          <select id="train-base-model"
+            style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
+            <option value="">Loading models...</option>
+          </select>
+          <div style="font-size:0.72rem;color:var(--muted);margin-top:4px">
+            Future training starts from the selected model. It does not automatically reuse the latest trained model unless you choose it.
+          </div>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:4px">Save Best As</label>
+          <input id="train-output-model-name" type="text" value="ball_best"
+            style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
+          <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:0.78rem;color:var(--muted)">
+            <input id="train-update-active" type="checkbox" checked>
+            Also set as active inference model (`ball_best.pt`)
+          </label>
+        </div>
         <div id="training-log" style="font-size:0.75rem;font-family:monospace;max-height:100px;overflow-y:auto;background:var(--bg);border-radius:4px;padding:8px;display:none"></div>
         <h3 style="font-size:0.9rem;color:var(--muted);margin:12px 0 8px">Available Models</h3>
         <div id="model-list" style="font-size:0.8rem">Loading...</div>
@@ -273,7 +330,10 @@
         <option value="">Loading...</option>
       </select>
       <div id="media-video-btns" style="display:flex;gap:6px;flex-wrap:wrap"></div>
-      <span id="media-size" style="color:var(--muted);font-size:0.8rem;margin-left:auto"></span>
+      <button id="remove-match-btn" class="btn" style="background:var(--red);color:#fff;margin-left:auto" onclick="resetCurrentMatch()" disabled>
+        Remove Processed Match
+      </button>
+      <span id="media-size" style="color:var(--muted);font-size:0.8rem"></span>
     </div>
     <div id="media-player-wrap" style="display:none;background:#000;border-radius:6px;overflow:hidden;position:relative">
       <video id="media-player" controls preload="metadata"
@@ -626,17 +686,95 @@ async function loadModels() {
     const resp = await fetch('/api/training/models');
     const models = await resp.json();
     const el = document.getElementById('model-list');
+    const selectEl = document.getElementById('train-base-model');
 
     if (models.length === 0) {
       el.textContent = 'No models found';
-      return;
+      selectEl.innerHTML = '<option value="">No models found</option>';
+      await loadInferenceModelStatus(models);
+      return models;
     }
 
     el.innerHTML = models.map(m =>
-      '<div style="display:flex;justify-content:space-between;padding:2px 0">' +
-      '<span>' + (m.is_active ? '<span style="color:var(--green)">* </span>' : '') + escapeHtml(m.name) + '</span>' +
-      '<span style="color:var(--muted)">' + m.size_mb + ' MB</span></div>'
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:2px 0">' +
+      '<span style="flex:1;min-width:0">' +
+      (m.is_active ? '<span style="color:var(--green)">* </span>' : '') +
+      (m.is_configured_base ? '<span style="color:var(--yellow)">&#9679; </span>' : '') +
+      (m.is_configured_inference ? '<span style="color:var(--accent)">&#9654; </span>' : '') +
+      (m.is_inference_active ? '<span style="color:var(--orange)">&#9632; </span>' : '') +
+      escapeHtml(m.name) + '</span>' +
+      '<span style="color:var(--muted);white-space:nowrap">' + m.size_mb + ' MB</span>' +
+      (m.can_delete
+        ? '<button class="btn" style="background:var(--red);color:#fff;font-size:0.72rem;padding:2px 8px" onclick=\'deleteModel(' + JSON.stringify(m.path) + ', this)\'>Delete</button>'
+        : '') +
+      '</div>'
     ).join('');
+
+    const previousValue = selectEl.value;
+    selectEl.innerHTML = models.map(m => {
+      let label = m.name;
+      if (m.is_active) label += ' [active]';
+      if (m.is_configured_base) label += ' [configured base]';
+      if (m.is_configured_inference) label += ' [configured ingest]';
+      if (m.is_inference_active) label += ' [ingest active]';
+      return '<option value="' + escapeHtml(m.path) + '">' + escapeHtml(label) + '</option>';
+    }).join('');
+
+    const preferred = models.find(m => m.is_active) || models.find(m => m.is_configured_base) || models[0];
+    const keepPrevious = models.some(m => m.path === previousValue);
+    selectEl.value = keepPrevious ? previousValue : preferred.path;
+    await loadInferenceModelStatus(models);
+    return models;
+  } catch(e) {}
+}
+
+async function loadInferenceModelStatus(models) {
+  try {
+    const modelList = models || [];
+    const resp = await fetch('/api/inference/model');
+    const d = await resp.json();
+    const summaryEl = document.getElementById('inference-model-summary');
+    const selectEl = document.getElementById('inference-model-select');
+    const noteEl = document.getElementById('inference-model-note');
+    const applyBtn = document.getElementById('apply-inference-model-btn');
+
+    const resolvedName = d.resolved_path ? d.resolved_path.split('/').pop() : 'no model';
+    summaryEl.innerHTML =
+      'Current: <strong>' + escapeHtml(resolvedName) + '</strong>' +
+      (d.resolved_source ? ' <span style="color:var(--muted)">(' + escapeHtml(d.resolved_source) + ')</span>' : '');
+
+    const pinnedOptions = modelList.map(m => {
+      let label = 'Pin: ' + m.name;
+      if (m.is_active) label += ' [active]';
+      if (m.is_configured_inference) label += ' [configured ingest]';
+      if (m.is_inference_active) label += ' [ingest active]';
+      return '<option value="pinned::' + escapeHtml(m.path) + '">' + escapeHtml(label) + '</option>';
+    }).join('');
+
+    selectEl.innerHTML =
+      '<option value="config">Configured path behavior</option>' +
+      '<option value="auto">Auto: prefer ball_best.pt, else configured model</option>' +
+      pinnedOptions;
+
+    if (d.selection_mode === 'pinned' && d.selected_path) {
+      const pinnedValue = 'pinned::' + d.selected_path;
+      const foundPinned = Array.from(selectEl.options).some(opt => opt.value === pinnedValue);
+      selectEl.value = foundPinned ? pinnedValue : 'config';
+    } else {
+      selectEl.value = d.selection_mode || 'config';
+    }
+
+    if (d.config_locked) {
+      selectEl.disabled = true;
+      applyBtn.disabled = true;
+      applyBtn.style.opacity = '0.6';
+      noteEl.textContent = 'Locked by explicit detector.model_path in config. CLI and dashboard both follow that config override.';
+    } else {
+      selectEl.disabled = false;
+      applyBtn.disabled = false;
+      applyBtn.style.opacity = '1';
+      noteEl.textContent = 'Choose what new ingest jobs use. Command-line runs use the same shared selector.';
+    }
   } catch(e) {}
 }
 
@@ -717,16 +855,178 @@ async function buildDataset() {
 
 async function startTraining() {
   const epochs = parseInt(document.getElementById('train-epochs').value) || 50;
-  if (!confirm('Start training for ' + epochs + ' epochs? This uses the GPU and may take a while.')) return;
+  const baseModel = document.getElementById('train-base-model').value;
+  const baseModelName = baseModel ? baseModel.split('/').pop() : 'default';
+  const outputModelName = (document.getElementById('train-output-model-name').value || '').trim();
+  const updateActive = document.getElementById('train-update-active').checked;
+  const saveAsName = outputModelName || 'ball_best';
+  if (!confirm(
+    'Start training for ' + epochs + ' epochs from ' + baseModelName + '?\n\n' +
+    'Save best as: ' + saveAsName + (saveAsName.endsWith('.pt') ? '' : '.pt') + '\n' +
+    'Update active ball_best.pt: ' + (updateActive ? 'yes' : 'no')
+  )) return;
   try {
     const resp = await fetch('/api/training/train', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({epochs: epochs})
+      body: JSON.stringify({
+        epochs: epochs,
+        base_model: baseModel,
+        output_model_name: outputModelName,
+        update_active: updateActive
+      })
     });
     if (!resp.ok) { const d = await resp.json(); alert(d.detail || 'Failed'); return; }
     loadTrainingStatus();
   } catch(e) { alert('Failed: ' + e.message); }
+}
+
+async function deleteModel(modelPath, btnEl) {
+  const modelName = modelPath.split('/').pop();
+  if (!confirm('Delete model ' + modelName + '?\n\nThis removes the file from the models directory and cannot be undone.')) return;
+  btnEl.disabled = true;
+  btnEl.textContent = 'Deleting...';
+  try {
+    const resp = await fetch('/api/training/models/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path: modelPath})
+    });
+    const d = await resp.json();
+    if (!resp.ok) {
+      alert(d.detail || 'Failed to delete model');
+      btnEl.disabled = false;
+      btnEl.textContent = 'Delete';
+      return;
+    }
+    loadModels();
+  } catch(e) {
+    alert('Failed: ' + e.message);
+    btnEl.disabled = false;
+    btnEl.textContent = 'Delete';
+  }
+}
+
+async function applyInferenceModelSelection() {
+  const selectEl = document.getElementById('inference-model-select');
+  const value = selectEl.value || 'config';
+  let mode = value;
+  let path = null;
+
+  if (value.startsWith('pinned::')) {
+    mode = 'pinned';
+    path = value.slice('pinned::'.length);
+  }
+
+  const label = mode === 'config'
+    ? 'configured path behavior'
+    : (mode === 'auto' ? 'auto mode' : (path ? path.split('/').pop() : 'pinned model'));
+  if (!confirm('Apply ingest detection model: ' + label + '?\n\nNew ingest jobs from the dashboard and command line will use this selection.')) return;
+
+  try {
+    const resp = await fetch('/api/inference/model', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mode: mode, path: path})
+    });
+    const d = await resp.json();
+    if (!resp.ok) {
+      alert(d.detail || 'Failed to update ingest detection model');
+      return;
+    }
+    await loadModels();
+    alert('Ingest model updated to ' + (d.resolved_path ? d.resolved_path.split('/').pop() : 'no model') + '.');
+  } catch(e) {
+    alert('Failed: ' + e.message);
+  }
+}
+
+// --- Staging ---
+async function loadStaging() {
+  try {
+    const resp = await fetch('/api/staging/files');
+    const files = await resp.json();
+    const summaryEl = document.getElementById('staging-summary');
+    const filesEl = document.getElementById('staging-files');
+
+    if (!files || files.length === 0) {
+      summaryEl.textContent = 'No staged videos found in /tank/stagging.';
+      filesEl.innerHTML = '';
+      return;
+    }
+
+    summaryEl.textContent = files.length + ' file' + (files.length === 1 ? '' : 's') +
+      ' available in /tank/stagging.';
+    filesEl.innerHTML = files.map(f =>
+      '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">' +
+      '<span style="flex:1;font-weight:500">' + escapeHtml(f.name) + '</span>' +
+      '<span style="color:var(--muted);font-size:0.75rem;min-width:170px;text-align:right">' +
+      escapeHtml(new Date(f.modified_at).toLocaleString()) + ' \u00b7 ' + f.size_mb + ' MB</span>' +
+      '<button class="btn" style="background:var(--accent);color:#fff;font-size:0.75rem;padding:2px 10px" ' +
+      'onclick=\'importStagedFile(' + JSON.stringify(f.name) + ', this)\'>Send To Ingest</button>' +
+      '</div>'
+    ).join('');
+  } catch(e) {
+    console.error('Failed to load staging files:', e);
+  }
+}
+
+function triggerStagingUpload() {
+  const input = document.getElementById('staging-upload-input');
+  if (!input) return;
+  input.value = '';
+  input.click();
+}
+
+async function uploadToStaging(inputEl) {
+  const file = inputEl.files && inputEl.files[0];
+  if (!file) return;
+
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const resp = await fetch('/api/staging/upload', {
+      method: 'POST',
+      body: form
+    });
+    const d = await resp.json();
+    if (!resp.ok) {
+      alert(d.detail || 'Failed to upload to staging');
+      return;
+    }
+    alert('Uploaded to staging:\n' + d.staging_path);
+    loadStaging();
+  } catch(e) {
+    alert('Failed: ' + e.message);
+  } finally {
+    inputEl.value = '';
+  }
+}
+
+async function importStagedFile(filename, btnEl) {
+  btnEl.disabled = true;
+  btnEl.textContent = 'Sending...';
+  try {
+    const resp = await fetch('/api/staging/import', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename: filename})
+    });
+    const d = await resp.json();
+    if (!resp.ok) {
+      alert(d.detail || 'Failed to move staged file into ingest');
+      btnEl.disabled = false;
+      btnEl.textContent = 'Send To Ingest';
+      return;
+    }
+
+    alert('Moved to ingest queue:\n' + d.ingest_path);
+    loadStaging();
+  } catch(e) {
+    alert('Failed: ' + e.message);
+    btnEl.disabled = false;
+    btnEl.textContent = 'Send To Ingest';
+  }
 }
 
 // --- Media Player ---
@@ -734,17 +1034,32 @@ let mediaData = [];
 let currentMatch = null;
 let currentVideo = null;
 
+function updateRemoveMatchButton() {
+  const btn = document.getElementById('remove-match-btn');
+  if (!btn) return;
+  btn.disabled = !currentMatch;
+  btn.style.opacity = currentMatch ? '1' : '0.6';
+  btn.title = currentMatch ? 'Delete processed outputs and restore source to staging' : 'Select a processed match first';
+}
+
 async function loadMedia() {
   try {
     const resp = await fetch('/api/media/matches');
     mediaData = await resp.json();
     const select = document.getElementById('media-match');
     const emptyEl = document.getElementById('media-empty');
+    const previousName = currentMatch ? currentMatch.name : null;
 
     if (mediaData.length === 0) {
       select.innerHTML = '<option value="">No matches</option>';
       emptyEl.style.display = 'block';
       document.getElementById('media-controls').style.display = 'none';
+      document.getElementById('media-player-wrap').style.display = 'none';
+      document.getElementById('media-meta').style.display = 'none';
+      document.getElementById('media-size').textContent = '';
+      currentMatch = null;
+      currentVideo = null;
+      updateRemoveMatchButton();
       return;
     }
 
@@ -754,8 +1069,10 @@ async function loadMedia() {
       '<option value="' + i + '">' + escapeHtml(m.name) + '</option>'
     ).join('');
 
-    // Auto-select first match
-    if (!currentMatch) onMatchSelect();
+    let idx = mediaData.findIndex(m => m.name === previousName);
+    if (idx < 0) idx = 0;
+    select.value = String(idx);
+    onMatchSelect();
   } catch(e) {
     console.error('Failed to load media:', e);
   }
@@ -763,8 +1080,13 @@ async function loadMedia() {
 
 function onMatchSelect() {
   const idx = parseInt(document.getElementById('media-match').value);
-  if (isNaN(idx) || !mediaData[idx]) return;
+  if (isNaN(idx) || !mediaData[idx]) {
+    currentMatch = null;
+    updateRemoveMatchButton();
+    return;
+  }
   currentMatch = mediaData[idx];
+  updateRemoveMatchButton();
 
   const btnsEl = document.getElementById('media-video-btns');
   btnsEl.innerHTML = currentMatch.videos.map(v => {
@@ -809,12 +1131,62 @@ function playVideo(matchName, filename, btnEl) {
   }
 }
 
+async function resetCurrentMatch() {
+  if (!currentMatch) return;
+
+  const canonicalMatch = currentMatch.canonical_match || currentMatch.name;
+  const confirmed = confirm(
+    'Are you sure you want to remove "' + canonicalMatch + '"?\n\n' +
+    'This will delete:\n' +
+    '- processed videos and highlights\n' +
+    '- labels and hard-frame exports\n' +
+    '- the built dataset folder\n' +
+    '- dashboard job history\n\n' +
+    'Then it will restore one source video to /tank/stagging as *_reprocess for manual requeue.'
+  );
+  if (!confirmed) return;
+
+  try {
+    const resp = await fetch('/api/media/matches/' + encodeURIComponent(currentMatch.name) + '/reset', {
+      method: 'POST'
+    });
+    const d = await resp.json();
+    if (!resp.ok) {
+      alert(d.detail || 'Failed to remove processed match');
+      return;
+    }
+
+    let msg = 'Removed "' + d.canonical_match + '".\n\n' +
+      'Deleted processed dirs: ' + d.deleted_processed_dirs_count + '\n' +
+      'Deleted highlights dirs: ' + d.deleted_highlights_dirs_count + '\n' +
+      'Purged jobs: ' + d.purged_job_count;
+    if (d.restored_staging_path) {
+      msg += '\nRestored source: ' + d.restored_staging_path;
+    }
+    if (d.warnings && d.warnings.length > 0) {
+      msg += '\n\nWarnings:\n- ' + d.warnings.join('\n- ');
+    }
+    alert(msg);
+
+    currentMatch = null;
+    currentVideo = null;
+    loadMedia();
+    loadJobs();
+    loadLabelingStatus();
+    loadTrainingStatus();
+    loadStaging();
+  } catch(e) {
+    alert('Failed: ' + e.message);
+  }
+}
+
 // --- Init ---
 connectSSE();
 loadJobs();
 loadLabelingStatus();
 loadTrainingStatus();
 loadModels();
+loadStaging();
 loadMedia();
 // Fetch initial GPU status immediately (SSE snapshots arrive every ~5s)
 fetch('/api/gpu').then(r => r.json()).then(d => updateGPU(d)).catch(() => {});
@@ -823,6 +1195,7 @@ setInterval(loadJobs, 10000);
 setInterval(loadLabelingStatus, 15000);
 setInterval(loadTrainingStatus, 5000);
 setInterval(loadModels, 30000);
+setInterval(loadStaging, 15000);
 setInterval(loadMedia, 30000);
 </script>
 </body>

@@ -9,8 +9,6 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from watchdog.events import FileMovedEvent
-
 from src.watcher import (
     ProcessedIngestStore,
     VideoFileHandler,
@@ -23,6 +21,13 @@ from src.watcher import (
 class _ImmediateFuture:
     def result(self):
         return None
+
+
+class _MovedEvent:
+    def __init__(self, src_path: str, dest_path: str):
+        self.src_path = src_path
+        self.dest_path = dest_path
+        self.is_directory = False
 
 
 def _patch_immediate_submit(handler: VideoFileHandler, monkeypatch):
@@ -61,7 +66,7 @@ def test_on_moved_queues_video_job(tmp_path: Path, monkeypatch):
     src.write_bytes(b"partial")
     dst = tmp_path / "match.mp4"
     dst.write_bytes(b"video")
-    handler.on_moved(FileMovedEvent(str(src), str(dst)))
+    handler.on_moved(_MovedEvent(str(src), str(dst)))
 
     job_path, ingest_source, ingest_fingerprint = job_queue.get_nowait()
     assert job_path == str(expected)
@@ -441,6 +446,24 @@ def test_processed_state_prunes_to_max_entries(tmp_path: Path):
     assert not reloaded.is_processed(files[0][0], files[0][1])
     assert reloaded.is_processed(files[1][0], files[1][1])
     assert reloaded.is_processed(files[2][0], files[2][1])
+
+
+def test_processed_state_delete_paths_removes_entries(tmp_path: Path):
+    state_file = tmp_path / "processed_state.json"
+    store = ProcessedIngestStore(state_file)
+
+    source = tmp_path / "match.mp4"
+    source.write_bytes(b"video")
+    fp = _file_fingerprint(source)
+    assert fp is not None
+    store.mark_processed(source, fp, job_path="job/match.mp4")
+    assert store.is_processed(source, fp)
+
+    removed = store.delete_paths([source])
+    assert removed == 1
+
+    reloaded = ProcessedIngestStore(state_file)
+    assert str(source.resolve(strict=False)) not in reloaded._entries
 
 
 def test_fingerprint_ignores_zero_dev_ino(tmp_path: Path, monkeypatch):

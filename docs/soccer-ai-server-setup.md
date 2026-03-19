@@ -1,5 +1,7 @@
 # Soccer-AI Server Setup (Ubuntu 22.04 Bare Metal)
 
+> Current repo note: Soccer360 now defaults to baked `/app/models/yolo26l.pt` and also supports dashboard-managed ingest model selection.
+
 These steps set up a **clean, bare-metal** Ubuntu 22.04 server with **Tesla P40 + Docker GPU**, plus the `/scratch` + `/tank` storage layout for the 360 soccer processing pipeline.
 
 > **Important:** Be *absolutely sure* which disks are which before running any `mkfs` commands. Formatting the wrong disk is unrecoverable.

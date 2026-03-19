@@ -342,7 +342,7 @@ Tasks:
 1) Create src/person_detector.py with API:
    - __init__(config)
    - run_streaming(video_path, meta, output_path) -> frames_processed
-2) Use YOLO with COCO person class (0). Use a reasonable default model (yolov8m.pt or the baked yolov8s.pt).
+2) Use YOLO with COCO person class (0). Use a reasonable default model (for current repo state, baked `yolo26l.pt`).
 3) Write person_detections.jsonl schema:
    {"frame_index": int, "time_sec": float, "bbox_xyxy":[x1,y1,x2,y2], "conf": float, "class_id": 0}
 4) Wire into Pipeline.run:

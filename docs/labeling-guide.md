@@ -365,11 +365,11 @@ The Soccer360 Dashboard at `http://<server-address>:8088` has a built-in trainin
 5. Once the build completes, click **2. Train Model** (adjust epochs if desired, default is 50)
 6. Training progress is shown in the log area below the buttons
 
-> **Note:** Training uses the GPU and can take 30 minutes to 2 hours depending on dataset size and number of epochs. The pipeline continues to work while training runs.
+> **Note:** The dashboard now builds the dataset with native Python logic and starts training with `python -m src.cli train`. Training uses the GPU and can take 30 minutes to 2 hours depending on dataset size and number of epochs. The pipeline continues to work while training runs.
 
 ### 5.2 Using the Command Line
 
-Alternatively, run the scripts directly on the server:
+Alternatively, run the build helper and CLI directly on the server:
 
 #### Step 1: Build the dataset
 
@@ -400,31 +400,30 @@ YAML: /tank/labeling/dataset/dataset.yaml
 #### Step 2: Train the model
 
 ```bash
-bash scripts/train_ball.sh 50
+soccer360 train --epochs 50 --data /tank/labeling/dataset/dataset.yaml
 ```
 
 This fine-tunes the YOLO model for 50 epochs using your labeled data. When training completes:
 
 - The best model is saved to `/tank/models/ball_best.pt`
 - A versioned copy is kept at `/tank/models/ball_model_YYYYMMDD_HHMM/`
-- The worker automatically uses `ball_best.pt` on the next pipeline run
+- Future ingest jobs use it if the dashboard ingest selector is set to `Auto` or pinned to `ball_best.pt`
+
+`bash scripts/train_ball.sh 50` remains available as a helper wrapper around the same training flow.
 
 ### 5.3 Verifying the New Model
 
-After training, the next video processed will use the improved model. To verify:
+After training, set the dashboard ingest selector to `Auto` or pin `ball_best.pt` if you want the next video processed to use the improved model. To verify:
 
 1. **Check the dashboard** -- the Available Models list under Active Learning shows all `.pt` files with the active model marked
 2. **Check the logs** -- look for the model resolution line:
 
 ```text
-Model resolved: /tank/models/ball_best.pt (source=default)
+Model resolved: /tank/models/ball_best.pt (source=runtime.auto)
 ```
 
 1. **Reprocess a previous match** to compare results:
-
-```bash
-docker compose run --rm worker soccer360 process /tank/ingest/<match>.mp4
-```
+   Use the dashboard's **Remove Processed Match** action, confirm the deletion prompt, then use the **Staging** panel to move the restored `*_reprocess` source file back into ingest.
 
 ---
 
@@ -445,8 +444,8 @@ For the best results, follow this weekly rhythm:
 2. **Import** -- click **Import** in the dashboard (or run `bash scripts/labelstudio_import.sh <match>`)
 3. **Label** -- open Label Studio, label frames whenever you have a few minutes
 4. **Upload** -- click **Upload** in the dashboard and select the YOLO export ZIP (or extract manually)
-5. **Train** -- use the dashboard's Build Dataset + Train buttons (or run the scripts)
-6. **Next games are better** -- the worker automatically picks up `ball_best.pt`
+5. **Train** -- use the dashboard's Build Dataset + Train buttons (or run `bash scripts/build_dataset.sh` then `soccer360 train --epochs 50 --data /tank/labeling/dataset/dataset.yaml`)
+6. **Next games are better** -- set the dashboard ingest selector to `Auto` or pin `ball_best.pt`, then reprocess or ingest the next game
 
 > **Tip:** You don't need to label every hard frame. Even labeling 20-30 frames per match yields meaningful improvement. Focus on frames where you can clearly see the ball.
 
@@ -556,11 +555,12 @@ done
 
 #### Training fails with "Dataset not built"
 
-Run `bash scripts/build_dataset.sh` first (or click Build Dataset in the dashboard). The training script needs `/tank/labeling/dataset/dataset.yaml` to exist.
+Run `bash scripts/build_dataset.sh` first (or click Build Dataset in the dashboard). Training needs `/tank/labeling/dataset/dataset.yaml` to exist before you run `soccer360 train --epochs 50 --data /tank/labeling/dataset/dataset.yaml`.
 
 #### Model doesn't seem better after training
 
 - Check that `ball_best.pt` was updated: `ls -la /tank/models/ball_best.pt`
+- Check the dashboard ingest selector or `/api/inference/model` to confirm future jobs are pointed at that model
 - Make sure you labeled enough frames (20+ is a good minimum across all matches)
 - Check training log for validation metrics -- mAP should be improving across epochs
 - The model needs diverse examples: label frames from different matches, lighting conditions, and ball positions

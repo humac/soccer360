@@ -1,5 +1,7 @@
 # Soccer360 Functional Review (Final)
 
+> Historical snapshot. For current operator/admin behavior, prefer `README.md`, `docs/operator-guide.md`, and `docs/admin-guide.md`. The live repo now also includes dashboard staging import, processed-match reset/requeue, and dashboard-native dataset build/training flow updates.
+
 ## Key reality checks (so nobody builds on imaginary features)
 
 - **Today’s pipeline is ball-first**: it detects/tracks a ball, generates a camera path, renders perspective crops, and exports “hard frames” for labeling/training. **Player detection + action/event understanding are not implemented yet** (they are the next phase).
@@ -28,7 +30,7 @@
 | `src/utils.py` | FFmpeg I/O, video probing, equirect math, config |
 | `configs/pipeline.yaml` | Runtime configuration |
 | `docker-compose.yml` | Two services: `worker` + `labelstudio` |
-| `Dockerfile` | CUDA 12.2 + Python 3.11 + baked yolov8s.pt |
+| `Dockerfile` | CUDA 12.2 + Python 3.11 + baked yolo26l.pt |
 | `scripts/` | Operator scripts: install, verify, train, dataset, LS import |
 | `tests/` | Pytest suite (15 test modules + conftest fixtures) |
 | `docs/` | Server setup docs + future features roadmap |
@@ -354,8 +356,8 @@ The compose file mounts `/tank/labeling` at `/label-studio/data/labeling` with `
 
 Resolution chain in `resolve_v1_model_path_and_source` (`src/detector.py:127-193`):
 - `detector.model_path` (explicit, non-default value must exist or `RuntimeError`) > `detection.path` (legacy) > default
-- Default fallback: `{models_dir}/ball_best.pt` (fine-tuned) > `{base_model_path}` (baked `/app/yolov8s.pt`) > `None` (if `allow_no_model`)
-- Source enum: `detector.model_path` | `detection.path` | `default`
+- Default fallback: `{models_dir}/ball_best.pt` (fine-tuned) > `{base_model_path}` (baked `/app/models/yolo26l.pt`) > `None` (if `allow_no_model`)
+- Source enum: `detector.model_path` | `detection.path` | `default` | `runtime.auto` | `runtime.pinned`
 - Logged once per run at `src/detector.py:315`: `Model resolved: <path> (source=<source>)`
 
 **Legacy mode** (no `detection` section):
@@ -461,9 +463,9 @@ Output: 1920x1080, H.264, CRF 18.
 | `labelstudio_import.sh` | Generates LS task JSON with pre-annotations from hard_frames.json (**note:** currently expects `predicted_bbox`; V1 uses `bbox` unless normalized) | `scripts/labelstudio_import.sh` |
 
 `Trainer.run` (`src/trainer.py:21-57`):
-- Fine-tunes from `base_model` (yolov8s.pt), imgsz=640, batch=16, patience=10
+- Fine-tunes from `base_model` (`yolo26l.pt` in current config), imgsz=640, batch=16, patience=10
 - Copies best weights to `/tank/models/ball_best.pt`
-- Next pipeline run auto-resolves to the new model
+- Future ingest jobs use it when ingest model selection is set to `Auto` or pinned to that checkpoint
 
 ---
 
@@ -525,9 +527,9 @@ Drop 360 equirectangular video files (`.mp4`, `.insv`, `.mov`) into `/tank/inges
 
 **Ball detection bootstrap vs custom model**:
 ```yaml
-# V1 bootstrap (COCO yolov8s, class 32 = sports ball)
+# V1 bootstrap (COCO yolo26l, class 32 = sports ball)
 detection:
-  path: "yolov8s.pt"        # baked base model inside the image (or provide a local path)
+  path: "/app/models/yolo26l.pt"        # baked base model inside the image (or provide a local path)
   classes: [32]
   conf: 0.35
 

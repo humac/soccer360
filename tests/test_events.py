@@ -128,6 +128,38 @@ class TestEventStore:
         # No assertion on retrieval since we don't have a dedicated query yet.
         # Just verify it doesn't raise.
 
+    def test_get_active_jobs_by_input_stem(self):
+        """Queued/running jobs can be filtered by input stem."""
+        store = EventStore(":memory:")
+        store.job_created("job1", "/scratch/work/job1/match_a.mp4")
+        store.job_created("job2", "/scratch/work/job2/match_b.mp4")
+        store.job_started("job2", mode="normal")
+        store.job_created("job3", "/scratch/work/job3/other.mp4")
+        store.job_started("job3", mode="normal")
+        store.job_completed("job3")
+
+        matches = store.get_active_jobs_by_input_stem("match_b")
+        assert [job["job_id"] for job in matches] == ["job2"]
+
+    def test_delete_jobs_purges_related_rows(self):
+        """Deleting jobs should remove all related event/history rows."""
+        store = EventStore(":memory:")
+        store.job_created("job1", "/scratch/work/job1/match.mp4")
+        store.job_started("job1", mode="normal")
+        store.phase_started("job1", "detection")
+        store.phase_completed("job1", "detection", duration_sec=1.0)
+        store.record_gpu_snapshot("job1", "detection", {"gpu_pct": 50})
+        decision_id = store.request_decision("job1", "confirm", "Continue?", ["yes", "no"], "yes", 30)
+        store.resolve_decision(decision_id, "yes", status="approved")
+        store.job_completed("job1")
+
+        deleted = store.delete_jobs(["job1"])
+        assert deleted == 1
+        assert store.get_job("job1") is None
+        assert store.get_phases("job1") == []
+        assert store.get_decision(decision_id) is None
+        assert store.get_jobs(limit=10) == []
+
     def test_decision_lifecycle(self):
         """Decisions can be created and resolved."""
         store = EventStore(":memory:")

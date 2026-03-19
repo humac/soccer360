@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pytest
+np = pytest.importorskip("numpy")
 
 import src.detector as detector_mod
-from src.detector import Detector, resolve_v1_model_path_and_source
+from src.detector import (
+    Detector,
+    resolve_v1_model_path_and_source,
+)
 from src.utils import VideoMeta, pixel_to_yaw_pitch, wrap_angle_deg
 
 
@@ -302,7 +305,7 @@ class TestV1ModelResolver:
         fine_tuned.write_bytes(b"fine_tuned")
 
         config = {
-            "detector": {"model_path": "/app/yolov8s.pt"},
+            "detector": {"model_path": "/app/models/yolo26l.pt"},
             "mode": {"allow_no_model": True},
         }
         resolved_path, source = resolve_v1_model_path_and_source(config, models_dir=str(tmp_path))

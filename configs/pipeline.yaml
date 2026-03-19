@@ -7,17 +7,19 @@ paths:
   highlights: /tank/highlights
   models: /tank/models
   labeling: /tank/labeling
+  stagging: /tank/stagging
   archive_raw: /tank/archive_raw
   logs: /tank/logs
 
 model:
   path: /app/models/ball_best.pt
-  base_model: yolov8m.pt
+  base_model: /app/models/yolo26l.pt
   tensorrt_path: /app/models/ball_best.engine
   # Inference backend: fp32 (default baseline) or tensorrt_int8 (optimization)
   backend: fp32
 
 detector:
+  runtime_override_path: /tank/data/ingest_model_selection.json
   batch_size: 16
   batch_size_tensorrt: 32
   resolution: [1920, 960]

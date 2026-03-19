@@ -19,10 +19,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
-from watchdog.events import FileSystemEvent, FileSystemEventHandler
-from watchdog.observers import Observer
+try:
+    from watchdog.events import FileSystemEvent, FileSystemEventHandler
+    from watchdog.observers import Observer
+except ImportError:  # pragma: no cover - lightweight host test fallback
+    class FileSystemEvent:  # type: ignore[override]
+        def __init__(self, src_path: str = "", is_directory: bool = False):
+            self.src_path = src_path
+            self.is_directory = is_directory
 
-from .pipeline import Pipeline
+    class FileSystemEventHandler:  # type: ignore[override]
+        pass
+
+    class Observer:  # type: ignore[override]
+        def schedule(self, *args, **kwargs):
+            return None
+
+        def start(self):
+            return None
+
+        def stop(self):
+            return None
+
+        def join(self, timeout: float | None = None):
+            return None
 
 try:
     import fcntl
@@ -30,6 +50,8 @@ except ImportError:  # pragma: no cover - non-POSIX platforms
     fcntl = None
 
 logger = logging.getLogger("soccer360.watcher")
+
+Pipeline = None
 
 VIDEO_EXTENSIONS = {".mp4", ".insv", ".mov"}
 STAGING_SUFFIXES = {".uploading", ".tmp", ".part"}
@@ -188,6 +210,40 @@ class IngestStateStore:
                     job_path,
                     exc_info=True,
                 )
+
+    def delete_paths(self, paths: list[str | Path]) -> int:
+        """Delete persisted dedupe entries by source path."""
+        keys = []
+        seen = set()
+        for path in paths:
+            key = _path_key(Path(path))
+            if key in seen:
+                continue
+            keys.append(key)
+            seen.add(key)
+
+        if not keys:
+            return 0
+
+        with self._lock:
+            try:
+                with self._file_lock():
+                    self._entries = self._read_entries_locked()
+                    removed = 0
+                    for key in keys:
+                        if key in self._entries:
+                            del self._entries[key]
+                            removed += 1
+                    if removed > 0:
+                        self._persist_locked()
+                    return removed
+            except Exception:
+                logger.warning(
+                    "Failed to delete watcher processed-state entries: %s",
+                    keys,
+                    exc_info=True,
+                )
+                return 0
 
     def _load(self):
         with self._lock:
@@ -386,6 +442,9 @@ class _NoopIngestStateStore:
     ):
         # Persistence degraded; intentionally no-op.
         return
+
+    def delete_paths(self, paths: list[str | Path]) -> int:
+        return 0
 
 
 class VideoFileHandler(FileSystemEventHandler):
@@ -708,7 +767,10 @@ class WatcherDaemon:
 
         succeeded = False
         try:
-            pipe = Pipeline(self.config, event_bus=self.event_bus)
+            pipeline_cls = Pipeline
+            if pipeline_cls is None:
+                from .pipeline import Pipeline as pipeline_cls
+            pipe = pipeline_cls(self.config, event_bus=self.event_bus)
             pipe.run(job_path, cleanup=True, ingest_source=ingest_source)
             succeeded = True
         except Exception:

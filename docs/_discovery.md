@@ -4,13 +4,13 @@
 
 ## Application Type
 
-Soccer360 is a **CLI-based video processing pipeline** (not a web application). It processes equirectangular 360-degree soccer match recordings into broadcast-quality outputs. Deployed as a Docker container with a persistent file-watching daemon.
+Soccer360 is a **CLI-first video processing pipeline with a web monitoring/operations dashboard**. It processes equirectangular 360-degree soccer match recordings into broadcast-quality outputs. Deployed as Docker services with a persistent file-watching daemon plus a FastAPI dashboard for monitoring, training, staging import, and reprocessing flows.
 
 ## User Roles
 
 | Role | Description | Interface |
 | ---- | ----------- | --------- |
-| **Operator** | Day-to-day user: ingests videos, monitors processing, retrieves outputs, labels hard frames | CLI commands, file system (ingest folder), Label Studio web UI |
+| **Operator** | Day-to-day user: ingests videos, monitors processing, retrieves outputs, labels hard frames, requeues matches | Dashboard, file system (`/tank/ingest`, `/tank/stagging`), Label Studio web UI |
 | **Administrator** | Sets up server, configures pipeline, manages Docker, handles GPU/model lifecycle, troubleshoots | Shell access, Docker Compose, YAML config, scripts |
 
 ## Core Features by Role
@@ -20,11 +20,13 @@ Soccer360 is a **CLI-based video processing pipeline** (not a web application). 
 | Feature | How It Works | Config Section |
 | ------- | ----------- | -------------- |
 | Video ingest | Drop `.mp4`/`.mov` into `/tank/ingest/` | `watcher`, `paths.ingest` |
+| Staging import | Place files in `/tank/stagging/`, then move selected file into ingest from dashboard | `paths.stagging`, dashboard |
 | Automatic processing | Watcher daemon detects new files, runs pipeline | `watcher` |
 | Manual processing | `soccer360 process <path>` for one-off runs | CLI |
 | Output retrieval | Browse `/tank/processed/<match>/` for results | `paths.processed` |
 | Highlight clips | Auto-generated in `/tank/highlights/<match>/` | `highlights` |
 | Hard frame labeling | Label Studio at `http://<server>:8080` | `active_learning` |
+| Match reset / requeue | Dashboard removes processed match family, restores one source to `/tank/stagging/<match>_reprocess.ext` | dashboard, `watcher.processed_state_file` |
 | Processing logs | `docker compose logs -f worker` | `logging` |
 
 ### Administrator Features
@@ -34,11 +36,11 @@ Soccer360 is a **CLI-based video processing pipeline** (not a web application). 
 | Installation | `scripts/install.sh` | N/A |
 | Container verification | `make verify-container-assets` | N/A |
 | Model management | Place models in `/tank/models/`, configure resolution | `model`, `detector`, `detection` |
-| Training | `scripts/train_ball.sh [epochs]` | `configs/model_config.yaml` |
-| Dataset building | `scripts/build_dataset.sh` | N/A |
+| Training | Dashboard or `soccer360 train --epochs N --data /tank/labeling/dataset/dataset.yaml` | `configs/model_config.yaml` |
+| Dataset building | Dashboard or `scripts/build_dataset.sh` | N/A |
 | GPU configuration | Docker runtime, CUDA device selection | `detection.device`, compose env |
 | Archival policy | Move/copy/leave after processing | `ingest` |
-| Dedupe management | Reset state file to force reprocessing | `watcher.processed_state_file` |
+| Dedupe management | Dashboard reset removes per-match dedupe entries; full state reset remains admin fallback | `watcher.processed_state_file` |
 | Health monitoring | Docker healthchecks, log inspection | `logging` |
 
 ## Data Model (File-Based)
@@ -48,6 +50,7 @@ No traditional database. All state is file-based:
 ### Input
 
 - `/tank/ingest/*.mp4` — raw 360-degree video files
+- `/tank/stagging/*` — staged files waiting for manual UI import into ingest
 
 ### Processing Artifacts (per match)
 
@@ -114,6 +117,7 @@ Single config file: `configs/pipeline.yaml` with 18 top-level sections covering 
 
 ```text
 /tank/ingest/          -> queue folder (input)
+/tank/stagging/       -> manual staging folder for UI-managed imports/requeues
 /scratch/work/         -> NVMe temp space (auto-cleaned)
 /tank/processed/       -> final outputs
 /tank/highlights/      -> highlight clips
