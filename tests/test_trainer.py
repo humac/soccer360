@@ -159,3 +159,37 @@ def test_run_promotes_named_model_and_updates_active(tmp_path: Path, monkeypatch
 
     assert (models_dir / "first_try.pt").read_bytes() == b"trained"
     assert (models_dir / "ball_best.pt").read_bytes() == b"trained"
+    assert not (models_dir / "ball_model_test" / "weights" / "best.pt").exists()
+    assert not (models_dir / "ball_model_test" / "weights" / "last.pt").exists()
+
+
+def test_run_cleans_up_run_local_best_and_last_artifacts(tmp_path: Path, monkeypatch):
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    base_model = tmp_path / "base.pt"
+    base_model.write_bytes(b"weights")
+
+    class FakeYOLO:
+        def __init__(self, model_path: str):
+            self.model_path = model_path
+
+        def train(self, **kwargs):
+            weights_dir = models_dir / "ball_model_test" / "weights"
+            weights_dir.mkdir(parents=True, exist_ok=True)
+            (weights_dir / "best.pt").write_bytes(b"trained-best")
+            (weights_dir / "last.pt").write_bytes(b"trained-last")
+            return {"ok": True}
+
+    monkeypatch.setitem(sys.modules, "ultralytics", types.SimpleNamespace(YOLO=FakeYOLO))
+
+    trainer = Trainer({
+        "paths": {"models": str(models_dir)},
+        "model": {"base_model": str(base_model)},
+    })
+    monkeypatch.setattr(trainer, "_next_version", lambda: "test")
+
+    trainer.run(data=str(tmp_path / "dataset.yaml"), epochs=2, output_model_name="cleanup_case")
+
+    assert (models_dir / "cleanup_case.pt").read_bytes() == b"trained-best"
+    assert not (models_dir / "ball_model_test" / "weights" / "best.pt").exists()
+    assert not (models_dir / "ball_model_test" / "weights" / "last.pt").exists()

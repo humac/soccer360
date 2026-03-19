@@ -280,6 +280,30 @@ class TestCenterOfPlayHybrid:
         # But closer to ball than to cluster
         assert abs(hybrid_yaw - ball_yaw) < abs(hybrid_yaw - cluster_yaw)
 
+    def test_low_confidence_ball_caps_cluster_influence(self, test_config):
+        """Low-confidence ball measurements should not jump to a 50/50 cluster blend."""
+        config = deepcopy(test_config)
+        config["center_of_play"]["enabled"] = True
+        config["center_of_play"]["ball_blend_weight"] = 0.05
+        config["center_of_play"]["low_conf_ball_blend_weight"] = 0.20
+
+        gen = CameraPathGenerator(config)
+
+        tracks = [{"frame": 0, "ball": {"x": 220, "y": 80, "confidence": 0.2}}]
+        clusters = [{"frame": 0, "cluster": {"x": 80, "y": 80, "spread_x_deg": 20.0,
+                                              "player_count": 12, "confidence": 0.7}}]
+
+        hybrid_angles = gen._tracks_to_angles_hybrid(tracks, clusters)
+        ball_only_angles = gen._tracks_to_angles(tracks)
+
+        hybrid_yaw = hybrid_angles[0][0]
+        ball_yaw = ball_only_angles[0][0]
+        cluster_yaw, _ = pixel_to_yaw_pitch(80, 80, gen.det_width, gen.det_height)
+
+        # The low-confidence hybrid result should still remain notably closer to the ball
+        # than to the cluster-only signal.
+        assert abs(hybrid_yaw - ball_yaw) < abs(hybrid_yaw - cluster_yaw)
+
     def test_disabled_cop_no_effect(self, test_config, tmp_work_dir):
         """With center_of_play disabled, cluster path is ignored."""
         config = deepcopy(test_config)

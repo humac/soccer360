@@ -78,10 +78,11 @@ class EventStore:
     For in-memory databases, uses a shared connection with serialized access.
     """
 
-    def __init__(self, db_path: str | Path = ":memory:"):
+    def __init__(self, db_path: str | Path = ":memory:", *, cleanup_stale_jobs: bool = True):
         self._db_path = str(db_path)
         self._is_memory = self._db_path == ":memory:"
         self._lock = threading.Lock()
+        self._cleanup_stale_jobs_on_startup = cleanup_stale_jobs
 
         if self._is_memory:
             # Single shared connection for in-memory (test) databases
@@ -96,7 +97,8 @@ class EventStore:
             conn = self._conn()
             conn.executescript(_SCHEMA)
             conn.commit()
-            self._cleanup_stale_jobs(conn)
+            if self._cleanup_stale_jobs_on_startup:
+                self._cleanup_stale_jobs(conn)
 
     def _conn(self) -> sqlite3.Connection:
         """Get a connection (shared for memory, per-thread for files)."""
@@ -502,13 +504,13 @@ class EventBus:
         return default_option or ""
 
 
-def create_event_store(config: dict) -> EventStore:
+def create_event_store(config: dict, *, cleanup_stale_jobs: bool = True) -> EventStore:
     """Create an EventStore from pipeline config."""
     dashboard_cfg = config.get("dashboard", {})
     db_path = dashboard_cfg.get("db_path", "/tank/data/dashboard.db")
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    return EventStore(db_path)
+    return EventStore(db_path, cleanup_stale_jobs=cleanup_stale_jobs)
 
 
 def _now_iso() -> str:

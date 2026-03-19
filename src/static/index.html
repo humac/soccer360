@@ -665,6 +665,8 @@ async function loadTrainingStatus() {
 
     const statusColors = {idle: 'var(--muted)', building: 'var(--yellow)', running: 'var(--accent)', completed: 'var(--green)', failed: 'var(--red)'};
     el.innerHTML = 'Status: <span style="color:' + (statusColors[d.status] || 'var(--muted)') + '">' + d.status + '</span>';
+    trainingBusy = d.status === 'building' || d.status === 'running';
+    updateRemoveMatchButton();
 
     if (d.error) {
       errEl.style.display = 'block';
@@ -1033,13 +1035,17 @@ async function importStagedFile(filename, btnEl) {
 let mediaData = [];
 let currentMatch = null;
 let currentVideo = null;
+let trainingBusy = false;
 
 function updateRemoveMatchButton() {
   const btn = document.getElementById('remove-match-btn');
   if (!btn) return;
-  btn.disabled = !currentMatch;
-  btn.style.opacity = currentMatch ? '1' : '0.6';
-  btn.title = currentMatch ? 'Delete processed outputs and restore source to staging' : 'Select a processed match first';
+  const blocked = trainingBusy;
+  btn.disabled = !currentMatch || blocked;
+  btn.style.opacity = currentMatch && !blocked ? '1' : '0.6';
+  btn.title = blocked
+    ? 'Unavailable while dataset build or training is running'
+    : (currentMatch ? 'Delete processed outputs and restore source to staging' : 'Select a processed match first');
 }
 
 async function loadMedia() {
@@ -1133,6 +1139,10 @@ function playVideo(matchName, filename, btnEl) {
 
 async function resetCurrentMatch() {
   if (!currentMatch) return;
+  if (trainingBusy) {
+    alert('Cannot remove a processed match while dataset build or training is in progress.');
+    return;
+  }
 
   const canonicalMatch = currentMatch.canonical_match || currentMatch.name;
   const confirmed = confirm(

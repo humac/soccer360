@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 from unittest.mock import patch
+import zipfile
 
 import anyio
 import httpx
@@ -272,6 +274,48 @@ class TestDashboardAPI:
 
         assert resp.status_code == 409
 
+    def test_upload_labels_replaces_existing_match_snapshot(self, client, dashboard_config, tmp_path):
+        labeling_dir = Path(dashboard_config["paths"]["labeling"])
+        match_dir = labeling_dir / "match_a"
+        frames_dir = match_dir / "frames"
+        labels_dir = match_dir / "labels"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        labels_dir.mkdir(parents=True, exist_ok=True)
+        (frames_dir / "frame_000001.jpg").write_bytes(b"frame-1")
+        (frames_dir / "frame_000002.jpg").write_bytes(b"frame-2")
+        (labels_dir / "frame_000999.txt").write_text("0 0.1 0.1 0.1 0.1\n", encoding="utf-8")
+
+        zip_path = tmp_path / "labels.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("frame_000001.txt", "0 0.5 0.5 0.1 0.1\n")
+
+        with zip_path.open("rb") as fh:
+            resp = client.post(
+                "/api/training/upload-labels/match_a",
+                files={"file": ("labels.zip", fh.read(), "application/zip")},
+            )
+
+        assert resp.status_code == 200
+        assert sorted(path.name for path in labels_dir.glob("*.txt")) == ["frame_000001.txt"]
+
+    def test_labeling_status_counts_unique_matched_frames(self, client, dashboard_config):
+        labeling_dir = Path(dashboard_config["paths"]["labeling"])
+        match_dir = labeling_dir / "match_a"
+        frames_dir = match_dir / "frames"
+        labels_dir = match_dir / "labels"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        labels_dir.mkdir(parents=True, exist_ok=True)
+        (frames_dir / "frame_000001.jpg").write_bytes(b"frame-1")
+        (labels_dir / "frame_000001.txt").write_text("0 0.5 0.5 0.1 0.1\n", encoding="utf-8")
+        (labels_dir / "frame_000001_jpg.txt").write_text("0 0.5 0.5 0.1 0.1\n", encoding="utf-8")
+        (labels_dir / "classes.txt").write_text("ball\n", encoding="utf-8")
+
+        resp = client.get("/api/training/labeling-status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_labeled"] == 1
+        assert data["matches"][0]["labeled"] == 1
+
     def test_reset_match_endpoint_deletes_family_and_restores_source(
         self, client, store, dashboard_config
     ):
@@ -404,6 +448,41 @@ class TestDashboardAPI:
         resp = client.post("/api/media/matches/match_c/reset")
         assert resp.status_code == 409
 
+    def test_reset_match_endpoint_blocks_training_in_progress(self, client, dashboard_config):
+        processed_dir = Path(dashboard_config["paths"]["processed"])
+        labeling_dir = Path(dashboard_config["paths"]["labeling"])
+        dataset_dir = labeling_dir / "dataset"
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        (dataset_dir / "dataset.yaml").write_text("path: dataset\n", encoding="utf-8")
+
+        _write_json(
+            processed_dir / "match_d" / "metadata.json",
+            {
+                "game_name": "match_d",
+                "job_id": "job_d_done",
+            },
+        )
+        (processed_dir / "match_d" / "broadcast.mp4").write_bytes(b"broadcast")
+
+        allow_finish = threading.Event()
+
+        def fake_run(cmd, **kwargs):
+            allow_finish.wait(timeout=1.0)
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok\n", stderr="")
+
+        with patch("src.dashboard.subprocess.run", side_effect=fake_run):
+            train_resp = client.post("/api/training/train", json={"epochs": 1})
+            assert train_resp.status_code == 200
+
+            resp = client.post("/api/media/matches/match_d/reset")
+            assert resp.status_code == 409
+            assert (
+                resp.json()["detail"]
+                == "Cannot remove a processed match while dataset build or training is in progress."
+            )
+
+            allow_finish.set()
+
     def test_detection_settings_api_returns_grouped_effective_values(self, dashboard_config):
         models_dir = Path(dashboard_config["paths"]["models"])
         configured_ingest = models_dir / "yolo26l.pt"
@@ -526,6 +605,25 @@ class TestTrainingAPI:
         assert any(item["path"] == str(active_model) and item["can_delete"] is False for item in data)
         assert any(item["path"] == str(configured_model) and item["can_delete"] is False for item in data)
         assert any(item["path"] == str(configured_ingest) and item["can_delete"] is False for item in data)
+
+    def test_models_endpoint_hides_per_run_best_and_last_artifacts(self, client, dashboard_config):
+        models_dir = Path(dashboard_config["paths"]["models"])
+        promoted_model = models_dir / "named_model.pt"
+        run_best = models_dir / "ball_model_20260319_0034" / "weights" / "best.pt"
+        run_last = models_dir / "ball_model_20260319_0034" / "weights" / "last.pt"
+        promoted_model.write_bytes(b"named")
+        run_best.parent.mkdir(parents=True, exist_ok=True)
+        run_best.write_bytes(b"best")
+        run_last.write_bytes(b"last")
+
+        resp = client.get("/api/training/models")
+        assert resp.status_code == 200
+        data = resp.json()
+        paths = {item["path"] for item in data}
+
+        assert str(promoted_model) in paths
+        assert str(run_best) not in paths
+        assert str(run_last) not in paths
 
     def test_inference_model_status_defaults_to_config_resolution(self, client, dashboard_config):
         models_dir = Path(dashboard_config["paths"]["models"])
@@ -768,3 +866,18 @@ class TestTrainingAPI:
         if not built_labels:
             built_labels = list((labeling_dir / "dataset" / "val" / "labels").glob("*.txt"))
         assert len(built_labels) == 1
+
+    def test_build_dataset_helper_dedupes_multiple_label_files_for_same_frame(self, tmp_path: Path):
+        labeling_dir = tmp_path / "labeling"
+        frames_dir = labeling_dir / "match_a" / "frames"
+        labels_dir = labeling_dir / "match_a" / "labels"
+        frames_dir.mkdir(parents=True)
+        labels_dir.mkdir(parents=True)
+
+        (frames_dir / "frame_000001.jpg").write_bytes(b"fake-jpeg-data")
+        (labels_dir / "frame_000001.txt").write_text("0 0.5 0.5 0.1 0.1\n", encoding="utf-8")
+        (labels_dir / "frame_000001_jpg.txt").write_text("0 0.4 0.4 0.2 0.2\n", encoding="utf-8")
+
+        result = _build_dataset_from_labels(labeling_dir=labeling_dir, val_ratio=0.5)
+
+        assert result["total_count"] == 1

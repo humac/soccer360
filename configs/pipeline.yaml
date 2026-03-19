@@ -39,7 +39,7 @@ field_of_interest:
   center_mode: fixed
   center_yaw_deg: 0
   yaw_window_deg: 160        # +/-80 from center (tighter to exclude sideline spectators)
-  pitch_min_deg: -35
+  pitch_min_deg: -25         # tighter lower bound to reject near-camera sideline spectators
   pitch_max_deg: 15
   auto_sample_seconds: 30    # seconds to sample for auto center mode
   auto_min_conf: 0.25        # min detection confidence for auto-center sampling
@@ -59,9 +59,9 @@ tracker:
   max_bbox_area: 10000
 
 camera:
-  max_pan_speed_deg_per_sec: 60.0
-  max_fast_pan_speed_deg_per_sec: 120.0
-  ema_alpha: 0.15
+  max_pan_speed_deg_per_sec: 45.0
+  max_fast_pan_speed_deg_per_sec: 90.0
+  ema_alpha: 0.10
   default_fov: 90.0
   min_fov: 80.0
   max_fov: 100.0
@@ -70,16 +70,16 @@ camera:
   field_center_yaw_deg: 0.0
   field_center_pitch_deg: -5.0
   # Deadband: ignore movements smaller than this to prevent micro-oscillation
-  deadband_deg: 1.5
+  deadband_deg: 2.5
   # Minimum velocity threshold to start camera movement (deg/sec)
-  velocity_threshold_deg_per_sec: 3.0
+  velocity_threshold_deg_per_sec: 4.0
   # Immediately widen FOV when ball is lost
   lost_fov_widen: true
   # FOV smoothing (lower = smoother zoom transitions, 0.08 ≈ 12-frame half-life)
   fov_ema_alpha: 0.08
   kalman:
     process_noise: 0.1
-    measurement_noise: 1.0
+    measurement_noise: 2.0
 
 reframer:
   output_resolution: [1920, 1080]
@@ -195,7 +195,7 @@ filters:
   # Vertical band filter: reject detections outside [min_y_frac, max_y_frac]
   # Removes sky, scoreboard, and below-pitch false positives
   min_y_frac: 0.20
-  max_y_frac: 0.98
+  max_y_frac: 0.85
   # Jump/speed sanity (used by BallStabilizer for rejection)
   max_jump_px: 250
   max_speed_px_per_s: 2500
@@ -212,11 +212,12 @@ tracking:
 center_of_play:
   enabled: true
   player_class: 0             # COCO person class
-  min_player_conf: 0.45       # minimum confidence for player detections (filters spectators)
-  trim_fraction: 0.15         # discard 15% outliers from each end (removes GKs + sideline)
-  min_players: 3              # need >= 3 players for valid cluster
-  ball_blend_weight: 0.15     # when ball detected: 85% ball, 15% cluster
-  ema_alpha: 0.20             # temporal smoothing for cluster centroid
+  min_player_conf: 0.60       # stricter threshold to reduce sideline spectators in the cluster
+  trim_fraction: 0.25         # discard more outliers from each end (removes GKs + sideline clutter)
+  min_players: 5              # require a fuller player group before trusting the cluster
+  ball_blend_weight: 0.05     # when ball detected confidently: 95% ball, 5% cluster
+  low_conf_ball_blend_weight: 0.20  # when ball is weak, still cap cluster influence
+  ema_alpha: 0.15             # slower centroid smoothing to reduce jitter
   fov_from_spread: true       # adapt FOV based on player spread
   spread_max_fov: 105.0       # max FOV when players very spread out
   spread_min_deg: 15.0        # spread below this -> min_fov

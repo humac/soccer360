@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import threading
+from pathlib import Path
 
 from src.events import EventBus, EventStore
 
@@ -214,6 +215,38 @@ class TestEventStore:
         assert not errors
         jobs = store.get_jobs(limit=100)
         assert len(jobs) == 40  # 4 threads * 10 jobs
+
+    def test_file_store_cleans_up_stale_jobs_by_default(self, tmp_path: Path):
+        db_path = tmp_path / "events.db"
+        store = EventStore(db_path, cleanup_stale_jobs=False)
+        store.job_created("job1", "match.mp4")
+        store.job_started("job1", mode="normal")
+        store.phase_started("job1", "detection")
+        store.close()
+
+        reopened = EventStore(db_path)
+        job = reopened.get_job("job1")
+        phases = reopened.get_phases("job1")
+
+        assert job["status"] == "failed"
+        assert job["error"] == "Abandoned: service restarted"
+        assert phases[0]["status"] == "failed"
+
+    def test_file_store_can_skip_stale_job_cleanup(self, tmp_path: Path):
+        db_path = tmp_path / "events.db"
+        store = EventStore(db_path, cleanup_stale_jobs=False)
+        store.job_created("job1", "match.mp4")
+        store.job_started("job1", mode="normal")
+        store.phase_started("job1", "detection")
+        store.close()
+
+        reopened = EventStore(db_path, cleanup_stale_jobs=False)
+        job = reopened.get_job("job1")
+        phases = reopened.get_phases("job1")
+
+        assert job["status"] == "running"
+        assert job["error"] is None
+        assert phases[0]["status"] == "running"
 
 
 class TestEventBus:

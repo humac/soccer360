@@ -80,6 +80,8 @@ class Trainer:
             else:
                 logger.info("Best model saved: %s (copied to %s)", best_path, target_path)
 
+            self._cleanup_run_weight_artifacts(run_name)
+
         logger.info("Training complete: %s", run_name)
         return results
 
@@ -142,6 +144,27 @@ class Trainer:
         if not name.lower().endswith(".pt"):
             name += ".pt"
         return name
+
+    def _cleanup_run_weight_artifacts(self, run_name: str) -> None:
+        """Delete per-run Ultralytics weight artifacts after successful promotion."""
+        weights_dir = self.model_dir / run_name / "weights"
+        removed = []
+        for artifact_name in ("best.pt", "last.pt"):
+            artifact_path = weights_dir / artifact_name
+            if artifact_path.exists():
+                artifact_path.unlink()
+                removed.append(str(artifact_path))
+
+        current = weights_dir
+        run_dir = self.model_dir / run_name
+        for candidate in (current, run_dir):
+            try:
+                candidate.rmdir()
+            except OSError:
+                pass
+
+        if removed:
+            logger.info("Removed run-local training artifacts: %s", ", ".join(removed))
 
     def export_tensorrt(self, model_path: str | Path, int8: bool = True):
         """Export YOLO model to TensorRT engine.

@@ -92,16 +92,24 @@ for match_dir in sorted(labeling_dir.iterdir()):
 
     frame_count += sum(1 for path in frames_dir.iterdir() if path.is_file())
 
+    unique_pairs = {}
     for label_file in sorted(labels_dir.glob("*.txt")):
         if label_file.name.lower() == "classes.txt":
             continue
         label_count += 1
         image_file = resolve_frame_for_label(frames_dir, label_file.name)
         if image_file.exists():
-            pairs.append((image_file, label_file, match_dir.name))
-            matches_seen.add(match_dir.name)
+            frame_key = str(image_file.resolve(strict=False))
+            mtime_ns = label_file.stat().st_mtime_ns
+            existing = unique_pairs.get(frame_key)
+            if existing is None or mtime_ns >= existing[2]:
+                unique_pairs[frame_key] = (image_file, label_file, mtime_ns)
         elif len(unmatched_labels) < 5:
             unmatched_labels.append(f"{match_dir.name}/{label_file.name}")
+
+    for image_file, label_file, _ in unique_pairs.values():
+        pairs.append((image_file, label_file, match_dir.name))
+        matches_seen.add(match_dir.name)
 
 if not pairs:
     print("ERROR: No image/label pairs found.")

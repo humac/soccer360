@@ -144,6 +144,7 @@ DETECTION_SETTINGS_SECTIONS = [
             {"path": "center_of_play.trim_fraction", "label": "Trim fraction", "help": "Outlier trim ratio before computing player centroid."},
             {"path": "center_of_play.min_players", "label": "Min players", "help": "Minimum player detections needed for a valid cluster."},
             {"path": "center_of_play.ball_blend_weight", "label": "Ball blend weight", "help": "How much the player cluster influences camera aim when ball exists."},
+            {"path": "center_of_play.low_conf_ball_blend_weight", "label": "Low-confidence ball blend weight", "help": "Maximum cluster influence when the ball exists but confidence is weak."},
             {"path": "center_of_play.ema_alpha", "label": "Cluster EMA alpha", "help": "Temporal smoothing factor for the cluster centroid."},
             {"path": "center_of_play.fov_from_spread", "label": "Adaptive FOV", "help": "Whether FOV widens based on player spread."},
             {"path": "center_of_play.spread_max_fov", "label": "Spread max FOV", "help": "Maximum FOV when players are widely spread."},
@@ -249,7 +250,11 @@ def _scan_labeling_status(labeling_dir: Path) -> dict:
         labels_dir = match_dir / "labels"
 
         frame_count = len(list(frames_dir.glob("*.jpg"))) if frames_dir.exists() else 0
-        label_count = len(list(labels_dir.glob("*.txt"))) if labels_dir.exists() else 0
+        label_count = (
+            len(_collect_unique_label_entries(frames_dir, labels_dir))
+            if labels_dir.exists()
+            else 0
+        )
 
         if frame_count > 0:
             tasks_json = match_dir / "labelstudio" / "tasks.json"
@@ -279,6 +284,27 @@ def _scan_labeling_status(labeling_dir: Path) -> dict:
         "dataset_ready": dataset_yaml.exists(),
         "dataset_yaml": str(dataset_yaml) if dataset_yaml.exists() else None,
     }
+
+
+def _collect_unique_label_entries(frames_dir: Path, labels_dir: Path) -> list[tuple[Path, Path]]:
+    """Return at most one label file per frame, preferring the newest label file."""
+    if not frames_dir.is_dir() or not labels_dir.is_dir():
+        return []
+
+    chosen: dict[str, tuple[Path, Path, int]] = {}
+    for label_file in sorted(labels_dir.glob("*.txt")):
+        if label_file.name.lower() == "classes.txt":
+            continue
+        frame_path = _resolve_frame_for_label(frames_dir, label_file.name)
+        if not frame_path.is_file():
+            continue
+        frame_key = str(frame_path.resolve(strict=False))
+        mtime_ns = label_file.stat().st_mtime_ns
+        existing = chosen.get(frame_key)
+        if existing is None or mtime_ns >= existing[2]:
+            chosen[frame_key] = (frame_path, label_file, mtime_ns)
+
+    return [(frame_path, label_path) for frame_path, label_path, _ in chosen.values()]
 
 
 def _get_nested_config_value(config: dict, path: str):
@@ -388,13 +414,9 @@ def _build_dataset_from_labels(
         if not labels_dir.exists() or not frames_dir.exists():
             continue
 
-        for label_file in sorted(labels_dir.glob("*.txt")):
-            if label_file.name.lower() == "classes.txt":
-                continue
-            image_file = _resolve_frame_for_label(frames_dir, label_file.name)
-            if image_file.exists():
-                pairs.append((image_file, label_file, match_dir.name))
-                match_counts[match_dir.name] = match_counts.get(match_dir.name, 0) + 1
+        for image_file, label_file in _collect_unique_label_entries(frames_dir, labels_dir):
+            pairs.append((image_file, label_file, match_dir.name))
+            match_counts[match_dir.name] = match_counts.get(match_dir.name, 0) + 1
 
     if not pairs:
         diagnostics = _labeling_pair_diagnostics(labeling_dir)
@@ -774,6 +796,22 @@ def _resolve_dashboard_runtime_path(path_value: str, models_dir: Path) -> Path:
     return models_dir / candidate
 
 
+def _is_hidden_training_artifact_model(path: Path, models_dir: Path) -> bool:
+    """Return whether a model is a per-run Ultralytics artifact we should hide from the UI."""
+    try:
+        relative = path.resolve().relative_to(models_dir.resolve())
+    except Exception:
+        return False
+
+    parts = relative.parts
+    return (
+        len(parts) >= 3
+        and parts[-2] == "weights"
+        and parts[-1] in {"best.pt", "last.pt"}
+        and parts[0].startswith("ball_model_")
+    )
+
+
 def _collect_available_models(config: dict, models_dir: Path) -> list[dict]:
     """Collect unique available .pt models from local and configured locations."""
     configured_base = _path_identity(config.get("model", {}).get("base_model"))
@@ -793,7 +831,11 @@ def _collect_available_models(config: dict, models_dir: Path) -> list[dict]:
 
     candidates: list[Path] = []
     if models_dir.is_dir():
-        candidates.extend(sorted(models_dir.glob("**/*.pt")))
+        candidates.extend(
+            path
+            for path in sorted(models_dir.glob("**/*.pt"))
+            if not _is_hidden_training_artifact_model(path, models_dir)
+        )
 
     for configured in (
         config.get("model", {}).get("base_model"),
@@ -875,7 +917,7 @@ def _inference_model_status(config: dict, models_dir: Path) -> dict:
 def create_app(config: dict | None = None) -> FastAPI:
     """Create and configure the FastAPI dashboard application."""
     config = config or {}
-    store = create_event_store(config)
+    store = create_event_store(config, cleanup_stale_jobs=False)
 
     app = FastAPI(title="Soccer360 Dashboard", version="0.1.0")
 
@@ -1079,8 +1121,10 @@ def create_app(config: dict | None = None) -> FastAPI:
                 detail=f"No frames found for '{match_name}'. Process a video first.",
             )
 
-        # Save uploaded file to a temp location and extract
+        # Replace the existing label snapshot for this match with the latest upload.
         labels_dir = match_dir / "labels"
+        if labels_dir.exists():
+            shutil.rmtree(labels_dir)
         labels_dir.mkdir(parents=True, exist_ok=True)
         extracted = 0
 
@@ -1487,6 +1531,13 @@ def create_app(config: dict | None = None) -> FastAPI:
     async def reset_match(match_name: str):
         """Delete a processed match family and restore one source video to staging."""
         _validate_flat_name(match_name, "match name")
+
+        with _training_lock:
+            if _training_state["status"] in ("running", "building"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cannot remove a processed match while dataset build or training is in progress.",
+                )
 
         selected_dir = processed_dir / match_name
         if not selected_dir.is_dir():

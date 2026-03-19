@@ -83,3 +83,25 @@ def test_build_dataset_script_matches_common_labelstudio_label_names(tmp_path: P
 
     assert result.returncode == 0, result.stderr
     assert "Dataset built: 1 train, 0 val" in result.stdout or "Dataset built: 0 train, 1 val" in result.stdout
+
+
+def test_build_dataset_script_dedupes_multiple_labels_for_same_frame(tmp_path: Path):
+    labeling_dir = tmp_path / "labeling"
+    frames_dir = labeling_dir / "match_a" / "frames"
+    labels_dir = labeling_dir / "match_a" / "labels"
+    frames_dir.mkdir(parents=True)
+    labels_dir.mkdir(parents=True)
+
+    (frames_dir / "frame_000001.jpg").write_bytes(b"fake-jpeg-data")
+    (labels_dir / "frame_000001.txt").write_text("0 0.5 0.5 0.1 0.1\n")
+    (labels_dir / "frame_000001_jpg.txt").write_text("0 0.4 0.4 0.2 0.2\n")
+
+    result = subprocess.run(
+        ["bash", str(BUILD_DATASET_SCRIPT), str(labeling_dir), "0.5"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Found 1 labeled images across 1 matches" in result.stdout

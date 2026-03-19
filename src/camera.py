@@ -86,6 +86,10 @@ class CameraPathGenerator:
         cop_cfg = config.get("center_of_play", {})
         self.cop_enabled = cop_cfg.get("enabled", False)
         self.cop_ball_blend = cop_cfg.get("ball_blend_weight", 0.15)
+        self.cop_low_conf_ball_blend = cop_cfg.get(
+            "low_conf_ball_blend_weight",
+            max(self.cop_ball_blend, 0.20),
+        )
         self.cop_fov_from_spread = cop_cfg.get("fov_from_spread", True)
         self.cop_spread_max_fov = cop_cfg.get("spread_max_fov", 105.0)
         self.cop_spread_min_deg = cop_cfg.get("spread_min_deg", 15.0)
@@ -205,7 +209,11 @@ class CameraPathGenerator:
             if ball is not None and cluster is not None:
                 # Blend ball position with cluster centroid
                 ball_conf = ball.get("confidence", 0.5)
-                blend = self.cop_ball_blend if ball_conf >= 0.5 else 0.5
+                blend = (
+                    self.cop_ball_blend
+                    if ball_conf >= 0.5
+                    else self.cop_low_conf_ball_blend
+                )
                 x = (1 - blend) * ball["x"] + blend * cluster["x"]
                 y = (1 - blend) * ball["y"] + blend * cluster["y"]
                 yaw, pitch = pixel_to_yaw_pitch(
