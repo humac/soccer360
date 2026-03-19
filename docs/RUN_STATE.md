@@ -4,14 +4,15 @@
 - Project: Soccer360
 - State: Normalized into the team workflow model
 - Date: 2026-03-19
-- Owner: Pepper
-- Current phase: Ready for architecture refinement and bounded build planning
+- Owner: Peter
+- Current phase: Packet 2 in progress — `highlights.json` for the Ball-First Delivery Pack
 
 ## What just happened
 - Reviewed the current repo, operator docs, roadmap docs, core runtime entrypoints, and test suite shape.
 - Separated current implemented behavior from aspirational roadmap material.
 - Created the standard workflow docs under `docs/agent-workflow/`.
 - Defined one bounded next milestone based on repository reality.
+- Packet 1 completed: Label Studio pre-annotation compatibility was fixed at the import boundary with automated tests.
 
 ## Current truth snapshot
 - Implemented now: CLI commands for watch/process/train/dashboard/export-hard-frames; watcher-based ingest queue; two-pass broadcast+tactical rendering; highlight generation; dashboard; active-learning exports; training flow; persistent ingest dedupe; NO_DETECT fallback; center-of-play/player-cluster support; Dockerized worker/dashboard/Label Studio runtime.
