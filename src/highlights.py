@@ -458,7 +458,7 @@ class HighlightDetector:
             if duration < self.min_clip_duration_sec:
                 continue
 
-            event_types = list(set(e["type"] for e in cluster))
+            event_types = sorted({e["type"] for e in cluster})
 
             # Compute score
             total_score = sum(
@@ -518,6 +518,7 @@ class HighlightDetector:
         """Write highlights.json manifest with clip metadata and stats."""
         manifest = {
             "clip_count": len(clips),
+            "reel_filename": None,
             "clips": [
                 {
                     "filename": f"highlight_{i:03d}.mp4",
@@ -526,7 +527,7 @@ class HighlightDetector:
                     "duration": clip["duration"],
                     "score": clip["score"],
                     "rank": clip["rank"],
-                    "event_types": clip["event_types"],
+                    "event_types": sorted(clip["event_types"]),
                     "event_count": clip["event_count"],
                 }
                 for i, clip in enumerate(clips)
@@ -535,5 +536,5 @@ class HighlightDetector:
         }
         manifest_path = output_dir / "highlights.json"
         with open(manifest_path, "w") as f:
-            json.dump(manifest, f, indent=2)
+            json.dump(manifest, f, indent=2, sort_keys=True)
         logger.info("Wrote highlight manifest: %s", manifest_path)

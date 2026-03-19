@@ -355,6 +355,7 @@ class TestBackwardsCompatibility:
         )
         # No clips should be exported
         assert not output_dir.exists() or len(list(output_dir.glob("*.mp4"))) == 0
+        assert not (output_dir / "highlights.json").exists()
 
     def test_cluster_only_highlights(self, highlight_config, tmp_path):
         """Cluster data without tracks still produces cluster-based events."""
@@ -371,3 +372,74 @@ class TestBackwardsCompatibility:
         assert loaded is not None
         events = detector._detect_cluster_convergence(loaded, fps=30.0)
         assert len(events) > 0
+
+
+class TestHighlightManifest:
+    def test_manifest_written_for_exported_clips_in_time_order(self, highlight_config, tmp_path, monkeypatch):
+        detector = HighlightDetector(highlight_config)
+        meta = VideoMeta(width=320, height=160, fps=30.0, duration=5.0,
+                         total_frames=150, codec="h264")
+        output_dir = tmp_path / "highlights"
+        exported: list[tuple[float, str]] = []
+
+        def fake_export_clip(_source_video, clip, output_path):
+            output_path.write_bytes(b"clip")
+            exported.append((clip["start_sec"], output_path.name))
+
+        monkeypatch.setattr(detector, "_export_clip", fake_export_clip)
+        monkeypatch.setattr(
+            detector,
+            "_compute_velocities",
+            lambda tracks, fps: [
+                {"frame": 90, "time_sec": 3.0, "type": "speed", "value": 150.0},
+                {"frame": 30, "time_sec": 1.0, "type": "speed", "value": 100.0},
+            ],
+        )
+        monkeypatch.setattr(
+            detector,
+            "_detect_speed_events",
+            lambda velocities, fps: velocities,
+        )
+        monkeypatch.setattr(detector, "_detect_goal_box_events", lambda tracks, fps: [])
+        monkeypatch.setattr(detector, "_detect_direction_changes", lambda velocities, fps: [])
+
+        tracks_path = tmp_path / "tracks.json"
+        tracks_path.write_text("[]")
+
+        detector.detect_and_export(
+            broadcast_path=tmp_path / "broadcast.mp4",
+            meta=meta,
+            camera_path_file=tmp_path / "camera_path.json",
+            tracks_path=tracks_path,
+            output_dir=output_dir,
+            player_cluster_path=None,
+        )
+
+        manifest = json.loads((output_dir / "highlights.json").read_text())
+        assert [name for _, name in exported] == ["highlight_000.mp4", "highlight_001.mp4"]
+        assert [clip["filename"] for clip in manifest["clips"]] == ["highlight_000.mp4", "highlight_001.mp4"]
+        assert [clip["start_sec"] for clip in manifest["clips"]] == sorted(
+            clip["start_sec"] for clip in manifest["clips"]
+        )
+        assert manifest["clip_count"] == 2
+        assert manifest["reel_filename"] is None
+        assert manifest["clips"][0]["event_types"] == ["speed"]
+        assert manifest["clips"][0]["event_count"] == 1
+        assert manifest["detector_stats"]["total_raw_events"] == 2
+
+    def test_write_manifest_sorts_event_types(self, highlight_config, tmp_path):
+        detector = HighlightDetector(highlight_config)
+        clips = [{
+            "start_sec": 1.0,
+            "end_sec": 2.0,
+            "duration": 1.0,
+            "score": 3.0,
+            "rank": 1,
+            "event_types": ["speed", "goal_box", "cluster_density"],
+            "event_count": 3,
+        }]
+
+        detector._write_manifest(tmp_path, clips, {"total_raw_events": 3})
+        manifest = json.loads((tmp_path / "highlights.json").read_text())
+        assert manifest["clips"][0]["event_types"] == ["cluster_density", "goal_box", "speed"]
+        assert manifest["reel_filename"] is None
