@@ -242,7 +242,7 @@ All pipeline parameters live in `configs/pipeline.yaml`. Override the config pat
 
 ### Detection and Model Settings
 
-**V1 bootstrap detection** (the `detection` section):
+**YOLO Detection Pipeline** (the `detection` section):
 
  | Key | Default | Purpose |
 | ----- | --------- | --------- |
@@ -411,7 +411,7 @@ Controls hybrid camera tracking that blends ball position with player cluster da
 
 ### Model Resolution Order
 
-In V1 bootstrap mode (when the `detection` section is present), the model is resolved in this order:
+In YOLO Detection Pipeline mode (when the `detection` section is present), the model is resolved in this order:
 
 1. **`detector.model_path`** -- explicit override (must exist if set to a non-default path)
 2. **`detection.path`** -- legacy config path
@@ -773,7 +773,7 @@ Each processing phase records its wall-clock duration in seconds:
  | Phase Key | Pipeline Phase | What It Measures |
 | ----------- | --------------- | ----------------- |
  | `detection` | Phase 1 | YOLO ball + player detection (GPU) |
- | `tracking` | Phase 2 | BallStabilizer (V1) or ByteTrack (legacy) |
+ | `tracking` | Phase 2 | BallStabilizer (YOLO pipeline) or ByteTrack (legacy) |
  | `hard_frames` | Phase 2.5 | Active learning / hard frame export |
  | `player_cluster` | Phase 2.7 | Center-of-play player cluster computation |
  | `camera` | Phase 3 | Camera path generation (hybrid blend) |

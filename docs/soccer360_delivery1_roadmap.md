@@ -30,7 +30,7 @@ Everything above, plus:
 - Today’s pipeline is **ball-first** (detect → stabilize → camera path → reframer → highlights → exporter).
 - **No overlays** exist today.
 - **Player detection/tracking + action/event understanding are not implemented yet**.
-- Label Studio pre-annotation gotcha: V1 exporter uses `bbox` but LS import script expects `predicted_bbox` unless fixed.
+- Label Studio pre-annotation gotcha: YOLO pipeline exporter uses `bbox` but LS import script expects `predicted_bbox` unless fixed.
 
 ---
 
@@ -249,7 +249,7 @@ Deliver:
 
 **Two minimal fixes (choose one)**
 - Option A: update `scripts/labelstudio_import.sh` to accept `bbox` OR `predicted_bbox`.
-- Option B: update V1 exporter to also emit `predicted_bbox` alongside `bbox`.
+- Option B: update YOLO pipeline exporter to also emit `predicted_bbox` alongside `bbox`.
 
 **Acceptance criteria**
 - Importing tasks for a new match shows pre-drawn rectangles in Label Studio.
@@ -259,7 +259,7 @@ Deliver:
 Fix Label Studio pre-annotation.
 
 Context:
-- V1 hard_frames.json uses `bbox`.
+- YOLO-pipeline hard_frames.json uses `bbox`.
 - labelstudio_import.sh expects `predicted_bbox`.
 This can cause no pre-annotations.
 

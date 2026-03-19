@@ -83,7 +83,7 @@ No traditional database. All state is file-based:
 
 ## Runtime Modes
 
-1. **V1 Bootstrap** (`detection` section in config) — full pipeline with YOLO + BallStabilizer + active learning + center-of-play
+1. **YOLO Detection Pipeline** (`detection` section in config) — full pipeline with YOLO + BallStabilizer + active learning + center-of-play
 2. **Legacy** (no `detection` section) — full pipeline with ByteTrack tracker + center-of-play
 3. **NO_DETECT** (model unavailable + `allow_no_model: true`) — static camera, broadcast + tactical only
 

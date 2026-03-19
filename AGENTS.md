@@ -15,7 +15,7 @@ Soccer360 processes equirectangular 360 soccer video into:
 
 The orchestrator is in `src/pipeline.py` and supports three runtime modes:
 
-1. `v1 bootstrap mode` (default config includes `detection` section):
+1. `YOLO Detection Pipeline mode` (default config includes `detection` section):
 
 - Phase 1: `Detector.run_streaming()` (YOLO ball+player, FoI, y-band filter, class-aware best-per-frame)
 - Phase 2: `BallStabilizer.run()` (temporal persistence/jump-speed rejection, filters to class 32 only)
@@ -39,9 +39,9 @@ The orchestrator is in `src/pipeline.py` and supports three runtime modes:
 src/
   pipeline.py        Orchestrator; mode selection, phase coordination, event bus, decision hooks
   detector.py        YOLO streaming inference, FoI filter, model resolution
-  tracker.py         Legacy ByteTrack tracker + V1 BallStabilizer (class 32 filter)
+  tracker.py         Legacy ByteTrack tracker + YOLO-pipeline BallStabilizer (class 32 filter)
   player_cluster.py  Center-of-play: trimmed-mean player cluster + EMA smoothing
-  active_learning.py V1 hard-frame candidate selection and export
+  active_learning.py YOLO-pipeline hard-frame candidate selection and export
   hard_frames.py     Legacy hard-frame export
   camera.py          Camera path smoothing (hybrid ball+cluster blend + Kalman + EMA + deadband + FOV EMA smoothing)
   reframer.py        360->perspective rendering (parallel segments with overlap)
@@ -62,7 +62,7 @@ src/
 
 `src/detector.py` has separate resolvers:
 
-- V1 (`resolve_model_path_v1`):
+- YOLO Detection Pipeline (`resolve_model_path_v1`):
 
 1. `detector.model_path` (source=`detector.model_path`)
 2. `detection.path` (legacy, source=`detection.path`)
@@ -76,7 +76,7 @@ Notes:
 
 - `detector.model_path` is canonical; `detection.path` is backward-compatible fallback.
 - Non-default `detector.model_path` is explicit override.
-- Explicit non-default `detector.model_path` must exist and be a file; otherwise V1 model resolution raises `RuntimeError`.
+- Explicit non-default `detector.model_path` must exist and be a file; otherwise YOLO Detection Pipeline model resolution raises `RuntimeError`.
 - `detector.model_path: /app/models/yolo26l.pt` behaves like default path selection.
 - Runtime logs once per job: `Model resolved: <path> (source=<source>)`.
 - Source enum includes `detector.model_path`, `detection.path`, `default`, `runtime.auto`, `runtime.pinned`.

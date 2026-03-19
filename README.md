@@ -60,9 +60,9 @@ Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 
 |7|Output organization|I/O|
 |8|Scratch cleanup|I/O|
 
-### V1 Bootstrap Detection
+### YOLO Detection Pipeline
 
-The V1 pipeline uses YOLO26l (`yolo26l.pt`, the latest Ultralytics YOLO generation — NMS-free, 43% faster CPU inference than YOLO11) detecting both sports ball (class 32) and person (class 0) with conservative filtering and temporal stabilization. Person detections feed the center-of-play module; ball detections feed the tracker. This enables a train-then-upgrade cycle:
+The YOLO Detection Pipeline uses YOLO26l (`yolo26l.pt`, the latest Ultralytics YOLO generation — NMS-free, 43% faster CPU inference than YOLO11) detecting both sports ball (class 32) and person (class 0) with conservative filtering and temporal stabilization. Person detections feed the center-of-play module; ball detections feed the tracker. This enables a train-then-upgrade cycle:
 
 1. **Detect** -- YOLO detects balls and players with class filter + y-range filter + best-per-frame selection (best ball per frame; all person detections passed through)
 2. **Stabilize** -- BallStabilizer applies persistence gate (require N of M frames), jump/speed rejection, and EMA smoothing
@@ -86,7 +86,7 @@ The V1 pipeline uses YOLO26l (`yolo26l.pt`, the latest Ultralytics YOLO generati
 
 ### Model Resolution
 
-**V1 mode** (when `detection` section is present) resolves with stable precedence:
+**YOLO Detection Pipeline mode** (when `detection` section is present) resolves with stable precedence:
 
 1. `detector.model_path` (canonical override)
 2. `detection.path` (legacy fallback)
@@ -99,7 +99,7 @@ Default behavior is unchanged unless `detector.model_path` is set, or a legacy
 Notes:
 
 - `detector.model_path` set to a non-default path is treated as explicit override.
-- Explicit non-default `detector.model_path` must exist and be a file; otherwise V1 model resolution fails fast with `RuntimeError`.
+- Explicit non-default `detector.model_path` must exist and be a file; otherwise YOLO Detection Pipeline model resolution fails fast with `RuntimeError`.
 - `detector.model_path: /app/models/yolo26l.pt` keeps normal default/fine-tuned behavior.
 - Current contract is `.pt` weights only (ONNX/TRT model-path selection is out of scope here).
 - Runtime logs one line per job: `Model resolved: <path> (source=<source>)`.
@@ -218,11 +218,11 @@ All parameters are in `configs/pipeline.yaml`:
 - **exporter** -- codec, CRF quality, encoder (cpu/nvenc), raw file handling
 - **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s), dotfile filtering, persistent processed-state dedupe file
 - **ingest** -- post-success archival (archive mode, collision handling, name template)
-- **active_learning** -- V1: three-trigger hard frame export (low confidence range, lost ball runs, jump rejections), gating (every_n, max cap)
-- **detection** -- V1 bootstrap: YOLO model path (currently `yolo26l.pt`), COCO class filter (`[32, 0]`), confidence/IOU, image size, half precision, device
+- **active_learning** -- YOLO Detection Pipeline: three-trigger hard frame export (low confidence range, lost ball runs, jump rejections), gating (every_n, max cap)
+- **detection** -- YOLO Detection Pipeline: YOLO model path (currently `yolo26l.pt`), COCO class filter (`[32, 0]`), confidence/IOU, image size, half precision, device
 - **center_of_play** -- hybrid camera tracking: player cluster computation, ball/cluster blend weights, FOV-from-spread, EMA smoothing
-- **filters** -- V1: y-range vertical band filter, max jump/speed sanity limits
-- **tracking** -- V1: EMA alpha, persistence gate (require_persistence, window size)
+- **filters** -- YOLO Detection Pipeline: y-range vertical band filter, max jump/speed sanity limits
+- **tracking** -- YOLO Detection Pipeline: EMA alpha, persistence gate (require_persistence, window size)
 - **mode** -- allow_no_model toggle for graceful degradation
 - **dashboard** -- monitoring UI: enabled toggle, SQLite db_path, server port
 
@@ -638,7 +638,7 @@ src/
   highlights.py   Heuristic highlight detection (ball + cluster signals, scoring/ranking)
   exporter.py     Output organization + metadata + artifact preservation
   hard_frames.py       Automatic hard-frame export for active learning (legacy)
-  active_learning.py   V1 active learning export (three-trigger identification)
+  active_learning.py   YOLO pipeline active learning export (three-trigger identification)
   trainer.py           YOLO fine-tuning + TensorRT export
   utils.py             FFmpeg streaming I/O, config, equirectangular angle helpers
   events.py            EventStore (SQLite WAL) + EventBus + decision queue
@@ -670,9 +670,9 @@ tests/
   test_reframer.py         Vertical FOV math + e2p integration tests
   test_highlights.py       Highlight detection tests
   test_hard_frames.py           Hard frame identification + export tests
-  test_bootstrap_detection.py  V1 model resolution + y-range + best-per-frame tests
-  test_ball_stabilizer.py      V1 persistence gate + jump/speed rejection + EMA tests
-  test_active_learning.py      V1 three-trigger export + gating tests
+  test_bootstrap_detection.py  YOLO pipeline model resolution + y-range + best-per-frame tests
+  test_ball_stabilizer.py      YOLO pipeline persistence gate + jump/speed rejection + EMA tests
+  test_active_learning.py      YOLO pipeline three-trigger export + gating tests
   test_model_resolution.py     Model resolution + NO_DETECT mode tests
   test_watcher.py          Watcher ingest handling + safety tests
   test_exporter.py         Output organization tests

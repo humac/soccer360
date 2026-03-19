@@ -313,7 +313,7 @@ The pipeline has three processing modes depending on model availability:
 
 | Mode | Ball Tracking | Broadcast | Tactical | Highlights | When |
 | ---- | :-----------: | :-------: | :------: | :--------: | ---- |
-| **V1 Bootstrap** | Yes | Auto-follow | Yes | Yes | Detection model available (default) |
+| **YOLO Detection Pipeline** | Yes | Auto-follow | Yes | Yes | Detection model available (default) |
 | **Legacy** | Yes | Auto-follow | Yes | Yes | Config uses legacy tracker |
 | **NO_DETECT** | No | Static framing | Yes | No | No model available |
 

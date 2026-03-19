@@ -6,7 +6,7 @@
 
 - **Today’s pipeline is ball-first**: it detects/tracks a ball, generates a camera path, renders perspective crops, and exports “hard frames” for labeling/training. **Player detection + action/event understanding are not implemented yet** (they are the next phase).
 - **Renders are crops, not annotated broadcasts**: **no overlays** (boxes, trails, labels, scoreboard) exist today; outputs are clean perspective videos.
-- **Label Studio pre-annotation gotcha**: the **V1 hard-frames manifest uses `bbox`**, but the current Label Studio import script **only reads `predicted_bbox`**. Unless you normalize this, your imported tasks may have **no pre-drawn boxes**, increasing manual labeling time.
+- **Label Studio pre-annotation gotcha**: the **YOLO-pipeline hard-frames manifest uses `bbox`**, but the current Label Studio import script **only reads `predicted_bbox`**. Unless you normalize this, your imported tasks may have **no pre-drawn boxes**, increasing manual labeling time.
 
 ---
 
@@ -18,8 +18,8 @@
 | `src/pipeline.py` | **The main pipeline** - mode resolution + phase orchestration |
 | `src/cli.py` | CLI entry point (`soccer360` console script) |
 | `src/detector.py` | YOLO inference, model resolution, FoI, y-range filtering |
-| `src/tracker.py` | ByteTrack (legacy) + BallStabilizer (V1) |
-| `src/active_learning.py` | V1 hard-frame export (3-trigger system) |
+| `src/tracker.py` | ByteTrack (legacy) + BallStabilizer (YOLO pipeline) |
+| `src/active_learning.py` | YOLO-pipeline hard-frame export (3-trigger system) |
 | `src/hard_frames.py` | Legacy hard-frame export |
 | `src/camera.py` | Kalman-smoothed camera path generation |
 | `src/reframer.py` | 360-to-perspective rendering (broadcast + tactical) |
@@ -122,7 +122,7 @@ flowchart TB
         Watcher["WatcherDaemon\nsrc/watcher.py"]
         Pipeline["Pipeline\nsrc/pipeline.py"]
         Detector["Detector\nsrc/detector.py\n(YOLO + FoI + y-range)"]
-        StabilizerMod["BallStabilizer\nsrc/tracker.py\n(V1 EMA)"]
+        StabilizerMod["BallStabilizer\nsrc/tracker.py\n(YOLO pipeline EMA)"]
         TrackerMod["Tracker (ByteTrack)\nsrc/tracker.py\n(legacy)"]
         ALExporter["ActiveLearningExporter\nsrc/active_learning.py"]
         HFExporter["HardFrameExporter\nsrc/hard_frames.py"]
@@ -183,12 +183,12 @@ When a new `.mp4` file appears in `/tank/ingest/`:
 8. **Phase 1 - Detection**: `Detector.run_streaming` (`src/detector.py:302-399`):
    - `FFmpegFrameReader` decodes video to RGB numpy arrays via pipe (`src/utils.py:79-148`)
    - Frames scaled to `det_resolution` (default 1920x960)
-   - `YOLO.predict()` with V1 params: `classes=[32]`, `conf=0.35`, `half=True` (`src/detector.py:596-624`)
+   - `YOLO.predict()` with YOLO Detection Pipeline params: `classes=[32]`, `conf=0.35`, `half=True` (`src/detector.py:596-624`)
    - FoI filtering (yaw+pitch window) (`src/detector.py:454-518`)
    - Y-range filter (`[0.20, 0.98]` vertical band) (`src/detector.py:728-740`)
    - Best-per-frame selection (`src/detector.py:742-755`)
    - Writes `detections.jsonl` (`src/utils.py:268-273`)
-9. **Phase 2 - Stabilization (V1)**: `BallStabilizer.run` (`src/tracker.py:423-580`):
+9. **Phase 2 - Stabilization (YOLO pipeline)**: `BallStabilizer.run` (`src/tracker.py:423-580`):
    - Persistence gate (N-of-M window), jump/speed rejection, EMA smoothing
    - Writes `tracks.json`, returns `tracking_events` list
 10. **Phase 2.5 - Active Learning**: `ActiveLearningExporter.run` (`src/active_learning.py:64-178`):
@@ -256,7 +256,7 @@ sequenceDiagram
     end
 
     rect rgb(240, 255, 240)
-        Note over P,S: Phase 2: Stabilization (V1)
+        Note over P,S: Phase 2: Stabilization (YOLO pipeline)
         P->>S: run(detections, tracks_path, fps)
         S->>S: persistence gate + jump reject + EMA
         S-->>P: tracks.json + tracking_events
@@ -311,14 +311,14 @@ sequenceDiagram
 
 | Artifact | Path Pattern | Writer | When | Schema / Key Fields | Downstream |
 |---|---|---|---|---|---|
-| **detections.jsonl** | `{work_dir}/detections.jsonl` -> `{processed}/{game}/detections.jsonl` | `Detector.run_streaming` -> `write_detections_jsonl` (`src/detector.py:398`, `src/utils.py:268`) | Phase 1 | V1: `{frame_index, time_sec, bbox_xyxy:[x1,y1,x2,y2], conf, class_id}` per line | Stabilizer, AL export, Exporter |
-| **tracks.json** | `{work_dir}/tracks.json` -> `{processed}/{game}/tracks.json` | `BallStabilizer.run` (`src/tracker.py:579`) or `Tracker.run` (`src/tracker.py:332`) | Phase 2 | V1: `[{frame, ball:{x,y,bbox,confidence,track_id}, status, reason, raw_det}, ...]` | Camera, Highlights, AL export |
+| **detections.jsonl** | `{work_dir}/detections.jsonl` -> `{processed}/{game}/detections.jsonl` | `Detector.run_streaming` -> `write_detections_jsonl` (`src/detector.py:398`, `src/utils.py:268`) | Phase 1 | YOLO pipeline: `{frame_index, time_sec, bbox_xyxy:[x1,y1,x2,y2], conf, class_id}` per line | Stabilizer, AL export, Exporter |
+| **tracks.json** | `{work_dir}/tracks.json` -> `{processed}/{game}/tracks.json` | `BallStabilizer.run` (`src/tracker.py:579`) or `Tracker.run` (`src/tracker.py:332`) | Phase 2 | YOLO pipeline: `[{frame, ball:{x,y,bbox,confidence,track_id}, status, reason, raw_det}, ...]` | Camera, Highlights, AL export |
 | **foi_meta.json** | `{work_dir}/foi_meta.json` -> `{processed}/{game}/foi_meta.json` | `Detector._filter_foi` (`src/detector.py:493`) | Phase 1 | `{enabled, center_mode, effective_center_yaw_deg, yaw_window_deg, pitch_{min,max}_deg, sample_count, fallback}` | Diagnostics |
 | **camera_path.json** | `{work_dir}/camera_path.json` -> `{processed}/{game}/camera_path.json` | `CameraPathGenerator.generate` (`src/camera.py:125`) | Phase 3 | `[{yaw, pitch, fov}, ...]` (per-frame) | Reframer (broadcast), Highlights |
 | **broadcast.mp4** | `{processed}/{game}/broadcast.mp4` | `Reframer.render_broadcast` (`src/reframer.py:293`) | Phase 4 | 1920x1080 H.264, CRF 18, ball-following perspective | Highlight clip source, parent delivery |
 | **tactical_wide.mp4** | `{processed}/{game}/tactical_wide.mp4` | `Reframer.render_tactical` (`src/reframer.py:377`) | Phase 5 | 1920x1080, fixed 120deg FOV, yaw=0, pitch=-5 | Coaching review |
 | **highlight_NNN.mp4** | `{highlights}/{game}/highlight_NNN.mp4` | `HighlightDetector._export_clip` (`src/highlights.py:235-247`) | Phase 6 | Clips from broadcast.mp4, ~3-15s each | Parent/social delivery |
-| **hard_frames.json** | `/tank/labeling/{match}/hard_frames.json` + `{work_dir}/hard_frames.json` | V1: `ActiveLearningExporter.run` (`src/active_learning.py:169-173`); Legacy: `HardFrameExporter.run` (`src/hard_frames.py:113-117`) | Phase 2.5 | **V1:** `{..., frames:[{frame_index, time_sec, triggers:[], conf, bbox, exported_path}]}` **Legacy:** `{..., frames:[{..., predicted_bbox, predicted_confidence, ...}]}` **Note:** `labelstudio_import.sh` currently keys off `predicted_bbox` | Label Studio import, training |
+| **hard_frames.json** | `/tank/labeling/{match}/hard_frames.json` + `{work_dir}/hard_frames.json` | YOLO pipeline: `ActiveLearningExporter.run` (`src/active_learning.py:169-173`); Legacy: `HardFrameExporter.run` (`src/hard_frames.py:113-117`) | Phase 2.5 | **YOLO pipeline:** `{..., frames:[{frame_index, time_sec, triggers:[], conf, bbox, exported_path}]}` **Legacy:** `{..., frames:[{..., predicted_bbox, predicted_confidence, ...}]}` **Note:** `labelstudio_import.sh` currently keys off `predicted_bbox` | Label Studio import, training |
 | **frames/*.jpg** | `/tank/labeling/{match}/frames/frame_NNNNNN.jpg` | `extract_frame` (`src/utils.py:250-261`) via AL/HF exporters | Phase 2.5 | Full-resolution equirectangular JPEG, single frame | Label Studio annotation |
 | **metadata.json** | `{processed}/{game}/metadata.json` | `Exporter.finalize` (`src/exporter.py:164`) | Phase 7 | `{source, job_id, game_name, duration_sec, fps, resolution, processed_at, mode, outputs:{broadcast,tactical,highlights}, ingest_archive_*}` | Run audit |
 | **ffprobe_meta.json** | `{processed}/{game}/ffprobe_meta.json` | `Exporter.finalize` (`src/exporter.py:129`) | Phase 7 | `{width, height, fps, duration, total_frames, codec}` | Diagnostics |
@@ -335,15 +335,15 @@ The compose file mounts `/tank/labeling` at `/label-studio/data/labeling` with `
 
 **Important pre-annotation contract mismatch**
 
-- The V1 exporter writes `hard_frames.json` entries with a `bbox` field.
+- The YOLO pipeline exporter writes `hard_frames.json` entries with a `bbox` field.
 - The current `scripts/labelstudio_import.sh` script only emits pre-annotations when it finds `predicted_bbox`.
 
-**Impact:** V1 tasks may import into Label Studio **without any pre-drawn rectangles**, even though the pipeline produced ball boxes.
+**Impact:** YOLO pipeline tasks may import into Label Studio **without any pre-drawn rectangles**, even though the pipeline produced ball boxes.
 
 **Minimal fix (pick one):**
 1) Update `scripts/labelstudio_import.sh` to accept either field:
    - use `predicted_bbox` if present, else fall back to `bbox`.
-2) Update the V1 exporter to also write `predicted_bbox` (and optionally `predicted_confidence`) alongside `bbox/conf` to keep legacy tooling happy.
+2) Update the YOLO pipeline exporter to also write `predicted_bbox` (and optionally `predicted_confidence`) alongside `bbox/conf` to keep legacy tooling happy.
 
 
 ---
@@ -352,7 +352,7 @@ The compose file mounts `/tank/labeling` at `/label-studio/data/labeling` with `
 
 ### Model resolution/bootstrap behavior
 
-**V1 mode** (active when `detection` section exists in config):
+**YOLO Detection Pipeline mode** (active when `detection` section exists in config):
 
 Resolution chain in `resolve_v1_model_path_and_source` (`src/detector.py:127-193`):
 - `detector.model_path` (explicit, non-default value must exist or `RuntimeError`) > `detection.path` (legacy) > default
@@ -368,7 +368,7 @@ Resolution in `resolve_model_path` (`src/detector.py:25-60`):
 
 ### YOLO inference parameters and class filtering
 
-V1 params from `detection` config section (`src/detector.py:207-231`):
+YOLO Detection Pipeline params from `detection` config section (`src/detector.py:207-231`):
 ```python
 self.classes = v1_cfg.get("classes", [32])    # COCO sports ball
 self.confidence_threshold = v1_cfg.get("conf", 0.35)
@@ -388,20 +388,20 @@ Legacy params from `detector` config section (`src/detector.py:237-256`):
 - `center_mode: fixed` uses `center_yaw_deg`; `auto` computes histogram peak from first N seconds of detections (circular mean over 5-deg bins)
 - Writes `foi_meta.json` with effective center, sample count, fallback flag
 
-**Y-range gating** (V1 only) (`src/detector.py:728-740`):
+**Y-range gating** (YOLO Detection Pipeline only) (`src/detector.py:728-740`):
 - Rejects detections whose vertical center falls outside `[min_y_frac, max_y_frac]` of detection frame height
 - Default: `[0.20, 0.98]` -- removes sky/scoreboard above, below-pitch false positives
 
-**Best-per-frame selection** (V1 only) (`src/detector.py:742-755`):
+**Best-per-frame selection** (YOLO Detection Pipeline only) (`src/detector.py:742-755`):
 - Keeps only the highest-confidence detection per frame
 
-**Jump/speed rejection** (V1 BallStabilizer) (`src/tracker.py:502-529`):
+**Jump/speed rejection** (YOLO-pipeline BallStabilizer) (`src/tracker.py:502-529`):
 - `max_jump_px: 250`, `max_speed_px_per_s: 2500`
 - After `jump_max_gap_frames: 15` without acceptance, resets anchor for reacquisition
 
 ### Tracking logic
 
-**V1 BallStabilizer** (`src/tracker.py:404-580`):
+**YOLO-pipeline BallStabilizer** (`src/tracker.py:404-580`):
 - Rolling window persistence gate: need `require_persistence` (2) detections in `window` (3) frames
 - EMA smoothing: `alpha=0.35`
 - Single-ball: operates on pre-selected best-per-frame detections
@@ -415,7 +415,7 @@ Legacy params from `detector` config section (`src/detector.py:237-256`):
 
 ### Active learning exports
 
-**V1 ActiveLearningExporter** (`src/active_learning.py:23-257`):
+**YOLO-pipeline ActiveLearningExporter** (`src/active_learning.py:23-257`):
 
 Three triggers (`src/active_learning.py:180-257`):
 1. `low_conf`: detection confidence in `[0.20, 0.50]`
@@ -460,7 +460,7 @@ Output: 1920x1080, H.264, CRF 18.
 | `build_dataset.sh` | Scans `/tank/labeling/*/labels/*.txt` + `frames/*.jpg`, creates train/val splits, writes `dataset.yaml` | `scripts/build_dataset.sh` |
 | `train_ball.sh` | Invokes `soccer360 train` inside worker container, versioned runs | `scripts/train_ball.sh` |
 | `train.sh` | Simpler training wrapper (no versioning) | `scripts/train.sh` |
-| `labelstudio_import.sh` | Generates LS task JSON with pre-annotations from hard_frames.json (**note:** currently expects `predicted_bbox`; V1 uses `bbox` unless normalized) | `scripts/labelstudio_import.sh` |
+| `labelstudio_import.sh` | Generates LS task JSON with pre-annotations from hard_frames.json (**note:** currently expects `predicted_bbox`; YOLO pipeline uses `bbox` unless normalized) | `scripts/labelstudio_import.sh` |
 
 `Trainer.run` (`src/trainer.py:21-57`):
 - Fine-tunes from `base_model` (`yolo26l.pt` in current config), imgsz=640, batch=16, patience=10
@@ -527,7 +527,7 @@ Drop 360 equirectangular video files (`.mp4`, `.insv`, `.mov`) into `/tank/inges
 
 **Ball detection bootstrap vs custom model**:
 ```yaml
-# V1 bootstrap (COCO yolo26l, class 32 = sports ball)
+# YOLO Detection Pipeline (COCO yolo26l, class 32 = sports ball)
 detection:
   path: "/app/models/yolo26l.pt"        # baked base model inside the image (or provide a local path)
   classes: [32]
@@ -632,7 +632,7 @@ Dual-model is recommended because:
 - Ball detection is a tiny-object problem (8-20px at 1920x960). Optimal YOLOv8 for this needs high `imgsz` (960+) and possibly tiling.
 - Person detection works well at lower resolution and benefits from different augmentations.
 - Training cadences differ: ball model retrains frequently (active learning), person model is more stable.
-- V1 architecture already assumes single-class best-per-frame selection in detector -- multi-class would require refactoring the filtering pipeline.
+- YOLO Detection Pipeline architecture already assumes single-class best-per-frame selection in detector -- multi-class would require refactoring the filtering pipeline.
 
 **Code insertion points**:
 - New `src/person_detector.py`: similar structure to `Detector` but with `classes=[0]` (COCO person), no FoI, no best-per-frame
@@ -883,7 +883,7 @@ frame = np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 3)
 yield frame
 ```
 
-### V1 detection class filter + y-band + best-per-frame
+### YOLO Detection Pipeline class filter + y-band + best-per-frame
 
 `src/detector.py:224` (`Detector.__init__`):
 ```python
@@ -900,13 +900,13 @@ if self._v1_mode:
 
 `src/detector.py:375-381` (`Detector.run_streaming`):
 ```python
-# V1: y-range filter + best-per-frame selection
+# YOLO Detection Pipeline: y-range filter + best-per-frame selection
 if self._v1_mode:
     all_detections = self._filter_y_range(...)
     all_detections = self._select_best_per_frame(all_detections)
 ```
 
-### V1 stabilization gate/jump/speed/EMA
+### YOLO Detection Pipeline stabilization gate/jump/speed/EMA
 
 `src/tracker.py:486-493` (`BallStabilizer.run`):
 ```python

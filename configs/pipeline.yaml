@@ -178,7 +178,7 @@ active_learning:
   # Jump/speed rejection export threshold (only export if distance >= this)
   jump_trigger_px: 150
 
-# --- V1 Bootstrap Detection ---
+# --- YOLO Detection Pipeline ---
 # COCO-pretrained YOLO for sports ball (class 32) + person (class 0) detection
 detection:
   path: "/app/models/yolo26l.pt"
@@ -201,7 +201,7 @@ filters:
   max_speed_px_per_s: 2500
   jump_max_gap_frames: 15   # after this accepted-frame gap, reset jump anchor for reacquisition
 
-# V1 ball stabilization: persistence gate + EMA smoothing
+# YOLO pipeline ball stabilization: persistence gate + EMA smoothing
 tracking:
   ema_alpha: 0.25
   require_persistence: 3     # require N detections in window to accept
