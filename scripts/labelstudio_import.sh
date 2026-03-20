@@ -4,7 +4,7 @@
 #
 # Reads frames from /tank/labeling/<match_name>/frames/ and creates a
 # Label Studio task JSON at /tank/labeling/<match_name>/labelstudio/tasks.json.
-# Predicted bboxes from hard_frames.json are included as pre-annotations.
+# Bounding boxes from hard_frames.json are included as pre-annotations.
 
 set -euo pipefail
 
@@ -35,7 +35,7 @@ frames_dir = Path(sys.argv[2])
 output_dir = Path(sys.argv[3])
 manifest_path = Path(sys.argv[4])
 
-# Load manifest for predicted bboxes
+# Load manifest for pre-annotation bbox data
 frame_meta = {}
 if manifest_path.exists():
     manifest = json.loads(manifest_path.read_text())
@@ -57,10 +57,10 @@ for img in sorted(frames_dir.glob("frame_*.jpg")):
         },
     }
 
-    # Include predictions if we have a predicted bbox
+    # Include predictions if we have bbox metadata
     meta = frame_meta.get(frame_idx, {})
-    if "predicted_bbox" in meta:
-        bbox = meta["predicted_bbox"]
+    bbox = meta.get("predicted_bbox") or meta.get("bbox")
+    if bbox and len(bbox) == 4:
         # Label Studio expects percentages of image dimensions
         # Detection resolution is 1920x960 (from pipeline.yaml)
         img_w, img_h = 1920, 960

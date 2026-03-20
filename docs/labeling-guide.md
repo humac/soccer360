@@ -130,8 +130,8 @@ During pipeline processing, the system identifies frames where the model had dif
 
 | Trigger | What It Means | Why It Helps |
 | --- | --- | --- |
-| **Low confidence** | Model detected a ball but wasn't sure (confidence 20-50%) | Teaching the model to be more certain |
-| **Lost ball run** | Ball wasn't detected for 15+ consecutive frames | Teaching the model to find the ball in new situations |
+| **Low confidence** | Model detected a ball but wasn't sure (confidence 10-50%) | Teaching the model to be more certain |
+| **Lost ball run** | Ball wasn't detected for 5+ consecutive frames | Teaching the model to find the ball in new situations |
 | **Jump rejection** | Ball position jumped impossibly far between frames | Teaching the model to avoid false detections |
 
 Hard frames are automatically saved to `/tank/labeling/<match_name>/frames/` during processing.
@@ -160,7 +160,7 @@ For example:
 bash scripts/labelstudio_import.sh LastGame-Test
 ```
 
-Both methods create `/tank/labeling/<match_name>/labelstudio/tasks.json` containing image references for each hard frame and pre-annotations (predicted bounding boxes) where available.
+Both methods create `/tank/labeling/<match_name>/labelstudio/tasks.json` containing image references for each hard frame and pre-annotations where bounding-box metadata is available in `hard_frames.json`.
 
 > **Note:** If a match doesn't appear in the dashboard's Matches list or you see `ERROR: Frames directory not found`, make sure the match has been processed by the pipeline first.
 
@@ -462,7 +462,7 @@ For the best results, follow this weekly rhythm:
       frame_000014.jpg
       frame_000287.jpg
       ...
-    hard_frames.json             Manifest with trigger info + predicted bboxes
+    hard_frames.json             Manifest with trigger info + exported bbox metadata
     labels/                      YOLO labels (from Label Studio export)
       frame_000014.txt
       frame_000287.txt
@@ -483,9 +483,9 @@ For the best results, follow this weekly rhythm:
 
 | Trigger | Config Key | Default | Description |
 | --- | --- | --- | --- |
-| Low confidence | `active_learning.low_conf_min` / `low_conf_max` | 0.20 -- 0.50 | Detection confidence in the uncertain range |
-| Lost ball run | `active_learning.lost_run_frames` | 15 | Consecutive frames with no detection |
-| Jump rejection | `active_learning.jump_trigger_px` | 200 | Ball position jumped unrealistically far |
+| Low confidence | `active_learning.low_conf_min` / `low_conf_max` | 0.10 -- 0.50 | Detection confidence in the uncertain range |
+| Lost ball run | `active_learning.lost_run_frames` | 5 | Consecutive frames with no detection |
+| Jump rejection | `active_learning.jump_trigger_px` | 150 | Ball position jumped unrealistically far |
 
 Additional gating:
 

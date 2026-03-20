@@ -145,8 +145,9 @@ The dashboard shows:
 - **Decision prompts** -- approve/reject buttons when the pipeline needs input (with countdown timers that auto-proceed)
 - **Job history** -- all completed and failed jobs with timing details
 - **Active learning** -- labeling status per match, Upload/Import buttons, Build Dataset and Train controls
-- **Staging** -- view files already uploaded to `/tank/stagging` and move one into ingest with **Send To Ingest**
+- **Staging** -- view files already uploaded to `/tank/stagging`, choose the ball/player models for the next ingest run, and move one into ingest with **Send To Ingest**
 - **Processed match reset** -- remove a completed match from the UI with an explicit **Are you sure?** confirmation, restore one source video to `/tank/stagging`, and requeue it when ready
+- **Detection Settings** -- a read-only page showing the effective processing configuration used by the dashboard/runtime
 
 The dashboard streams events in real time -- no need to refresh the page.
 

@@ -4,6 +4,7 @@
 - Purpose: maintain a practical roadmap for reliability, active learning, quality/performance, and operations.
 - Scope: future work only; no immediate implementation.
 - Historical note: several earlier backlog items are now implemented in the live repo, including dashboard-managed staging import, processed-match reset/requeue, dashboard-native dataset building, and container test parity. Use `README.md`, `docs/operator-guide.md`, and `docs/admin-guide.md` for current operational behavior.
+- Backlog hygiene: many original P0/P1 items are now shipped, including safe ingest, no-detect outputs, hard-frame export, dataset build/training flow, health checks, and metrics. Treat those entries as historical context unless they are explicitly reopened.
 - Related roadmap: the longer editable dashboard settings plan lives in [FUTURE_DETECTION_SETTINGS.md](./FUTURE_DETECTION_SETTINGS.md). The live dashboard currently exposes a readonly detection-settings page only.
 - Environment assumptions:
 - Paths: `/tank/ingest`, `/scratch/work`, `/tank/processed`, `/tank/highlights`, `/tank/models`, `/tank/labeling`, `/tank/logs`, `/tank/archive_raw`, `/backup`
@@ -98,8 +99,8 @@
 
 #### P1-08 Dataset build automation
 - Problem: assembling YOLO train/val data is ad hoc.
-- Proposed Solution: `scripts/build_dataset.sh` aggregates labeled frames into YOLO structure and writes `/tank/labeling/dataset.yaml`.
-- Config/Paths Impact: `/tank/labeling/train|val/images|labels`, `/tank/labeling/dataset.yaml`.
+- Proposed Solution: `scripts/build_dataset.sh` aggregates labeled frames into YOLO structure and writes `/tank/labeling/dataset/dataset.yaml`.
+- Config/Paths Impact: `/tank/labeling/dataset/train|val/images|labels`, `/tank/labeling/dataset/dataset.yaml`.
 - Acceptance Criteria:
 - Script builds deterministic train/val split.
 - `dataset.yaml` points to generated paths.

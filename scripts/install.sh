@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Soccer360 Installation Script
-# Run this on the server after completing SERVER_SETUP.md phases 1-7.
+# Run this on the server after reviewing the current installation guidance in docs/admin-guide.md.
 
 set -euo pipefail
 
@@ -17,7 +17,7 @@ echo "================================================"
 echo "Checking prerequisites..."
 
 if ! command -v docker &>/dev/null; then
-    echo "ERROR: Docker not installed. Complete SERVER_SETUP.md Phase 4 first."
+    echo "ERROR: Docker not installed. See docs/admin-guide.md -> Installation first."
     exit 1
 fi
 
@@ -28,7 +28,7 @@ if ! docker info &>/dev/null; then
 fi
 
 if ! command -v nvidia-smi &>/dev/null; then
-    echo "ERROR: NVIDIA driver not installed. Complete SERVER_SETUP.md Phase 3 first."
+    echo "ERROR: NVIDIA driver not installed. See docs/admin-guide.md -> Installation first."
     exit 1
 fi
 

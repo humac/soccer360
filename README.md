@@ -14,7 +14,8 @@ Automated 360 soccer video processing pipeline. Drop a 360 match recording into 
 ## Quick Start
 
 ```bash
-# 1. Complete server setup (see SERVER_SETUP.md)
+# 1. Review the current install/setup guide
+#    See docs/admin-guide.md
 
 # 2. Clone and install
 git clone <repo-url> ~/soccer360
@@ -92,13 +93,13 @@ The YOLO Detection Pipeline uses YOLO26l (`yolo26l.pt`, the latest Ultralytics Y
 
 **YOLO Detection Pipeline mode** (when `detection` section is present) resolves with stable precedence:
 
-1. `detector.model_path` (canonical override)
-2. `detection.path` (legacy fallback)
-3. `default` resolver path (`/tank/models/ball_best.pt` when present, else baked `/app/models/yolo26l.pt`)
-4. dashboard/CLI runtime ingest selection can optionally override config with `Auto` or a pinned model
+1. `detector.model_path` explicit non-default override
+2. dashboard/CLI runtime ingest selection (`Auto` or pinned) for future ingest jobs
+3. `detection.path` explicit legacy fallback
+4. `default` resolver path (`/tank/models/ball_best.pt` when present, else baked `/app/models/yolo26l.pt`)
 
-Default behavior is unchanged unless `detector.model_path` is set, or a legacy
-`detection.path` override is already in use.
+Default behavior is unchanged unless `detector.model_path` is set, the runtime
+ingest selector is changed, or a legacy `detection.path` override is already in use.
 
 Notes:
 
@@ -145,7 +146,7 @@ When the 360 camera sits between adjacent soccer fields, YOLO detects balls on b
 
 **Modes:**
 
-- **fixed** (default): Use `center_yaw_deg` directly. Camera front lens faces the target field, so `center_yaw_deg: 0` with `yaw_window_deg: 200` covers the front hemisphere.
+- **fixed** (default): Use `center_yaw_deg` directly. The current production-leaning default is tighter: `center_yaw_deg: 0` with `yaw_window_deg: 160`, `pitch_min_deg: -25`, and `pitch_max_deg: 15`.
 - **auto**: Analyzes the first N seconds of detections, builds a 5-degree yaw histogram, finds the dominant cluster via peak detection + circular mean, and locks the center for the rest of the run.
 
 **Runtime metadata:** `foi_meta.json` is written to the output directory with the effective center yaw, sample count, and whether fallback was used.
@@ -165,7 +166,7 @@ soccer360 dashboard
 soccer360 dashboard --port 9000 --host 127.0.0.1
 
 # Train/fine-tune ball detection model
-soccer360 train --epochs 50 --data /tank/labeling/dataset.yaml
+soccer360 train --epochs 50 --data /tank/labeling/dataset/dataset.yaml
 
 # Export low-confidence frames for labeling
 soccer360 export-hard-frames /path/to/video.mp4 /path/to/detections.jsonl --threshold 0.3
@@ -200,7 +201,7 @@ All commands accept `--config` / `-c` to specify a custom config file (default: 
   |   +-- <match_name>/
   |       +-- frames/       Auto-exported hard frames (JPEG)
   |       +-- labels/       YOLO-format labels (from Label Studio)
-  |       +-- hard_frames.json  Manifest with reasons + predicted bboxes
+  |       +-- hard_frames.json  Manifest with reasons + exported bbox metadata
   |       +-- labelstudio/  Label Studio task JSON
   |   +-- dataset/          Built dataset (train/val splits)
   +-- archive_raw/          Optional raw file archive
@@ -234,12 +235,12 @@ All parameters are in `configs/pipeline.yaml`:
 
 The virtual camera uses a multi-stage smoothing pipeline:
 
-1. **Hybrid ball + cluster blending** -- when ball detected: 85% ball / 15% player cluster; low confidence: 50/50; ball lost: 100% cluster; both lost: drift to center
+1. **Hybrid ball + cluster blending** -- when ball detected confidently: 95% ball / 5% player cluster; low confidence: 80% ball / 20% cluster; ball lost: 100% cluster; both lost: drift to center
 2. **Kalman filter** (4-state: yaw, pitch, velocity) -- handles noise and predicts through ball occlusions
 3. **EMA post-smoothing** -- removes residual jitter on yaw/pitch
 4. **Deadband** -- ignores movements below configurable angular threshold to prevent micro-oscillation
 5. **Smooth velocity gain** -- linear ramp from 0.3× to 1.0× based on ball speed (no binary step function)
-6. **Smooth pan speed interpolation** -- linearly blends between normal (60 deg/s) and fast (120 deg/s) limits based on ball speed (no binary flicker)
+6. **Smooth pan speed interpolation** -- linearly blends between normal (45 deg/s) and fast (90 deg/s) limits based on ball speed (no binary flicker)
 7. **FOV EMA smoothing** -- all FOV changes are smoothed via EMA (`fov_ema_alpha: 0.08`, ~12-frame half-life). Lost→found transitions are gradual, not instant snaps. Spread data is carried forward across cluster gaps to prevent FOV drops on missing frames.
 
 Ball-lost fallback (with center of play enabled):
@@ -402,8 +403,10 @@ A web-based monitoring UI on port 8088 provides real-time pipeline visibility an
 - Job history with phase-level metrics
 - Active learning management (labeling status, dataset build, model training)
 - Staging management (`/tank/stagging` -> `/tank/ingest`)
+- Ball + player ingest-model selectors in the Staging panel for future jobs
 - Remove Processed Match workflow with explicit confirmation before deletion
 - Media player for reviewing processed outputs
+- Read-only Detection Settings page showing the effective processing config
 
 **Start the dashboard:**
 

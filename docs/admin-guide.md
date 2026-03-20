@@ -272,12 +272,12 @@ Controls which part of the 360 view is analyzed. Essential when the camera sees 
  | `field_of_interest.enabled` | `true` | Enable FoI filtering |
  | `field_of_interest.center_mode` | `fixed` | `fixed` or `auto` center detection |
  | `field_of_interest.center_yaw_deg` | `0` | Center yaw for fixed mode (0 = camera front) |
- | `field_of_interest.yaw_window_deg` | `200` | Total yaw window (+-100 from center) |
- | `field_of_interest.pitch_min_deg` | `-45` | Minimum pitch (below horizon) |
- | `field_of_interest.pitch_max_deg` | `20` | Maximum pitch (above horizon) |
+ | `field_of_interest.yaw_window_deg` | `160` | Total yaw window (+-80 from center) |
+ | `field_of_interest.pitch_min_deg` | `-25` | Minimum pitch (below horizon) |
+ | `field_of_interest.pitch_max_deg` | `15` | Maximum pitch (above horizon) |
  | `field_of_interest.auto_sample_seconds` | `30` | Seconds to sample for auto mode |
 
-> **Tip:** If the camera sits between two fields, `fixed` mode with `center_yaw_deg: 0` and `yaw_window_deg: 200` covers the front hemisphere. Adjust `center_yaw_deg` if the target field is not directly in front of the camera.
+> **Tip:** If the camera sits between two fields, start with the current tighter default (`center_yaw_deg: 0`, `yaw_window_deg: 160`) and widen only if play is being clipped out.
 
 ### Camera Behavior
 
@@ -285,12 +285,12 @@ Controls the virtual broadcast camera movement:
 
  | Key | Default | Purpose |
 | ----- | --------- | --------- |
- | `camera.max_pan_speed_deg_per_sec` | `60.0` | Normal max pan speed |
- | `camera.max_fast_pan_speed_deg_per_sec` | `120.0` | Fast action max pan speed |
- | `camera.ema_alpha` | `0.15` | EMA smoothing (lower = smoother) |
+ | `camera.max_pan_speed_deg_per_sec` | `45.0` | Normal max pan speed |
+ | `camera.max_fast_pan_speed_deg_per_sec` | `90.0` | Fast action max pan speed |
+ | `camera.ema_alpha` | `0.10` | EMA smoothing (lower = smoother) |
  | `camera.default_fov` | `90.0` | Default field of view (degrees) |
  | `camera.min_fov` / `max_fov` | `80.0` / `100.0` | FOV range |
- | `camera.deadband_deg` | `0.5` | Ignore movements below this angle |
+ | `camera.deadband_deg` | `2.5` | Ignore movements below this angle |
  | `camera.lost_coast_frames` | `30` | Frames to coast on prediction when ball lost |
  | `camera.lost_drift_frames` | `90` | Frames before drifting to field center |
 
@@ -302,17 +302,18 @@ Controls hybrid camera tracking that blends ball position with player cluster da
 | ----- | --------- | --------- |
  | `center_of_play.enabled` | `true` | Enable hybrid camera tracking |
  | `center_of_play.player_class` | `0` | COCO class ID for person detection |
- | `center_of_play.min_player_conf` | `0.30` | Minimum confidence for player detections |
- | `center_of_play.trim_fraction` | `0.10` | Fraction of outlier players to discard from each end (removes isolated GKs) |
- | `center_of_play.min_players` | `4` | Minimum players required to form a valid cluster |
- | `center_of_play.ball_blend_weight` | `0.15` | Blend weight toward cluster when ball is detected (0 = pure ball, 1 = pure cluster) |
- | `center_of_play.ema_alpha` | `0.20` | Temporal smoothing for cluster centroid (lower = smoother) |
+ | `center_of_play.min_player_conf` | `0.60` | Minimum confidence for player detections |
+ | `center_of_play.trim_fraction` | `0.25` | Fraction of outlier players to discard from each end (removes isolated GKs) |
+ | `center_of_play.min_players` | `5` | Minimum players required to form a valid cluster |
+ | `center_of_play.ball_blend_weight` | `0.05` | Blend weight toward cluster when ball is detected (0 = pure ball, 1 = pure cluster) |
+ | `center_of_play.low_conf_ball_blend_weight` | `0.20` | Cluster influence cap when ball confidence is weak |
+ | `center_of_play.ema_alpha` | `0.15` | Temporal smoothing for cluster centroid (lower = smoother) |
  | `center_of_play.fov_from_spread` | `true` | Adapt FOV based on how spread out players are |
  | `center_of_play.spread_max_fov` | `105.0` | Maximum FOV when players are very spread out |
  | `center_of_play.spread_min_deg` | `15.0` | Player spread below this uses minimum FOV |
  | `center_of_play.spread_max_deg` | `60.0` | Player spread above this uses maximum FOV |
 
-> **Tip:** If the camera seems to wander away from ball action, reduce `ball_blend_weight` toward `0.0`. If the camera loses the action entirely when the ball is hard to detect, keep it at `0.15` or higher.
+> **Tip:** The current defaults keep confident ball tracking dominant. Increase `low_conf_ball_blend_weight` if you want more center-of-play influence during weak ball detections.
 >
 > **Note:** Player detection uses the pretrained COCO model and is not retrained by the active learning loop. The YOLO26l base model handles person detection on soccer fields, though spectator/parent filtering relies on confidence thresholds and FoI bounds.
 
@@ -395,10 +396,10 @@ Controls hybrid camera tracking that blends ball position with player cluster da
  | `active_learning.enabled` | `true` | Enable hard-frame export |
  | `active_learning.export_max_frames` | `600` | Max frames per match |
  | `active_learning.export_every_n_frames` | `2` | Gating (every Nth candidate) |
- | `active_learning.low_conf_min` | `0.20` | Low confidence band minimum |
+ | `active_learning.low_conf_min` | `0.10` | Low confidence band minimum |
  | `active_learning.low_conf_max` | `0.50` | Low confidence band maximum |
- | `active_learning.lost_run_frames` | `15` | Lost-ball streak threshold |
- | `active_learning.jump_trigger_px` | `200` | Jump distance threshold (pixels) |
+ | `active_learning.lost_run_frames` | `5` | Lost-ball streak threshold |
+ | `active_learning.jump_trigger_px` | `150` | Jump distance threshold (pixels) |
 
 ### Logging
 
@@ -414,14 +415,14 @@ Controls hybrid camera tracking that blends ball position with player cluster da
 In YOLO Detection Pipeline mode (when the `detection` section is present), the model is resolved in this order:
 
 1. **`detector.model_path`** -- explicit override (must exist if set to a non-default path)
-2. **`detection.path`** -- legacy config path
-3. **Default resolver** -- checks `/tank/models/ball_best.pt` first, then falls back to baked `/app/models/yolo26l.pt`
-4. **Runtime selector** -- the dashboard ingest selector can use `Auto` or a pinned model for future ingest jobs without editing the config file
+2. **Runtime selector** -- the dashboard Staging panel can choose `Auto` or a pinned model for future ingest jobs without editing the config file
+3. **`detection.path`** -- explicit legacy config path
+4. **Default resolver** -- checks `/tank/models/ball_best.pt` first, then falls back to baked `/app/models/yolo26l.pt`
 
 The runtime logs the resolved model once per job:
 
 ```text
-Model resolved: /app/models/ball_best.pt (source=default)
+Model resolved: /tank/models/ball_best.pt (source=default)
 ```
 
 ### Using a Custom Model
