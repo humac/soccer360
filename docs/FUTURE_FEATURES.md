@@ -10,16 +10,29 @@
 - Paths: `/tank/ingest`, `/scratch/work`, `/tank/processed`, `/tank/highlights`, `/tank/models`, `/tank/labeling`, `/tank/logs`, `/tank/archive_raw`, `/backup`
 - Primary GPU: device `1` (Tesla P40) for inference/training.
 
+## Status Snapshot
+- `Done`: `P0-01` to `P0-05`, `P1-06` to `P1-09`, `P2-19`, `P2-20`
+- `Partial / mostly done`: `P1-10`, `P1-11`, `P2-13`, `P2-16`, `P2-17`
+- `Not started / still future`: `P1-12`, `P2-14`, `P2-15`, `P2-18`
+
+## Recommended Next Work
+- `P1-11 Highlight heuristics upgrades`: highest-value next iteration because the core highlight framework, scoring, and manifest already exist; remaining work is tuning and validation quality.
+- `P1-10 Reprocess old matches with new model`: the dashboard reset/requeue flow exists, but a clearer explicit reprocess contract would reduce operator ambiguity.
+- `P2-17 Insta360 input prep guide`: operationally useful and relatively cheap if you want cleaner ingest instructions and preflight checks.
+- `P2-13 TensorRT export support`: worth doing if detection throughput is a real bottleneck on current hardware, but it is not as urgent as highlight quality or operator clarity.
+- `P2-15 Better scratch cleanup policy`: helpful for long-term maintenance, but lower urgency than quality and reprocess UX.
+
 ## Priorities (P0/P1/P2)
-- `P0 Must-have reliability/ops`: items 1-5
-- `P1 Active learning + highlight quality`: items 6-12
-- `P2 Performance/ergonomics/monitoring`: items 13-20
+- `Completed reliability/ops`: items 1-5
+- `Best near-term product work`: items 10-11, then 17, then 13
+- `Longer-tail infrastructure`: items 12, 14-16, 18
 
 ## Feature List
 
 ### P0 — Must-have reliability/ops
 
 #### P0-01 Safe ingest / atomic copy
+- Status: `Done`
 - Problem: partial copies trigger ffprobe/read failures and unstable jobs.
 - Proposed Solution: watcher ignores `*.part`, `*.tmp`, hidden files; only processes allowed extensions (`.mp4`, `.mov`) after size stability for N seconds; document "copy as `.part` then rename".
 - Config/Paths Impact: `watcher.ignore_suffixes`, stability window config; ingest at `/tank/ingest`.
@@ -31,6 +44,7 @@
 - Risks: very slow network copies may appear stable briefly if polling is too coarse.
 
 #### P0-02 Model store + fallback
+- Status: `Done`
 - Problem: missing model can crash pipeline.
 - Proposed Solution: resolve model in order `/tank/models/ball_best.pt` -> `/app/models/yolo26l.pt` -> `NO_DETECT`; log chosen mode/path.
 - Config/Paths Impact: model path resolution, `/tank/models`, `/app/models`.
@@ -42,6 +56,7 @@
 - Risks: ambiguity if stale symlink in `/tank/models`.
 
 #### P0-03 NO_DETECT mode outputs
+- Status: `Done`
 - Problem: current failure path can prevent usable outputs when detection unavailable.
 - Proposed Solution: generate `tactical_wide.mp4` and static-path `broadcast.mp4`; write `metadata.json` with `mode="no_detect"`.
 - Config/Paths Impact: output flow under `/tank/processed/<match>`.
@@ -53,6 +68,7 @@
 - Risks: broadcast quality reduced by static framing.
 
 #### P0-04 Container model mount standardization
+- Status: `Done`
 - Problem: repo-local `./models` diverges from persistent model store.
 - Proposed Solution: standardize compose mount to `/tank/models:/app/models`; verify write permissions.
 - Config/Paths Impact: `docker-compose.yml`, `/tank/models`.
@@ -64,6 +80,7 @@
 - Risks: host ownership mismatch causes permission denied.
 
 #### P0-05 Ownership/permissions hardening
+- Status: `Done`
 - Problem: root-owned paths break automation and reproducibility.
 - Proposed Solution: define expected owner/group/mode for `/tank/*` and repo path ownership; add setup/verification notes.
 - Config/Paths Impact: `/tank` datasets and `/tank/pipeline` repo ownership docs.
@@ -76,6 +93,7 @@
 ### P1 — Active learning loop (makes system improve)
 
 #### P1-06 Hard-frame exporter during processing
+- Status: `Done`
 - Problem: labeling data collection is manual and inconsistent.
 - Proposed Solution: auto-export hard frames for low confidence, lost-ball streaks, large track jumps into `/tank/labeling/<match>/frames`; write manifest.
 - Config/Paths Impact: `/tank/labeling/<match>/frames`, `/tank/labeling/<match>/hard_frames.json`, thresholds in config.
@@ -87,6 +105,7 @@
 - Risks: over-export volume if thresholds too permissive.
 
 #### P1-07 Label Studio workflow hardening
+- Status: `Done`
 - Problem: imports/tasks are manual and error-prone.
 - Proposed Solution: helper script generates task JSON under `/tank/labeling/<match>/labelstudio`; docs constrain labeling to ball bbox class only.
 - Config/Paths Impact: labelstudio import artifacts and README workflow.
@@ -98,6 +117,7 @@
 - Risks: Label Studio local-files setup differs by deployment.
 
 #### P1-08 Dataset build automation
+- Status: `Done`
 - Problem: assembling YOLO train/val data is ad hoc.
 - Proposed Solution: `scripts/build_dataset.sh` aggregates labeled frames into YOLO structure and writes `/tank/labeling/dataset/dataset.yaml`.
 - Config/Paths Impact: `/tank/labeling/dataset/train|val/images|labels`, `/tank/labeling/dataset/dataset.yaml`.
@@ -109,6 +129,7 @@
 - Risks: inconsistent label formats across exports.
 
 #### P1-09 Training + model promotion
+- Status: `Done`
 - Problem: model refresh process is inconsistent and hard to audit.
 - Proposed Solution: `scripts/train_ball.sh [epochs]` trains on GPU 1, writes `/tank/models/ball_vTIMESTAMP.pt`, promotes best to `/tank/models/ball_best.pt`, logs to `/tank/logs`.
 - Config/Paths Impact: model artifacts and training logs.
@@ -121,6 +142,8 @@
 - Risks: accidental promotion of regressed model without eval gate.
 
 #### P1-10 Reprocess old matches with new model
+- Status: `Partial`
+- Current repo state: dashboard reset/requeue exists and output folders naturally version via `_runN`, but there is still no single explicit reprocess command/contract covering overwrite vs. create-new behavior.
 - Problem: historical outputs do not benefit from model improvements.
 - Proposed Solution: add reprocess command/script for prior ingest sources; support overwrite or create new output folder.
 - Config/Paths Impact: `/tank/processed/<match>`, possible `_runN` behavior.
@@ -134,6 +157,8 @@
 ### P1 — Highlight detection upgrades
 
 #### P1-11 Highlight heuristics upgrades
+- Status: `Partial`
+- Current repo state: the highlight system already combines ball and cluster signals, score weights, dedup spacing, ranking, clip caps, and writes `highlights.json`; remaining work is quality tuning and validation against real matches.
 - Problem: false positives from midfield action.
 - Proposed Solution: combine goal-box proximity + speed spikes + camera pan/zoom magnitude; add pre/post padding config, dedup logic, max clips per match.
 - Config/Paths Impact: highlight thresholds and clip limits in config.
@@ -145,6 +170,7 @@
 - Risks: overfitting heuristics to specific field/camera placement.
 
 #### P1-12 Optional NO_DETECT highlights via motion proxy
+- Status: `Not started`
 - Problem: no ball track means highlights may be missing entirely.
 - Proposed Solution: optional fallback using camera/global motion proxies; output includes disclaimer "no ball track".
 - Config/Paths Impact: highlight mode flag and metadata annotation.
@@ -157,6 +183,8 @@
 ### P2 — Performance & quality
 
 #### P2-13 TensorRT export support
+- Status: `Partial`
+- Current repo state: TensorRT paths/config and model export hooks exist, but the end-to-end auto-select / benchmarked production path is not yet the default V1 detector flow.
 - Problem: inference throughput may be suboptimal on P40.
 - Proposed Solution: optional `.engine` export and auto-select if `tensorrt_path` exists; benchmark FPS.
 - Config/Paths Impact: model backend/tensorrt path entries, `/tank/models`.
@@ -168,6 +196,7 @@
 - Risks: engine compatibility drift across CUDA/container changes.
 
 #### P2-14 Batch/segment processing & resume
+- Status: `Not started`
 - Problem: crashes force full reruns and wasted compute.
 - Proposed Solution: resume from partial `/scratch/work/<job>` and skip completed phases.
 - Config/Paths Impact: scratch work state files/checkpoints.
@@ -178,6 +207,7 @@
 - Risks: stale partial artifacts causing inconsistent outputs.
 
 #### P2-15 Better scratch cleanup policy
+- Status: `Not started`
 - Problem: either over-cleaning (lose debug context) or disk bloat.
 - Proposed Solution: retention-days policy, debug no-delete flag, periodic cleanup notes/cron.
 - Config/Paths Impact: `/scratch/work` retention config and ops docs.
@@ -188,6 +218,8 @@
 - Risks: misconfigured retention fills NVMe.
 
 #### P2-16 Multi-GPU selection
+- Status: `Partial`
+- Current repo state: the deployment is pinned to GPU device `1` and some device settings are configurable, but there is not yet a clean full-runtime multi-GPU selection story.
 - Problem: hardcoded GPU selection limits flexibility.
 - Proposed Solution: config-driven GPU index selection, default P40 (`1`), optional P2000 use for parallel workloads.
 - Config/Paths Impact: GPU index setting in config/compose.
@@ -200,6 +232,8 @@
 ### P2 — Insta360 ingestion ergonomics
 
 #### P2-17 Insta360 input prep guide
+- Status: `Partial`
+- Current repo state: the operator docs already warn that raw `.insv` footage must be stitched/exported first; a stronger dedicated prep guide and optional validation helper are still open.
 - Problem: raw Insta360 `.insv` recordings are not directly processable.
 - Proposed Solution: document X5 two-file recording behavior and required stitch/export to equirectangular MP4; optional validation helper for expected dimensions (e.g., 5760x2880).
 - Config/Paths Impact: ingest SOP docs, optional preflight script.
@@ -210,6 +244,7 @@
 - Risks: model assumptions break on non-equirectangular exports.
 
 #### P2-18 Optional automatic stitch trigger (idea)
+- Status: `Not started`
 - Problem: manual stitch step is operational friction.
 - Proposed Solution: documented future concept to detect `.insv` pairs in a staging folder and call external stitch tool.
 - Config/Paths Impact: staging path and external-tool integration notes.
@@ -222,6 +257,7 @@
 ### P2 — Ops / monitoring
 
 #### P2-19 Health checks
+- Status: `Done`
 - Problem: degraded services may go unnoticed; logs may grow unchecked.
 - Proposed Solution: Docker healthchecks for worker "watch mode alive" and Label Studio; document log rotation strategy under `/tank/logs`.
 - Config/Paths Impact: compose healthchecks, log retention/rotation docs.
@@ -232,6 +268,7 @@
 - Risks: false unhealthy states if checks are too strict.
 
 #### P2-20 Metrics
+- Status: `Done`
 - Problem: limited observability for throughput/performance.
 - Proposed Solution: write per-job stats JSON (fps processed, GPU util snapshot, total time) to `/tank/processed/<match>/metadata.json`.
 - Config/Paths Impact: metadata schema extension in processed outputs.
