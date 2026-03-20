@@ -254,6 +254,19 @@ class TestClusterDensity:
         # Events where count >= threshold (all of them)
         assert isinstance(events, list)
 
+    def test_density_ignores_carried_forward_zero_player_clusters(self, highlight_config):
+        """Carried-forward cluster frames with player_count=0 should not collapse threshold to zero."""
+        detector = HighlightDetector(highlight_config)
+        clusters = _make_clusters(20, count=10)
+        for i in range(5, 15):
+            clusters[i]["cluster"]["player_count"] = 0
+            clusters[i]["cluster"]["confidence"] = 0.0
+
+        events = detector._detect_cluster_density_spike(clusters, fps=30.0)
+
+        event_frames = {e["frame"] for e in events}
+        assert not any(5 <= frame < 15 for frame in event_frames)
+
 
 # ------------------------------------------------------------------
 # Scoring tests

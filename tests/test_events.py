@@ -161,6 +161,31 @@ class TestEventStore:
         assert store.get_decision(decision_id) is None
         assert store.get_jobs(limit=10) == []
 
+    def test_clear_history_purges_all_related_rows(self):
+        """Clearing history removes jobs and all dependent history tables."""
+        store = EventStore(":memory:")
+        store.job_created("job1", "/scratch/work/job1/match.mp4")
+        store.job_started("job1", mode="normal")
+        store.phase_started("job1", "detection")
+        store.phase_completed("job1", "detection", duration_sec=1.0)
+        store.record_gpu_snapshot("job1", "detection", {"gpu_pct": 50})
+        decision_id = store.request_decision("job1", "confirm", "Continue?", ["yes", "no"], "yes", 30)
+        store.resolve_decision(decision_id, "yes", status="approved")
+        store.job_completed("job1")
+
+        summary = store.clear_history()
+
+        assert summary == {
+            "jobs_deleted": 1,
+            "phase_events_deleted": 1,
+            "metrics_snapshots_deleted": 1,
+            "decisions_deleted": 1,
+        }
+        assert store.get_jobs(limit=10) == []
+        assert store.get_job("job1") is None
+        assert store.get_phases("job1") == []
+        assert store.get_decision(decision_id) is None
+
     def test_decision_lifecycle(self):
         """Decisions can be created and resolved."""
         store = EventStore(":memory:")

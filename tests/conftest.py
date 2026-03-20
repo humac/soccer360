@@ -34,6 +34,7 @@ def test_config() -> dict:
             },
             "detector": {
                 "runtime_override_path": f"{tmpdir}/data/ingest_model_selection.json",
+                "player_runtime_override_path": f"{tmpdir}/data/ingest_player_model_selection.json",
                 "batch_size": 4,
                 "resolution": [320, 160],
                 "confidence_threshold": 0.25,

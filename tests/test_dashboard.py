@@ -36,11 +36,13 @@ def dashboard_config(tmp_path: Path):
     }
     for path in paths.values():
         Path(path).mkdir(parents=True, exist_ok=True)
+    (Path(paths["models"]) / "yolo26l.pt").write_bytes(b"base")
 
     return {
         "paths": paths,
         "detector": {
             "runtime_override_path": str(tmp_path / "data" / "ingest_model_selection.json"),
+            "player_runtime_override_path": str(tmp_path / "data" / "ingest_player_model_selection.json"),
         },
         "watcher": {
             "extensions": [".mp4", ".insv", ".mov"],
@@ -138,6 +140,35 @@ class TestDashboardAPI:
         resp = client.get("/api/jobs")
         data = resp.json()
         assert len(data) == 2
+
+    def test_clear_history_purges_dashboard_job_records(self, client, store):
+        store.job_created("job1", "match.mp4")
+        store.job_started("job1", mode="normal")
+        store.phase_started("job1", "detection")
+        store.phase_completed("job1", "detection", duration_sec=1.0)
+        store.record_gpu_snapshot("job1", "detection", {"gpu_pct": 50})
+        decision_id = store.request_decision("job1", "confirm", "Continue?", ["yes", "no"], "yes", 30)
+        store.resolve_decision(decision_id, "yes", status="approved")
+        store.job_completed("job1")
+
+        resp = client.post("/api/history/clear")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["jobs_deleted"] == 1
+        assert data["phase_events_deleted"] == 1
+        assert data["metrics_snapshots_deleted"] == 1
+        assert data["decisions_deleted"] == 1
+        assert store.get_jobs(limit=10) == []
+        assert store.get_phases("job1") == []
+        assert store.get_decision(decision_id) is None
+
+    def test_clear_history_blocks_active_jobs(self, client, store):
+        store.job_created("job1", "match.mp4")
+
+        resp = client.post("/api/history/clear")
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "Cannot clear history while a pipeline job is queued or running."
 
     def test_get_job_detail(self, client, store):
         """GET /api/jobs/{id} returns job with phases."""
@@ -326,7 +357,7 @@ class TestDashboardAPI:
         staging_dir = Path(dashboard_config["paths"]["stagging"])
         ingest_dir = Path(dashboard_config["paths"]["ingest"])
 
-        archived_video = archive_dir / "match_a_archived.mp4"
+        archived_video = archive_dir / "match_a_20260319_job1.mp4"
         archived_video.write_bytes(b"archived-video")
 
         ingest_source = ingest_dir / "match_a.mp4"
@@ -394,7 +425,7 @@ class TestDashboardAPI:
         assert data["dataset_invalidated"] is True
         assert data["purged_job_ids"] == ["job1", "job2"]
         assert data["purged_job_count"] == 2
-        assert data["restored_staging_path"] == str(staging_dir / "match_a_reprocess.mp4")
+        assert data["restored_staging_path"] == str(staging_dir / "match_a.mp4")
         assert data["warnings"] == []
 
         assert not (processed_dir / "match_a").exists()
@@ -404,11 +435,45 @@ class TestDashboardAPI:
         assert not (labeling_dir / "match_a").exists()
         assert not (labeling_dir / "dataset").exists()
         assert not archived_video.exists()
-        assert (staging_dir / "match_a_reprocess.mp4").exists()
+        assert (staging_dir / "match_a.mp4").exists()
         assert store.get_job("job1") is None
         assert store.get_job("job2") is None
         reloaded = ProcessedIngestStore(state_path)
         assert str(ingest_source.resolve(strict=False)) not in reloaded._entries
+
+    def test_reset_match_endpoint_restores_original_name_with_collision_suffix(
+        self, client, store, dashboard_config
+    ):
+        processed_dir = Path(dashboard_config["paths"]["processed"])
+        archive_dir = Path(dashboard_config["paths"]["archive_raw"])
+        staging_dir = Path(dashboard_config["paths"]["stagging"])
+        original_name = "match_c_original.mp4"
+
+        archived_video = archive_dir / "match_c_original_20260319_jobc.mp4"
+        archived_video.write_bytes(b"archived-video")
+        (staging_dir / original_name).write_bytes(b"existing-staged-video")
+
+        _write_json(
+            processed_dir / "match_c" / "metadata.json",
+            {
+                "game_name": "match_c",
+                "job_id": "job_c",
+                "ingest_source_path": str(Path(dashboard_config["paths"]["ingest"]) / original_name),
+                "ingest_archived_path": str(archived_video),
+            },
+        )
+        (processed_dir / "match_c" / "broadcast.mp4").write_bytes(b"broadcast")
+        store.job_created("job_c", "/scratch/work/job_c/match_c.mp4")
+        store.job_started("job_c", mode="normal")
+        store.job_completed("job_c")
+
+        resp = client.post("/api/media/matches/match_c/reset")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["restored_staging_path"] == str(staging_dir / "match_c_original_01.mp4")
+        assert (staging_dir / "match_c_original.mp4").read_bytes() == b"existing-staged-video"
+        assert (staging_dir / "match_c_original_01.mp4").read_bytes() == b"archived-video"
 
     def test_reset_match_endpoint_warns_when_no_restore_source(self, client, store, dashboard_config):
         processed_dir = Path(dashboard_config["paths"]["processed"])
@@ -508,6 +573,7 @@ class TestDashboardAPI:
         dashboard_config["reframer"] = {"output_resolution": [1920, 1080]}
         dashboard_config["highlights"] = {"max_clips": 20}
         dashboard_config["active_learning"] = {"export_max_frames": 600}
+        dashboard_config["detection"]["player_path"] = str(configured_ingest)
 
         with patch("src.dashboard.create_event_store", return_value=EventStore(":memory:")):
             app = create_app(dashboard_config)
@@ -522,7 +588,7 @@ class TestDashboardAPI:
 
         group_titles = [group["title"] for group in data["groups"]]
         assert group_titles == [
-            "Ingest Model",
+            "Ingest Models",
             "Detection",
             "Field of Interest",
             "Ball Stabilization / Filters",
@@ -535,11 +601,15 @@ class TestDashboardAPI:
 
         ingest_group = data["groups"][0]
         assert any(
-            field["config_path"] == "runtime.resolved_path" and field["value"] == str(configured_ingest)
+            field["config_path"] == "runtime.ball.resolved_path" and field["value"] == str(configured_ingest)
             for field in ingest_group["fields"]
         )
         assert any(
-            field["config_path"] == "runtime.resolved_source" and field["value"] == "detection.path"
+            field["config_path"] == "runtime.ball.resolved_source" and field["value"] == "detection.path"
+            for field in ingest_group["fields"]
+        )
+        assert any(
+            field["config_path"] == "runtime.player.resolved_path" and field["value"] == str(configured_ingest)
             for field in ingest_group["fields"]
         )
 
@@ -590,7 +660,10 @@ class TestTrainingAPI:
         configured_model.write_bytes(b"configured")
         configured_ingest.write_bytes(b"ingest")
         dashboard_config["model"] = {"base_model": str(configured_model)}
-        dashboard_config["detection"] = {"path": str(configured_ingest)}
+        dashboard_config["detection"] = {
+            "path": str(configured_ingest),
+            "player_path": str(configured_ingest),
+        }
 
         with patch("src.dashboard.create_event_store", return_value=EventStore(":memory:")):
             app = create_app(dashboard_config)
@@ -629,7 +702,10 @@ class TestTrainingAPI:
         models_dir = Path(dashboard_config["paths"]["models"])
         configured_ingest = models_dir / "yolo26l.pt"
         configured_ingest.write_bytes(b"ingest")
-        dashboard_config["detection"] = {"path": str(configured_ingest)}
+        dashboard_config["detection"] = {
+            "path": str(configured_ingest),
+            "player_path": str(configured_ingest),
+        }
 
         with patch("src.dashboard.create_event_store", return_value=EventStore(":memory:")):
             app = create_app(dashboard_config)
@@ -642,6 +718,9 @@ class TestTrainingAPI:
         assert data["resolved_path"] == str(configured_ingest)
         assert data["resolved_source"] == "detection.path"
         assert data["config_locked"] is False
+        assert data["ball"]["resolved_path"] == str(configured_ingest)
+        assert data["player"]["resolved_path"] == str(configured_ingest)
+        assert data["dual_model_enabled"] is False
 
     def test_set_inference_model_to_pinned_updates_runtime_selection(self, client, dashboard_config):
         models_dir = Path(dashboard_config["paths"]["models"])
@@ -664,11 +743,11 @@ class TestTrainingAPI:
         assert data["selection_mode"] == "pinned"
         assert data["selected_path"] == str(selected_model)
         assert data["resolved_path"] == str(selected_model)
-        assert data["resolved_source"] == "runtime.pinned"
+        assert data["resolved_source"] == "runtime.pinned.ball"
 
         models_resp = local_client.get("/api/training/models")
         models_data = models_resp.json()
-        assert any(item["path"] == str(selected_model) and item["is_inference_active"] for item in models_data)
+        assert any(item["path"] == str(selected_model) and item["is_ball_inference_active"] for item in models_data)
         assert any(item["path"] == str(selected_model) and item["can_delete"] is False for item in models_data)
 
     def test_set_inference_model_to_auto_prefers_ball_best(self, client, dashboard_config):
@@ -688,7 +767,33 @@ class TestTrainingAPI:
         data = resp.json()
         assert data["selection_mode"] == "auto"
         assert data["resolved_path"] == str(active_model)
-        assert data["resolved_source"] == "runtime.auto"
+        assert data["resolved_source"] == "runtime.auto.ball"
+
+    def test_set_inference_models_supports_dual_role_selection(self, client, dashboard_config):
+        models_dir = Path(dashboard_config["paths"]["models"])
+        ball_model = models_dir / "ball_only.pt"
+        player_model = models_dir / "player_base.pt"
+        ball_model.write_bytes(b"ball")
+        player_model.write_bytes(b"player")
+
+        with patch("src.dashboard.create_event_store", return_value=EventStore(":memory:")):
+            app = create_app(dashboard_config)
+        local_client = _ASGIClient(app)
+
+        resp = local_client.post(
+            "/api/inference/model",
+            json={
+                "ball": {"mode": "pinned", "path": str(ball_model)},
+                "player": {"mode": "pinned", "path": str(player_model)},
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ball"]["resolved_path"] == str(ball_model)
+        assert data["ball"]["resolved_source"] == "runtime.pinned.ball"
+        assert data["player"]["resolved_path"] == str(player_model)
+        assert data["player"]["resolved_source"] == "runtime.pinned.player"
+        assert data["dual_model_enabled"] is True
 
     def test_set_inference_model_rejects_when_locked_by_detector_config(self, client, dashboard_config):
         models_dir = Path(dashboard_config["paths"]["models"])
@@ -816,6 +921,25 @@ class TestTrainingAPI:
         set_resp = local_client.post(
             "/api/inference/model",
             json={"mode": "pinned", "path": str(selected_model)},
+        )
+        assert set_resp.status_code == 200
+
+        resp = local_client.post("/api/training/models/delete", json={"path": str(selected_model)})
+
+        assert resp.status_code == 409
+        assert selected_model.exists()
+
+    def test_delete_model_endpoint_rejects_runtime_selected_player_model(self, client, dashboard_config):
+        models_dir = Path(dashboard_config["paths"]["models"])
+        selected_model = models_dir / "player_experiment.pt"
+        selected_model.write_bytes(b"selected")
+
+        with patch("src.dashboard.create_event_store", return_value=EventStore(":memory:")):
+            app = create_app(dashboard_config)
+        local_client = _ASGIClient(app)
+        set_resp = local_client.post(
+            "/api/inference/model",
+            json={"player": {"mode": "pinned", "path": str(selected_model)}},
         )
         assert set_resp.status_code == 200
 

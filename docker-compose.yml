@@ -46,11 +46,12 @@ services:
     ports:
       - "8080:8080"
     volumes:
+      - labelstudio_data:/label-studio/data
       - /tank/labeling:/label-studio/data/labeling
-      - labelstudio_data:/label-studio/data/db
     environment:
       - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
       - LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/data
+      - SECRET_KEY=${LABEL_STUDIO_SECRET_KEY:-soccer360-local-change-me}
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\""]
       interval: 60s

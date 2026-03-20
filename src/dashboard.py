@@ -73,6 +73,7 @@ from .detector import (
     is_v1_model_selection_locked_by_config,
     load_v1_runtime_model_selection,
     resolve_v1_model_path_and_source,
+    resolve_v1_player_model_path_and_source,
     save_v1_runtime_model_selection,
 )
 from .watcher import ProcessedIngestStore
@@ -88,6 +89,7 @@ DETECTION_SETTINGS_SECTIONS = [
         "title": "Detection",
         "fields": [
             {"path": "detection.path", "label": "YOLO pipeline model path", "help": "Configured model path for the YOLO Detection Pipeline."},
+            {"path": "detector.player_model_path", "label": "Player model path", "help": "Configured player-model path when using dual-model ingest."},
             {"path": "detection.classes", "label": "Classes", "help": "YOLO class IDs used during the YOLO Detection Pipeline."},
             {"path": "detection.conf", "label": "Confidence threshold", "help": "Minimum confidence for accepted detections in the YOLO Detection Pipeline."},
             {"path": "detection.iou", "label": "NMS IoU threshold", "help": "Non-max suppression overlap threshold for the YOLO Detection Pipeline."},
@@ -323,43 +325,85 @@ def _build_detection_settings_payload(config: dict, models_dir: Path) -> dict:
     groups = [
         {
             "key": "ingest_model",
-            "title": "Ingest Model",
+            "title": "Ingest Models",
             "fields": [
                 {
-                    "label": "Resolved model path",
-                    "config_path": "runtime.resolved_path",
-                    "help": "The effective model path future ingest jobs will resolve today.",
-                    "value": inference.get("resolved_path"),
+                    "label": "Ball model path",
+                    "config_path": "runtime.ball.resolved_path",
+                    "help": "The effective ball-detection model future ingest jobs will resolve today.",
+                    "value": inference.get("ball", {}).get("resolved_path"),
                 },
                 {
-                    "label": "Resolved source",
-                    "config_path": "runtime.resolved_source",
-                    "help": "Which resolver source selected the effective ingest model.",
-                    "value": inference.get("resolved_source"),
+                    "label": "Ball model source",
+                    "config_path": "runtime.ball.resolved_source",
+                    "help": "Which resolver source selected the effective ball model.",
+                    "value": inference.get("ball", {}).get("resolved_source"),
                 },
                 {
-                    "label": "Selection mode",
-                    "config_path": "runtime.selection_mode",
-                    "help": "Dashboard-managed ingest model selection mode. Change this in Staging.",
-                    "value": inference.get("selection_mode"),
+                    "label": "Ball selection mode",
+                    "config_path": "runtime.ball.selection_mode",
+                    "help": "Dashboard-managed ball-model selection mode. Change this in Staging.",
+                    "value": inference.get("ball", {}).get("selection_mode"),
                 },
                 {
-                    "label": "Pinned model path",
-                    "config_path": "runtime.selected_path",
-                    "help": "Pinned path when runtime ingest selection is set to pinned mode.",
-                    "value": inference.get("selected_path"),
+                    "label": "Ball pinned path",
+                    "config_path": "runtime.ball.selected_path",
+                    "help": "Pinned path when runtime ball-model selection is set to pinned mode.",
+                    "value": inference.get("ball", {}).get("selected_path"),
                 },
                 {
-                    "label": "Selection file",
+                    "label": "Ball selection file",
                     "config_path": "detector.runtime_override_path",
-                    "help": "Path where dashboard-managed ingest model selection is stored.",
-                    "value": inference.get("selection_path"),
+                    "help": "Path where dashboard-managed ball-model selection is stored.",
+                    "value": inference.get("ball", {}).get("selection_path"),
                 },
                 {
-                    "label": "Config lock active",
+                    "label": "Ball config lock active",
                     "config_path": "detector.model_path",
-                    "help": "True when detector.model_path explicitly locks runtime selection changes.",
-                    "value": inference.get("config_locked"),
+                    "help": "True when detector.model_path explicitly locks runtime ball-model selection changes.",
+                    "value": inference.get("ball", {}).get("config_locked"),
+                },
+                {
+                    "label": "Player model path",
+                    "config_path": "runtime.player.resolved_path",
+                    "help": "The effective player-detection model future ingest jobs will resolve today.",
+                    "value": inference.get("player", {}).get("resolved_path"),
+                },
+                {
+                    "label": "Player model source",
+                    "config_path": "runtime.player.resolved_source",
+                    "help": "Which resolver source selected the effective player model.",
+                    "value": inference.get("player", {}).get("resolved_source"),
+                },
+                {
+                    "label": "Player selection mode",
+                    "config_path": "runtime.player.selection_mode",
+                    "help": "Dashboard-managed player-model selection mode. Change this in Staging.",
+                    "value": inference.get("player", {}).get("selection_mode"),
+                },
+                {
+                    "label": "Player pinned path",
+                    "config_path": "runtime.player.selected_path",
+                    "help": "Pinned path when runtime player-model selection is set to pinned mode.",
+                    "value": inference.get("player", {}).get("selected_path"),
+                },
+                {
+                    "label": "Player selection file",
+                    "config_path": "detector.player_runtime_override_path",
+                    "help": "Path where dashboard-managed player-model selection is stored.",
+                    "value": inference.get("player", {}).get("selection_path"),
+                },
+                {
+                    "label": "Player config lock active",
+                    "config_path": "detector.player_model_path",
+                    "help": "True when detector.player_model_path explicitly locks runtime player-model selection changes.",
+                    "value": inference.get("player", {}).get("config_locked"),
+                },
+                {
+                    "label": "Dual-model ingest enabled",
+                    "config_path": "runtime.dual_model_enabled",
+                    "help": "True when future ingest runs will use separate ball and player models in a single detection pass.",
+                    "value": inference.get("dual_model_enabled"),
                 },
             ],
         }
@@ -817,15 +861,24 @@ def _collect_available_models(config: dict, models_dir: Path) -> list[dict]:
     configured_base = _path_identity(config.get("model", {}).get("base_model"))
     configured_detection = _path_identity(config.get("detection", {}).get("path"))
     configured_detector = _path_identity(config.get("detector", {}).get("model_path"))
-    active_inference_path = _path_identity(
-        _inference_model_status(config, models_dir).get("resolved_path")
+    configured_player_detection = _path_identity(config.get("detection", {}).get("player_path"))
+    configured_player_detector = _path_identity(config.get("detector", {}).get("player_model_path"))
+    inference_status = _inference_model_status(config, models_dir)
+    active_ball_inference_path = _path_identity(
+        inference_status.get("ball", {}).get("resolved_path")
+    )
+    active_player_inference_path = _path_identity(
+        inference_status.get("player", {}).get("resolved_path")
     )
     protected_paths = {
         p for p in (
             configured_base,
             configured_detection,
             configured_detector,
-            active_inference_path,
+            configured_player_detection,
+            configured_player_detector,
+            active_ball_inference_path,
+            active_player_inference_path,
         ) if p
     }
 
@@ -840,7 +893,9 @@ def _collect_available_models(config: dict, models_dir: Path) -> list[dict]:
     for configured in (
         config.get("model", {}).get("base_model"),
         config.get("detection", {}).get("path"),
+        config.get("detection", {}).get("player_path"),
         config.get("detector", {}).get("model_path"),
+        config.get("detector", {}).get("player_model_path"),
         "/app/models/yolo26l.pt",
     ):
         if not configured:
@@ -870,9 +925,16 @@ def _collect_available_models(config: dict, models_dir: Path) -> list[dict]:
             "name": Path(identity).name,
             "size_mb": round(Path(identity).stat().st_size / 1e6, 1),
             "is_active": Path(identity).name == "ball_best.pt",
-            "is_inference_active": identity == active_inference_path,
+            "is_ball_inference_active": identity == active_ball_inference_path,
+            "is_player_inference_active": identity == active_player_inference_path,
+            "is_inference_active": identity in {active_ball_inference_path, active_player_inference_path},
             "is_configured_base": identity == configured_base,
-            "is_configured_inference": identity in {configured_detection, configured_detector},
+            "is_configured_inference": identity in {
+                configured_detection,
+                configured_detector,
+                configured_player_detection,
+                configured_player_detector,
+            },
             "can_delete": (
                 is_local
                 and Path(identity).name != "ball_best.pt"
@@ -891,12 +953,17 @@ def _collect_available_models(config: dict, models_dir: Path) -> list[dict]:
     )
 
 
-def _inference_model_status(config: dict, models_dir: Path) -> dict:
-    """Return dashboard-friendly ingest model selection state."""
-    selection = load_v1_runtime_model_selection(config)
+def _inference_role_status(config: dict, models_dir: Path, *, role: str) -> dict:
+    """Return dashboard-friendly ingest model selection state for one role."""
+    selection = load_v1_runtime_model_selection(config, role=role)
+    resolver = (
+        resolve_v1_model_path_and_source
+        if role == "ball"
+        else resolve_v1_player_model_path_and_source
+    )
     resolution_error = None
     try:
-        resolved_path, resolved_source = resolve_v1_model_path_and_source(
+        resolved_path, resolved_source = resolver(
             config,
             models_dir=str(models_dir),
         )
@@ -904,13 +971,32 @@ def _inference_model_status(config: dict, models_dir: Path) -> dict:
         resolved_path, resolved_source = None, "unresolved"
         resolution_error = str(exc)
     return {
+        "role": role,
         "selection_mode": selection["mode"],
         "selected_path": selection.get("path"),
         "selection_path": selection["selection_path"],
         "resolved_path": resolved_path,
         "resolved_source": resolved_source,
         "resolution_error": resolution_error,
-        "config_locked": is_v1_model_selection_locked_by_config(config),
+        "config_locked": is_v1_model_selection_locked_by_config(config, role=role),
+    }
+
+
+def _inference_model_status(config: dict, models_dir: Path) -> dict:
+    """Return dashboard-friendly ingest model selection state."""
+    ball = _inference_role_status(config, models_dir, role="ball")
+    player = _inference_role_status(config, models_dir, role="player")
+    dual_model_enabled = (
+        bool(ball.get("resolved_path"))
+        and bool(player.get("resolved_path"))
+        and _path_identity(ball.get("resolved_path")) != _path_identity(player.get("resolved_path"))
+    )
+    return {
+        "ball": ball,
+        "player": player,
+        "dual_model_enabled": dual_model_enabled,
+        # Backward-compatible ball aliases for older callers/tests.
+        **ball,
     }
 
 
@@ -971,6 +1057,18 @@ def create_app(config: dict | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Job not found")
         phases = store.get_phases(job_id)
         return {"job": job, "phases": phases}
+
+    @app.post("/api/history/clear")
+    async def clear_history():
+        status = store.get_current_status()
+        if status.get("state") == "processing" or int(status.get("queued") or 0) > 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot clear history while a pipeline job is queued or running.",
+            )
+
+        summary = store.clear_history()
+        return {"ok": True, **summary}
 
     @app.get("/api/gpu")
     async def gpu_status():
@@ -1182,13 +1280,17 @@ def create_app(config: dict | None = None) -> FastAPI:
     async def delete_model(request: Request):
         """Delete a local old model file from the models directory."""
         body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        inference_status = _inference_model_status(config, models_dir)
         model_path = body.get("path")
         protected_paths = {
             p for p in (
                 _path_identity(config.get("model", {}).get("base_model")),
                 _path_identity(config.get("detection", {}).get("path")),
+                _path_identity(config.get("detection", {}).get("player_path")),
                 _path_identity(config.get("detector", {}).get("model_path")),
-                _path_identity(_inference_model_status(config, models_dir).get("resolved_path")),
+                _path_identity(config.get("detector", {}).get("player_model_path")),
+                _path_identity(inference_status.get("ball", {}).get("resolved_path")),
+                _path_identity(inference_status.get("player", {}).get("resolved_path")),
             ) if p
         }
 
@@ -1217,7 +1319,7 @@ def create_app(config: dict | None = None) -> FastAPI:
 
     @app.get("/api/inference/model")
     async def get_inference_model():
-        """Report the current ingest detection model selection and resolved path."""
+        """Report the current ingest detection model selections and resolved paths."""
         return _inference_model_status(config, models_dir)
 
     @app.get("/api/settings/detection")
@@ -1229,25 +1331,35 @@ def create_app(config: dict | None = None) -> FastAPI:
     async def set_inference_model(request: Request):
         """Set dashboard-managed ingest detection model selection."""
         body = await request.json() if request.headers.get("content-type") == "application/json" else {}
-        mode = str(body.get("mode", "config") or "config").strip().lower()
-        model_path = body.get("path")
-
-        if mode not in {"config", "auto", "pinned"}:
-            raise HTTPException(status_code=400, detail="mode must be one of: config, auto, pinned")
-        if is_v1_model_selection_locked_by_config(config):
-            raise HTTPException(
-                status_code=409,
-                detail="Runtime ingest model selection is locked because detector.model_path is explicitly set in config.",
-            )
-        if mode == "pinned":
-            model_path = _validate_training_base_model_choice(model_path, models_dir)
+        role_payloads = {}
+        if "ball" in body or "player" in body:
+            role_payloads["ball"] = body.get("ball", {}) or {}
+            role_payloads["player"] = body.get("player", {}) or {}
         else:
-            model_path = None
+            role_payloads["ball"] = body
 
-        try:
-            save_v1_runtime_model_selection(config, mode=mode, path=model_path)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+        role_labels = {"ball": "ball", "player": "player"}
+        for role, payload in role_payloads.items():
+            mode = str(payload.get("mode", "config") or "config").strip().lower()
+            model_path = payload.get("path")
+
+            if mode not in {"config", "auto", "pinned"}:
+                raise HTTPException(status_code=400, detail=f"{role_labels[role]} mode must be one of: config, auto, pinned")
+            if is_v1_model_selection_locked_by_config(config, role=role):
+                config_key = "detector.model_path" if role == "ball" else "detector.player_model_path"
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Runtime {role_labels[role]} model selection is locked because {config_key} is explicitly set in config.",
+                )
+            if mode == "pinned":
+                model_path = _validate_training_base_model_choice(model_path, models_dir)
+            else:
+                model_path = None
+
+            try:
+                save_v1_runtime_model_selection(config, mode=mode, path=model_path, role=role)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
 
         return _inference_model_status(config, models_dir)
 
@@ -1572,6 +1684,7 @@ def create_app(config: dict | None = None) -> FastAPI:
         ingest_paths = []
         restore_candidates = []
         restore_seen = set()
+        restore_target_names = []
         for match_dir, meta in related:
             job_id = meta.get("job_id")
             if isinstance(job_id, str) and job_id:
@@ -1580,6 +1693,7 @@ def create_app(config: dict | None = None) -> FastAPI:
             ingest_source = meta.get("ingest_source_path")
             if isinstance(ingest_source, str) and ingest_source:
                 ingest_paths.append(ingest_source)
+                restore_target_names.append(Path(ingest_source).name)
 
             for key in (
                 "ingest_archived_path",
@@ -1594,6 +1708,7 @@ def create_app(config: dict | None = None) -> FastAPI:
 
         job_ids = sorted(dict.fromkeys(job_ids))
         ingest_paths = list(dict.fromkeys(ingest_paths))
+        restore_name = next((name for name in restore_target_names if name), None)
 
         warnings = []
         deleted_processed_count = 0
@@ -1636,10 +1751,9 @@ def create_app(config: dict | None = None) -> FastAPI:
                 continue
 
             found_existing_candidate = True
-            suffix = "".join(candidate.suffixes)
             dest_path = _unique_file_path(
                 staging_dir,
-                f"{canonical_match}_reprocess{suffix}",
+                restore_name or candidate.name,
             )
             try:
                 _safe_move(candidate, dest_path, overwrite=False)

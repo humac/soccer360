@@ -26,6 +26,9 @@ logger = logging.getLogger("soccer360.detector")
 DEFAULT_V1_MODEL_PATH = "/app/models/yolo26l.pt"
 DEFAULT_V1_MODEL_ALIASES = {DEFAULT_V1_MODEL_PATH, "yolo26l.pt"}
 DEFAULT_V1_RUNTIME_OVERRIDE_PATH = "/tank/data/ingest_model_selection.json"
+DEFAULT_V1_PLAYER_RUNTIME_OVERRIDE_PATH = "/tank/data/ingest_player_model_selection.json"
+DEFAULT_BALL_CLASS_ID = 32
+DEFAULT_PLAYER_CLASS_ID = 0
 
 
 def resolve_model_path(config: dict) -> tuple[str | None, str]:
@@ -85,7 +88,15 @@ def resolve_model_path_v1(
     model_path, model_source = resolve_v1_model_path_and_source(
         config, models_dir=models_dir, base_model_path=base_model_path
     )
-    config["_v1_model_resolution"] = {"path": model_path, "source": model_source}
+    player_model_path, player_model_source = resolve_v1_player_model_path_and_source(
+        config, models_dir=models_dir, base_model_path=base_model_path
+    )
+    config["_v1_model_resolution"] = {
+        "path": model_path,
+        "source": model_source,
+        "ball": {"path": model_path, "source": model_source},
+        "player": {"path": player_model_path, "source": player_model_source},
+    }
 
     if model_path is None:
         logger.warning("No model found -- entering NO_DETECT mode")
@@ -115,10 +126,19 @@ def _v1_default_aliases(base_model_path: str) -> set[str]:
     return aliases
 
 
-def _configured_v1_model_candidate(config: dict) -> tuple[str, str]:
+def _configured_v1_model_candidate(config: dict, role: str = "ball") -> tuple[str, str]:
     """Return configured V1 model candidate path and its source enum."""
     det_cfg = config.get("detector", {})
     v1_cfg = config.get("detection", {})
+
+    if role == "player":
+        detector_model_path = _normalize_model_path(det_cfg.get("player_model_path"))
+        legacy_detection_path = _normalize_model_path(v1_cfg.get("player_path"))
+        if detector_model_path:
+            return detector_model_path, "detector.player_model_path"
+        if legacy_detection_path:
+            return legacy_detection_path, "detection.player_path"
+        return DEFAULT_V1_MODEL_PATH, "default"
 
     detector_model_path = _normalize_model_path(det_cfg.get("model_path"))
     legacy_detection_path = _normalize_model_path(v1_cfg.get("path"))
@@ -130,25 +150,31 @@ def _configured_v1_model_candidate(config: dict) -> tuple[str, str]:
     return DEFAULT_V1_MODEL_PATH, "default"
 
 
-def resolve_v1_runtime_override_path(config: dict) -> Path:
+def resolve_v1_runtime_override_path(config: dict, role: str = "ball") -> Path:
     """Return the persisted ingest-model selection path."""
     det_cfg = config.get("detector", {})
-    configured = _normalize_model_path(det_cfg.get("runtime_override_path"))
+    config_key = "runtime_override_path" if role == "ball" else "player_runtime_override_path"
+    default_path = (
+        DEFAULT_V1_RUNTIME_OVERRIDE_PATH
+        if role == "ball"
+        else DEFAULT_V1_PLAYER_RUNTIME_OVERRIDE_PATH
+    )
+    configured = _normalize_model_path(det_cfg.get(config_key))
     if configured:
         path = Path(configured)
         if not path.is_absolute():
-            return Path(DEFAULT_V1_RUNTIME_OVERRIDE_PATH).parent / path
+            return Path(default_path).parent / path
         return path
-    return Path(DEFAULT_V1_RUNTIME_OVERRIDE_PATH)
+    return Path(default_path)
 
 
-def load_v1_runtime_model_selection(config: dict) -> dict:
+def load_v1_runtime_model_selection(config: dict, role: str = "ball") -> dict:
     """Load persisted ingest-model selection state.
 
     Returns a normalized payload:
       {"mode": "config"|"auto"|"pinned", "path": <str|None>, "selection_path": <str>}
     """
-    selection_path = resolve_v1_runtime_override_path(config)
+    selection_path = resolve_v1_runtime_override_path(config, role=role)
     default_payload = {
         "mode": "config",
         "path": None,
@@ -186,6 +212,7 @@ def save_v1_runtime_model_selection(
     *,
     mode: str,
     path: str | None = None,
+    role: str = "ball",
 ) -> dict:
     """Persist ingest-model selection state.
 
@@ -197,7 +224,7 @@ def save_v1_runtime_model_selection(
     if normalized_mode == "pinned" and not _normalize_model_path(path):
         raise ValueError("Pinned runtime selection requires a model path")
 
-    selection_path = resolve_v1_runtime_override_path(config)
+    selection_path = resolve_v1_runtime_override_path(config, role=role)
     if normalized_mode == "config":
         if selection_path.exists():
             selection_path.unlink()
@@ -229,11 +256,16 @@ def is_v1_model_selection_locked_by_config(
     config: dict,
     *,
     base_model_path: str = DEFAULT_V1_MODEL_PATH,
+    role: str = "ball",
 ) -> bool:
     """Whether an explicit detector.model_path prevents runtime selection changes."""
-    configured_path, configured_source = _configured_v1_model_candidate(config)
+    configured_path, configured_source = _configured_v1_model_candidate(config, role=role)
     return (
-        configured_source == "detector.model_path"
+        configured_source
+        in {
+            "detector.model_path",
+            "detector.player_model_path",
+        }
         and configured_path not in _v1_default_aliases(base_model_path)
     )
 
@@ -245,6 +277,7 @@ def _resolve_v1_runtime_selection_model_path(
     models_dir: str,
     base_model_path: str,
     allow_no_model: bool,
+    role: str = "ball",
 ) -> tuple[str | None, str] | None:
     """Resolve persisted ingest-model selection, if any."""
     mode = selection.get("mode")
@@ -255,35 +288,36 @@ def _resolve_v1_runtime_selection_model_path(
         if selected_path:
             candidate_path = _resolve_runtime_path(selected_path)
             if Path(candidate_path).is_file():
-                return candidate_path, "runtime.pinned"
+                return candidate_path, f"runtime.pinned.{role}"
             logger.warning(
-                "Pinned ingest model override %s not found, falling back to config resolution",
+                "Pinned %s ingest model override %s not found, falling back to config resolution",
+                role,
                 candidate_path,
             )
         return None
 
     if mode == "auto":
-        if fine_tuned.is_file():
-            return str(fine_tuned), "runtime.auto"
+        if role == "ball" and fine_tuned.is_file():
+            return str(fine_tuned), "runtime.auto.ball"
 
-        configured_path, configured_source = _configured_v1_model_candidate(config)
+        configured_path, configured_source = _configured_v1_model_candidate(config, role=role)
         candidate_path = _resolve_runtime_path(configured_path)
         default_aliases = _v1_default_aliases(base_model_path)
 
         if (
-            configured_source == "detection.path"
+            configured_source in {"detection.path", "detection.player_path"}
             and configured_path not in default_aliases
             and Path(candidate_path).is_file()
         ):
-            return candidate_path, "runtime.auto"
+            return candidate_path, f"runtime.auto.{role}"
 
         base_model = Path(base_model_path)
         if base_model.is_file():
-            return str(base_model), "runtime.auto"
+            return str(base_model), f"runtime.auto.{role}"
         if allow_no_model:
-            return None, "runtime.auto"
+            return None, f"runtime.auto.{role}"
         raise RuntimeError(
-            f"No ball detection model found for runtime auto selection (checked {fine_tuned}, "
+            f"No {role} detection model found for runtime auto selection (checked {fine_tuned}, "
             f"{candidate_path}, {base_model}) and mode.allow_no_model is false"
         )
 
@@ -316,7 +350,7 @@ def resolve_v1_model_path_and_source(
     base_model = Path(base_model_path)
     default_aliases = _v1_default_aliases(base_model_path)
 
-    configured_path, configured_source = _configured_v1_model_candidate(config)
+    configured_path, configured_source = _configured_v1_model_candidate(config, role="ball")
     candidate_path = _resolve_runtime_path(configured_path)
 
     # Explicit detector.model_path override is only for non-default values.
@@ -333,13 +367,14 @@ def resolve_v1_model_path_and_source(
             )
         return candidate_path, "detector.model_path"
 
-    runtime_selection = load_v1_runtime_model_selection(config)
+    runtime_selection = load_v1_runtime_model_selection(config, role="ball")
     runtime_resolved = _resolve_v1_runtime_selection_model_path(
         config,
         selection=runtime_selection,
         models_dir=models_dir,
         base_model_path=base_model_path,
         allow_no_model=allow_no_model,
+        role="ball",
     )
     if runtime_resolved is not None:
         return runtime_resolved
@@ -370,6 +405,66 @@ def resolve_v1_model_path_and_source(
     )
 
 
+def resolve_v1_player_model_path_and_source(
+    config: dict,
+    models_dir: str = "/app/models",
+    base_model_path: str = DEFAULT_V1_MODEL_PATH,
+) -> tuple[str | None, str]:
+    """Resolve effective V1 player model path and source enum for runtime/verifier."""
+    allow_no_model = config.get("mode", {}).get("allow_no_model", False)
+    base_model = Path(base_model_path)
+    default_aliases = _v1_default_aliases(base_model_path)
+
+    configured_path, configured_source = _configured_v1_model_candidate(config, role="player")
+    candidate_path = _resolve_runtime_path(configured_path)
+
+    if (
+        configured_source == "detector.player_model_path"
+        and configured_path not in default_aliases
+    ):
+        candidate = Path(candidate_path)
+        if not candidate.is_file():
+            raise RuntimeError(
+                "Explicit detector.player_model_path not found or not a file: "
+                f"{candidate_path}. Update detector.player_model_path or remove it to "
+                "use default player-model resolution."
+            )
+        return candidate_path, "detector.player_model_path"
+
+    runtime_selection = load_v1_runtime_model_selection(config, role="player")
+    runtime_resolved = _resolve_v1_runtime_selection_model_path(
+        config,
+        selection=runtime_selection,
+        models_dir=models_dir,
+        base_model_path=base_model_path,
+        allow_no_model=allow_no_model,
+        role="player",
+    )
+    if runtime_resolved is not None:
+        return runtime_resolved
+
+    if (
+        configured_source == "detection.player_path"
+        and configured_path not in default_aliases
+    ):
+        if Path(candidate_path).exists():
+            return candidate_path, "detection.player_path"
+        logger.warning(
+            "Explicit player model path %s not found, falling back to default resolution",
+            candidate_path,
+        )
+
+    if base_model.exists():
+        return str(base_model), "default.player"
+    if allow_no_model:
+        return None, "default.player"
+
+    raise RuntimeError(
+        f"No player detection model found (checked {base_model}) "
+        "and mode.allow_no_model is false"
+    )
+
+
 class Detector:
     """Streaming ball detector using Ultralytics YOLO.
 
@@ -391,14 +486,29 @@ class Detector:
                 resolved_model_path, resolved_model_source = resolve_v1_model_path_and_source(
                     config
                 )
-            self.model_path = resolved_model_path
-            self.model_source = resolved_model_source or "default"
+            player_resolution = resolution_meta.get("player", {})
+            resolved_player_model_path = _normalize_model_path(player_resolution.get("path"))
+            resolved_player_model_source = _normalize_model_path(player_resolution.get("source"))
+            if not resolved_player_model_path:
+                resolved_player_model_path, resolved_player_model_source = (
+                    resolve_v1_player_model_path_and_source(config)
+                )
+            self.ball_model_path = resolved_model_path
+            self.ball_model_source = resolved_model_source or "default"
+            self.player_model_path = resolved_player_model_path or resolved_model_path
+            self.player_model_source = resolved_player_model_source or "default.player"
+            self.model_path = self.ball_model_path
+            self.model_source = self.ball_model_source
             self.device = v1_cfg.get("device", "cuda:0")
             img_size = v1_cfg.get("img_size", 960)
             self.det_resolution = [img_size * 2, img_size]
             self.confidence_threshold = v1_cfg.get("conf", 0.35)
             self.nms_iou = v1_cfg.get("iou", 0.5)
             self.classes = v1_cfg.get("classes", [32])
+            self.ball_class = int(v1_cfg.get("ball_class", DEFAULT_BALL_CLASS_ID))
+            self.player_class = int(
+                config.get("center_of_play", {}).get("player_class", DEFAULT_PLAYER_CLASS_ID)
+            )
             self.max_det = v1_cfg.get("max_det", 20)
             self.half = v1_cfg.get("half", True)
             self.batch_size = 1
@@ -431,6 +541,12 @@ class Detector:
             self.tile_count = self.tiling.get("tiles", 4)  # 2x2
             self.tile_overlap = self.tiling.get("overlap", 0.1)
             self.model_source = "model.path"
+            self.ball_model_path = self.model_path
+            self.ball_model_source = self.model_source
+            self.player_model_path = self.model_path
+            self.player_model_source = self.model_source
+            self.ball_class = DEFAULT_BALL_CLASS_ID
+            self.player_class = DEFAULT_PLAYER_CLASS_ID
 
         # Field-of-Interest filtering
         foi_cfg = config.get("field_of_interest", {})
@@ -446,6 +562,11 @@ class Detector:
 
         self.device = getattr(self, "device", "cuda:0")
         self._model = None
+        self._ball_model = None
+        self._player_model = None
+        self._shared_detection_model = None
+        self._ball_query_classes = None
+        self._player_query_classes = None
 
     def _load_model(self):
         from ultralytics import YOLO
@@ -460,17 +581,106 @@ class Detector:
             except ImportError:
                 self.half = False
 
+        if self._v1_mode and self.ball_model_path and self.player_model_path:
+            if self.ball_model_path == self.player_model_path:
+                path = self.ball_model_path
+                logger.info("Loading shared detection model from %s", path)
+                self._shared_detection_model = YOLO(path)
+                self._ball_model = self._shared_detection_model
+                self._player_model = self._shared_detection_model
+                self._ball_query_classes = self._infer_role_query_classes(
+                    self._shared_detection_model,
+                    role="ball",
+                    fallback_class=self.ball_class,
+                )
+                self._player_query_classes = self._infer_role_query_classes(
+                    self._shared_detection_model,
+                    role="player",
+                    fallback_class=self.player_class,
+                )
+                self._warmup_model(self._shared_detection_model)
+                logger.info(
+                    "Shared detection model loaded and warmed up (ball_query=%s, player_query=%s)",
+                    self._ball_query_classes,
+                    self._player_query_classes,
+                )
+                return
+
+            logger.info("Loading ball detection model from %s", self.ball_model_path)
+            self._ball_model = YOLO(self.ball_model_path)
+            self._ball_query_classes = self._infer_role_query_classes(
+                self._ball_model,
+                role="ball",
+                fallback_class=self.ball_class,
+            )
+            self._warmup_model(self._ball_model)
+
+            logger.info("Loading player detection model from %s", self.player_model_path)
+            self._player_model = YOLO(self.player_model_path)
+            self._player_query_classes = self._infer_role_query_classes(
+                self._player_model,
+                role="player",
+                fallback_class=self.player_class,
+            )
+            self._warmup_model(self._player_model)
+            logger.info(
+                "Dual detection models loaded and warmed up (ball_query=%s, player_query=%s)",
+                self._ball_query_classes,
+                self._player_query_classes,
+            )
+            return
+
         use_trt = self.backend == "tensorrt_int8"
         path = self.tensorrt_path if use_trt else self.model_path
         logger.info("Loading model from %s (backend=%s)", path, self.backend)
         self._model = YOLO(path)
+        self._ball_model = self._model
 
         # Warmup inference
+        self._warmup_model(self._model)
+        logger.info("Model loaded and warmed up")
+
+    def _warmup_model(self, model):
         dummy = np.zeros(
             (self.det_resolution[1], self.det_resolution[0], 3), dtype=np.uint8
         )
-        self._model.predict(dummy, device=self.device, verbose=False)
-        logger.info("Model loaded and warmed up")
+        model.predict(dummy, device=self.device, verbose=False)
+
+    @staticmethod
+    def _model_names_map(model) -> dict[int, str]:
+        names = getattr(model, "names", None) or {}
+        if isinstance(names, dict):
+            return {int(k): str(v) for k, v in names.items()}
+        if isinstance(names, list):
+            return {idx: str(name) for idx, name in enumerate(names)}
+        return {}
+
+    def _infer_role_query_classes(
+        self,
+        model,
+        *,
+        role: str,
+        fallback_class: int,
+    ) -> list[int] | None:
+        names = self._model_names_map(model)
+        if not names:
+            return [fallback_class]
+
+        normalized = {idx: name.strip().lower() for idx, name in names.items()}
+        if role == "ball":
+            ball_terms = {"sports ball", "ball", "football", "soccer ball"}
+            for idx, name in normalized.items():
+                if name in ball_terms:
+                    return [idx]
+            if len(normalized) == 1:
+                return [next(iter(normalized))]
+            return [fallback_class] if fallback_class in normalized else [next(iter(normalized))]
+
+        player_terms = {"person", "player", "players"}
+        for idx, name in normalized.items():
+            if name in player_terms:
+                return [idx]
+        return [fallback_class] if fallback_class in normalized else [next(iter(normalized))]
 
     @property
     def _effective_batch_size(self) -> int:
@@ -484,12 +694,26 @@ class Detector:
         If process_every_n_frames > 1, only every Nth frame is sent through
         YOLO. Skipped frames get detections interpolated from neighbors.
         """
-        if self._model is None:
+        if self._v1_mode:
+            if self._ball_model is None or self._player_model is None:
+                self._load_model()
+        elif self._model is None:
             self._load_model()
 
         # Recompute FoI auto-center per run (do not leak prior run state).
         self._effective_center_yaw = None
-        logger.info("Model resolved: %s (source=%s)", self.model_path, self.model_source)
+        if self._v1_mode:
+            shared = self.ball_model_path == self.player_model_path
+            logger.info(
+                "Models resolved: ball=%s (source=%s), player=%s (source=%s), shared=%s",
+                self.ball_model_path,
+                self.ball_model_source,
+                self.player_model_path,
+                self.player_model_source,
+                shared,
+            )
+        else:
+            logger.info("Model resolved: %s (source=%s)", self.model_path, self.model_source)
 
         det_w, det_h = self.det_resolution
         bs = self._effective_batch_size
@@ -777,6 +1001,11 @@ class Detector:
         if self.tiling_enabled:
             return self._detect_batch_tiled(frames, indices)
 
+        if self._v1_mode and self._ball_model is not None and self._player_model is not None:
+            if self.ball_model_path == self.player_model_path:
+                return self._detect_batch_shared_v1(frames, indices)
+            return self._detect_batch_dual_v1(frames, indices)
+
         predict_kwargs = {
             "device": self.device,
             "conf": self.confidence_threshold,
@@ -799,6 +1028,84 @@ class Detector:
                     "class": int(box.cls[0]),
                 })
         return detections
+
+    def _detect_batch_shared_v1(
+        self, frames: list[np.ndarray], indices: list[int]
+    ) -> list[dict]:
+        predict_kwargs = {
+            "device": self.device,
+            "conf": self.confidence_threshold,
+            "iou": self.nms_iou,
+            "verbose": False,
+            "classes": self.classes,
+            "max_det": self.max_det,
+            "half": self.half,
+        }
+        results = self._shared_detection_model.predict(frames, **predict_kwargs)
+        detections = []
+        for idx, result in zip(indices, results):
+            for box in result.boxes:
+                detections.append({
+                    "frame": idx,
+                    "bbox": box.xyxy[0].cpu().tolist(),
+                    "confidence": float(box.conf[0]),
+                    "class": int(box.cls[0]),
+                })
+        return detections
+
+    def _predict_role_detections(
+        self,
+        model,
+        frames: list[np.ndarray],
+        indices: list[int],
+        *,
+        query_classes: list[int] | None,
+        output_class: int,
+    ) -> list[dict]:
+        predict_kwargs = {
+            "device": self.device,
+            "conf": self.confidence_threshold,
+            "iou": self.nms_iou,
+            "verbose": False,
+            "max_det": self.max_det,
+            "half": self.half,
+        }
+        if query_classes is not None:
+            predict_kwargs["classes"] = query_classes
+        results = model.predict(frames, **predict_kwargs)
+
+        detections = []
+        for idx, result in zip(indices, results):
+            for box in result.boxes:
+                detections.append({
+                    "frame": idx,
+                    "bbox": box.xyxy[0].cpu().tolist(),
+                    "confidence": float(box.conf[0]),
+                    "class": output_class,
+                })
+        return detections
+
+    def _detect_batch_dual_v1(
+        self, frames: list[np.ndarray], indices: list[int]
+    ) -> list[dict]:
+        ball_detections = self._predict_role_detections(
+            self._ball_model,
+            frames,
+            indices,
+            query_classes=self._ball_query_classes,
+            output_class=self.ball_class,
+        )
+        player_detections = self._predict_role_detections(
+            self._player_model,
+            frames,
+            indices,
+            query_classes=self._player_query_classes,
+            output_class=self.player_class,
+        )
+        return sorted(
+            ball_detections + player_detections,
+            key=lambda d: (d["frame"], d["class"], -d["confidence"]),
+        )
 
     def _detect_batch_tiled(
         self, frames: list[np.ndarray], indices: list[int]

@@ -21,6 +21,10 @@ git clone <repo-url> ~/soccer360
 cd ~/soccer360
 bash scripts/install.sh
 
+# 2.5. Optional but recommended for Label Studio persistence
+cp .env.example .env
+# edit .env and replace LABEL_STUDIO_SECRET_KEY with a long random value
+
 # 3. Start the watcher daemon
 docker compose up -d worker
 
@@ -441,6 +445,12 @@ docker compose up -d labelstudio   # Label Studio (port 8080)
 docker compose logs -f worker      # Follow worker logs
 docker compose ps                  # Check service status + health
 docker compose down                # Stop everything
+```
+
+If you use Label Studio, create `.env` from `.env.example` before first startup so its secret key stays stable across recreates:
+
+```bash
+cp .env.example .env
 ```
 
 | Service | Port | URL | Purpose |

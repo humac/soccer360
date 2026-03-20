@@ -167,18 +167,30 @@
     <div id="staging-summary" style="font-size:0.85rem;margin-bottom:8px;color:var(--muted)">Loading...</div>
     <div id="staging-files" style="font-size:0.8rem;max-height:220px;overflow-y:auto"></div>
     <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-      <label style="font-size:0.82rem;color:var(--muted);display:block;margin-bottom:6px">Ingest Detection Model</label>
+      <label style="font-size:0.82rem;color:var(--muted);display:block;margin-bottom:6px">Next Ingest Detection Models</label>
       <div id="inference-model-summary" style="font-size:0.78rem;color:var(--muted);margin-bottom:8px">Loading...</div>
-      <select id="inference-model-select"
-        style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
-        <option value="config">Loading models...</option>
-      </select>
+      <div style="display:grid;gap:10px">
+        <div>
+          <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:4px">Ball Detection Model</label>
+          <select id="inference-ball-model-select"
+            style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
+            <option value="config">Loading models...</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:4px">Player Detection Model</label>
+          <select id="inference-player-model-select"
+            style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
+            <option value="config">Loading models...</option>
+          </select>
+        </div>
+      </div>
       <div id="inference-model-note" style="font-size:0.72rem;color:var(--muted);margin-top:6px">
-        Choose what the next ingest jobs use, then send a staged file into ingest.
+        Choose the ball model and player model for the next ingest jobs, then send a staged file into ingest. One ingest run will use both models.
       </div>
       <div style="margin-top:8px">
         <button id="apply-inference-model-btn" class="btn" style="background:var(--accent);color:#fff" onclick="applyInferenceModelSelection()">
-          Apply Ingest Model
+          Apply Ingest Models
         </button>
       </div>
     </div>
@@ -345,7 +357,12 @@
 
   <!-- Job History -->
   <div class="card card-full">
-    <h2>Job History</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px">
+      <h2 style="margin:0">Job History</h2>
+      <button id="clear-history-btn" class="btn" style="background:var(--red);color:#fff" onclick="clearHistory()">
+        Clear History
+      </button>
+    </div>
     <div id="job-table-area">
       <table>
         <thead><tr><th>Job</th><th>Input</th><th>Status</th><th>Mode</th><th>Started</th></tr></thead>
@@ -582,8 +599,49 @@ async function loadJobs() {
     document.getElementById('stat-completed').textContent = completed;
     document.getElementById('stat-failed').textContent = failed;
     document.getElementById('stat-running').textContent = running;
+    const clearBtn = document.getElementById('clear-history-btn');
+    if (clearBtn) {
+      clearBtn.disabled = total === 0 || running > 0;
+      clearBtn.style.opacity = clearBtn.disabled ? '0.6' : '1';
+      clearBtn.title = running > 0
+        ? 'Unavailable while a pipeline job is running'
+        : (total === 0 ? 'No history to clear' : 'Delete dashboard job history');
+    }
   } catch(e) {
     console.error('Failed to load jobs:', e);
+  }
+}
+
+async function clearHistory() {
+  const btn = document.getElementById('clear-history-btn');
+  if (!btn || btn.disabled) return;
+
+  const confirmed = confirm(
+    'Are you sure you want to clear dashboard job history?\n\n' +
+    'This will delete recorded jobs, phase timings, GPU snapshots, and decision history.\n' +
+    'It does not delete processed videos, labels, datasets, or models.'
+  );
+  if (!confirmed) return;
+
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/history/clear', {method: 'POST'});
+    const data = await resp.json();
+    if (!resp.ok) {
+      throw new Error(data.detail || 'Failed to clear history');
+    }
+
+    alert(
+      'History cleared.\n\n' +
+      'Jobs deleted: ' + (data.jobs_deleted || 0) + '\n' +
+      'Phase events deleted: ' + (data.phase_events_deleted || 0) + '\n' +
+      'GPU snapshots deleted: ' + (data.metrics_snapshots_deleted || 0) + '\n' +
+      'Decisions deleted: ' + (data.decisions_deleted || 0)
+    );
+    loadJobs();
+  } catch(e) {
+    alert('Failed: ' + e.message);
+    btn.disabled = false;
   }
 }
 
@@ -703,7 +761,8 @@ async function loadModels() {
       (m.is_active ? '<span style="color:var(--green)">* </span>' : '') +
       (m.is_configured_base ? '<span style="color:var(--yellow)">&#9679; </span>' : '') +
       (m.is_configured_inference ? '<span style="color:var(--accent)">&#9654; </span>' : '') +
-      (m.is_inference_active ? '<span style="color:var(--orange)">&#9632; </span>' : '') +
+      (m.is_ball_inference_active ? '<span style="color:var(--orange)">&#9632; </span>' : '') +
+      (m.is_player_inference_active ? '<span style="color:#c084fc">▲ </span>' : '') +
       escapeHtml(m.name) + '</span>' +
       '<span style="color:var(--muted);white-space:nowrap">' + m.size_mb + ' MB</span>' +
       (m.can_delete
@@ -718,7 +777,8 @@ async function loadModels() {
       if (m.is_active) label += ' [active]';
       if (m.is_configured_base) label += ' [configured base]';
       if (m.is_configured_inference) label += ' [configured ingest]';
-      if (m.is_inference_active) label += ' [ingest active]';
+      if (m.is_ball_inference_active) label += ' [ingest ball]';
+      if (m.is_player_inference_active) label += ' [ingest player]';
       return '<option value="' + escapeHtml(m.path) + '">' + escapeHtml(label) + '</option>';
     }).join('');
 
@@ -730,52 +790,83 @@ async function loadModels() {
   } catch(e) {}
 }
 
+function buildInferenceOptions(modelList, role) {
+  const isBall = role === 'ball';
+  const pinnedOptions = modelList.map(m => {
+    let label = 'Pin: ' + m.name;
+    if (m.is_active) label += ' [active]';
+    if (m.is_configured_inference) label += ' [configured ingest]';
+    if (m.is_ball_inference_active) label += ' [ball active]';
+    if (m.is_player_inference_active) label += ' [player active]';
+    return '<option value="pinned::' + escapeHtml(m.path) + '">' + escapeHtml(label) + '</option>';
+  }).join('');
+
+  const autoLabel = isBall
+    ? 'Auto: prefer ball_best.pt, else configured/base model'
+    : 'Auto: prefer configured/base player model';
+
+  return (
+    '<option value="config">Configured path behavior</option>' +
+    '<option value="auto">' + escapeHtml(autoLabel) + '</option>' +
+    pinnedOptions
+  );
+}
+
+function applyInferenceSelectionToControl(selectEl, status) {
+  if (!selectEl || !status) return;
+  if (status.selection_mode === 'pinned' && status.selected_path) {
+    const pinnedValue = 'pinned::' + status.selected_path;
+    const foundPinned = Array.from(selectEl.options).some(opt => opt.value === pinnedValue);
+    selectEl.value = foundPinned ? pinnedValue : 'config';
+  } else {
+    selectEl.value = status.selection_mode || 'config';
+  }
+}
+
 async function loadInferenceModelStatus(models) {
   try {
     const modelList = models || [];
     const resp = await fetch('/api/inference/model');
     const d = await resp.json();
     const summaryEl = document.getElementById('inference-model-summary');
-    const selectEl = document.getElementById('inference-model-select');
+    const ballSelectEl = document.getElementById('inference-ball-model-select');
+    const playerSelectEl = document.getElementById('inference-player-model-select');
     const noteEl = document.getElementById('inference-model-note');
     const applyBtn = document.getElementById('apply-inference-model-btn');
+    const ball = d.ball || d;
+    const player = d.player || {};
 
-    const resolvedName = d.resolved_path ? d.resolved_path.split('/').pop() : 'no model';
+    const ballName = ball.resolved_path ? ball.resolved_path.split('/').pop() : 'no model';
+    const playerName = player.resolved_path ? player.resolved_path.split('/').pop() : 'no model';
     summaryEl.innerHTML =
-      'Current: <strong>' + escapeHtml(resolvedName) + '</strong>' +
-      (d.resolved_source ? ' <span style="color:var(--muted)">(' + escapeHtml(d.resolved_source) + ')</span>' : '');
+      'Ball: <strong>' + escapeHtml(ballName) + '</strong>' +
+      (ball.resolved_source ? ' <span style="color:var(--muted)">(' + escapeHtml(ball.resolved_source) + ')</span>' : '') +
+      '<br>Player: <strong>' + escapeHtml(playerName) + '</strong>' +
+      (player.resolved_source ? ' <span style="color:var(--muted)">(' + escapeHtml(player.resolved_source) + ')</span>' : '') +
+      '<br><span style="color:var(--muted)">Single ingest runs will use both models' +
+      (d.dual_model_enabled ? ' as a dual-model detector.' : ' through a shared single-model detector.') +
+      '</span>';
 
-    const pinnedOptions = modelList.map(m => {
-      let label = 'Pin: ' + m.name;
-      if (m.is_active) label += ' [active]';
-      if (m.is_configured_inference) label += ' [configured ingest]';
-      if (m.is_inference_active) label += ' [ingest active]';
-      return '<option value="pinned::' + escapeHtml(m.path) + '">' + escapeHtml(label) + '</option>';
-    }).join('');
+    ballSelectEl.innerHTML = buildInferenceOptions(modelList, 'ball');
+    playerSelectEl.innerHTML = buildInferenceOptions(modelList, 'player');
+    applyInferenceSelectionToControl(ballSelectEl, ball);
+    applyInferenceSelectionToControl(playerSelectEl, player);
 
-    selectEl.innerHTML =
-      '<option value="config">Configured path behavior</option>' +
-      '<option value="auto">Auto: prefer ball_best.pt, else configured model</option>' +
-      pinnedOptions;
+    const ballLocked = !!ball.config_locked;
+    const playerLocked = !!player.config_locked;
+    ballSelectEl.disabled = ballLocked;
+    playerSelectEl.disabled = playerLocked;
+    applyBtn.disabled = ballLocked && playerLocked;
+    applyBtn.style.opacity = applyBtn.disabled ? '0.6' : '1';
 
-    if (d.selection_mode === 'pinned' && d.selected_path) {
-      const pinnedValue = 'pinned::' + d.selected_path;
-      const foundPinned = Array.from(selectEl.options).some(opt => opt.value === pinnedValue);
-      selectEl.value = foundPinned ? pinnedValue : 'config';
+    if (ballLocked && playerLocked) {
+      noteEl.textContent = 'Both selectors are locked by explicit detector model paths in config. CLI and dashboard both follow those config overrides.';
+    } else if (ballLocked) {
+      noteEl.textContent = 'Ball model is locked by detector.model_path in config. You can still choose the player model for future ingest jobs.';
+    } else if (playerLocked) {
+      noteEl.textContent = 'Player model is locked by detector.player_model_path in config. You can still choose the ball model for future ingest jobs.';
     } else {
-      selectEl.value = d.selection_mode || 'config';
-    }
-
-    if (d.config_locked) {
-      selectEl.disabled = true;
-      applyBtn.disabled = true;
-      applyBtn.style.opacity = '0.6';
-      noteEl.textContent = 'Locked by explicit detector.model_path in config. CLI and dashboard both follow that config override.';
-    } else {
-      selectEl.disabled = false;
-      applyBtn.disabled = false;
-      applyBtn.style.opacity = '1';
-      noteEl.textContent = 'Choose what new ingest jobs use. Command-line runs use the same shared selector.';
+      noteEl.textContent = 'Choose the ball model and player model for future ingest jobs. Command-line runs use the same shared selectors.';
     }
   } catch(e) {}
 }
@@ -910,34 +1001,52 @@ async function deleteModel(modelPath, btnEl) {
 }
 
 async function applyInferenceModelSelection() {
-  const selectEl = document.getElementById('inference-model-select');
-  const value = selectEl.value || 'config';
-  let mode = value;
-  let path = null;
+  const ballSelectEl = document.getElementById('inference-ball-model-select');
+  const playerSelectEl = document.getElementById('inference-player-model-select');
 
-  if (value.startsWith('pinned::')) {
-    mode = 'pinned';
-    path = value.slice('pinned::'.length);
+  function parseSelection(value) {
+    let mode = value || 'config';
+    let path = null;
+    if (mode.startsWith('pinned::')) {
+      path = mode.slice('pinned::'.length);
+      mode = 'pinned';
+    }
+    return {mode, path};
   }
 
-  const label = mode === 'config'
+  const ball = parseSelection(ballSelectEl.value);
+  const player = parseSelection(playerSelectEl.value);
+  const ballLabel = ball.mode === 'config'
     ? 'configured path behavior'
-    : (mode === 'auto' ? 'auto mode' : (path ? path.split('/').pop() : 'pinned model'));
-  if (!confirm('Apply ingest detection model: ' + label + '?\n\nNew ingest jobs from the dashboard and command line will use this selection.')) return;
+    : (ball.mode === 'auto' ? 'auto mode' : (ball.path ? ball.path.split('/').pop() : 'pinned model'));
+  const playerLabel = player.mode === 'config'
+    ? 'configured/base player behavior'
+    : (player.mode === 'auto' ? 'auto mode' : (player.path ? player.path.split('/').pop() : 'pinned model'));
+  if (!confirm(
+    'Apply next ingest detection models?\n\n' +
+    'Ball model: ' + ballLabel + '\n' +
+    'Player model: ' + playerLabel + '\n\n' +
+    'New ingest jobs from the dashboard and command line will use this selection in a single ingest run.'
+  )) return;
 
   try {
     const resp = await fetch('/api/inference/model', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({mode: mode, path: path})
+      body: JSON.stringify({
+        ...(ballSelectEl.disabled ? {} : {ball: ball}),
+        ...(playerSelectEl.disabled ? {} : {player: player})
+      })
     });
     const d = await resp.json();
     if (!resp.ok) {
-      alert(d.detail || 'Failed to update ingest detection model');
+      alert(d.detail || 'Failed to update ingest detection models');
       return;
     }
     await loadModels();
-    alert('Ingest model updated to ' + (d.resolved_path ? d.resolved_path.split('/').pop() : 'no model') + '.');
+    const ballName = d.ball && d.ball.resolved_path ? d.ball.resolved_path.split('/').pop() : 'no model';
+    const playerName = d.player && d.player.resolved_path ? d.player.resolved_path.split('/').pop() : 'no model';
+    alert('Next ingest will use:\nBall: ' + ballName + '\nPlayer: ' + playerName);
   } catch(e) {
     alert('Failed: ' + e.message);
   }

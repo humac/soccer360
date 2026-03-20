@@ -404,6 +404,22 @@ class EventStore:
             conn.commit()
             return cur.rowcount
 
+    def clear_history(self) -> dict[str, int]:
+        """Delete all job history tables and return deleted row counts."""
+        with self._lock:
+            conn = self._conn()
+            metrics_deleted = conn.execute("DELETE FROM metrics_snapshots").rowcount
+            phase_deleted = conn.execute("DELETE FROM phase_events").rowcount
+            decisions_deleted = conn.execute("DELETE FROM decisions").rowcount
+            jobs_deleted = conn.execute("DELETE FROM jobs").rowcount
+            conn.commit()
+            return {
+                "jobs_deleted": jobs_deleted,
+                "phase_events_deleted": phase_deleted,
+                "metrics_snapshots_deleted": metrics_deleted,
+                "decisions_deleted": decisions_deleted,
+            }
+
 
 class EventBus:
     """High-level interface used by the pipeline to emit events.

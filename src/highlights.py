@@ -56,6 +56,10 @@ class HighlightDetector:
         )
         self.cluster_goal_zone_regions = hl_cfg.get("cluster_goal_zone_regions", None)
         self.cluster_density_percentile = hl_cfg.get("cluster_density_percentile", 90)
+        self.cluster_density_min_players = hl_cfg.get(
+            "cluster_density_min_players",
+            config.get("center_of_play", {}).get("min_players", 5),
+        )
 
         # Scoring and ranking config
         self.score_weights = hl_cfg.get("score_weights", {
@@ -407,6 +411,8 @@ class HighlightDetector:
             entry["cluster"]["player_count"]
             for entry in clusters
             if entry.get("cluster") is not None
+            and entry["cluster"].get("player_count", 0) >= self.cluster_density_min_players
+            and entry["cluster"].get("confidence", 0.0) > 0.0
         ]
         if not counts:
             return []
@@ -417,6 +423,10 @@ class HighlightDetector:
         for entry in clusters:
             c = entry.get("cluster")
             if c is None:
+                continue
+            if c.get("player_count", 0) < self.cluster_density_min_players:
+                continue
+            if c.get("confidence", 0.0) <= 0.0:
                 continue
             if c["player_count"] >= threshold:
                 events.append({

@@ -32,6 +32,7 @@ htmlcov/
 # Environment files
 .env
 .env.*
+!.env.example
 
 # Model artifacts
 *.pt

@@ -20,6 +20,8 @@ model:
 
 detector:
   runtime_override_path: /tank/data/ingest_model_selection.json
+  player_runtime_override_path: /tank/data/ingest_player_model_selection.json
+  player_model_path: /app/models/yolo26l.pt
   batch_size: 16
   batch_size_tensorrt: 32
   resolution: [1920, 960]
