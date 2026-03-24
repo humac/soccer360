@@ -35,6 +35,11 @@ def highlight_config(test_config):
         "cluster_velocity_deg_per_sec": 10.0,
         "cluster_goal_zone_regions": None,
         "cluster_density_percentile": 80,
+        "camera_motion_window": 3,
+        "camera_motion_deg_per_sec": 8.0,
+        "camera_zoom_delta": 2.0,
+        "same_type_cooldown_sec": 0.75,
+        "motion_only_penalty": 0.8,
         # Scoring
         "score_weights": {
             "speed": 1.0,
@@ -44,6 +49,7 @@ def highlight_config(test_config):
             "cluster_velocity": 0.7,
             "cluster_goal_zone": 1.3,
             "cluster_density": 0.5,
+            "camera_motion": 0.8,
         },
         "combined_signal_bonus": 1.5,
         "min_clip_score": 0.5,
@@ -72,6 +78,19 @@ def _make_clusters(
             },
         }
         for i in range(n_frames)
+    ]
+
+
+def _make_camera_path(
+    n_frames: int,
+    yaw: float = 0.0,
+    pitch: float = -5.0,
+    fov: float = 90.0,
+) -> list[dict]:
+    """Helper: generate uniform camera path data."""
+    return [
+        {"yaw": yaw, "pitch": pitch, "fov": fov}
+        for _ in range(n_frames)
     ]
 
 
@@ -269,6 +288,32 @@ class TestClusterDensity:
 
 
 # ------------------------------------------------------------------
+# Camera-motion detector tests
+# ------------------------------------------------------------------
+
+
+class TestCameraMotion:
+    def test_camera_pan_detected(self, highlight_config):
+        detector = HighlightDetector(highlight_config)
+        camera_path = _make_camera_path(12)
+        for i in range(3, 7):
+            camera_path[i]["yaw"] = (i - 2) * 6.0
+
+        events = detector._detect_camera_motion(camera_path, fps=30.0)
+
+        assert len(events) > 0
+        assert all(e["type"] == "camera_motion" for e in events)
+
+    def test_static_camera_no_events(self, highlight_config):
+        detector = HighlightDetector(highlight_config)
+        camera_path = _make_camera_path(12)
+
+        events = detector._detect_camera_motion(camera_path, fps=30.0)
+
+        assert events == []
+
+
+# ------------------------------------------------------------------
 # Scoring tests
 # ------------------------------------------------------------------
 
@@ -286,6 +331,29 @@ class TestScoring:
         # score = (1.0 * speed_weight + 1.0 * conv_weight) * bonus
         expected = (1.0 + 1.2) * 1.5
         assert abs(clips[0]["score"] - expected) < 0.1
+
+    def test_motion_only_penalty(self, highlight_config):
+        detector = HighlightDetector(highlight_config)
+        events = [
+            {"frame": 0, "time_sec": 0.5, "type": "speed", "value": 100},
+        ]
+
+        clips = detector._cluster_events(events, fps=30.0)
+
+        assert len(clips) == 1
+        assert abs(clips[0]["score"] - 0.8) < 0.1
+
+    def test_context_clip_not_penalized(self, highlight_config):
+        detector = HighlightDetector(highlight_config)
+        events = [
+            {"frame": 0, "time_sec": 0.5, "type": "speed", "value": 100},
+            {"frame": 2, "time_sec": 0.6, "type": "goal_box", "value": 1.0},
+        ]
+
+        clips = detector._cluster_events(events, fps=30.0)
+
+        assert len(clips) == 1
+        assert abs(clips[0]["score"] - 2.5) < 0.1
 
     def test_min_score_filter(self, highlight_config):
         """Clips below min_clip_score are filtered out."""
@@ -332,6 +400,22 @@ class TestScoring:
         # Rank 1 should be the highest-scoring clip
         ranks = {c["rank"]: c["start_sec"] for c in clips}
         assert 1 in ranks
+
+    def test_same_type_cooldown_keeps_strongest_event(self, highlight_config):
+        detector = HighlightDetector(highlight_config)
+        events = [
+            {"frame": 0, "time_sec": 0.0, "type": "speed", "value": 50},
+            {"frame": 3, "time_sec": 0.1, "type": "speed", "value": 120},
+            {"frame": 6, "time_sec": 0.2, "type": "speed", "value": 80},
+            {"frame": 9, "time_sec": 0.3, "type": "goal_box", "value": 1.0},
+        ]
+
+        collapsed = detector._apply_same_type_cooldown(events)
+
+        speed_events = [event for event in collapsed if event["type"] == "speed"]
+        assert len(speed_events) == 1
+        assert speed_events[0]["value"] == 120
+        assert any(event["type"] == "goal_box" for event in collapsed)
 
 
 # ------------------------------------------------------------------

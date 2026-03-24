@@ -354,17 +354,22 @@ Controls hybrid camera tracking that blends ball position with player cluster da
  | `highlights.cluster_velocity_deg_per_sec` | `15.0` | Centroid speed threshold (degrees/sec) |
  | `highlights.cluster_goal_zone_regions` | `null` | Goal zone regions for cluster (null = reuse `goal_box_regions`) |
  | `highlights.cluster_density_percentile` | `90` | Player count percentile for density spikes |
+ | `highlights.camera_motion_window` | `5` | Frames used to measure pan/zoom bursts |
+ | `highlights.camera_motion_deg_per_sec` | `12.0` | Camera pan-speed threshold (degrees/sec) |
+ | `highlights.camera_zoom_delta` | `4.0` | Minimum FOV change to count as zoom motion |
+ | `highlights.same_type_cooldown_sec` | `0.75` | Collapse repeated same-type events inside this window |
+ | `highlights.motion_only_penalty` | `0.8` | Down-rank clips that only contain generic motion signals |
 
 **Scoring and ranking:**
 
  | Key | Default | Purpose |
 | ----- | --------- | --------- |
  | `highlights.score_weights` | (see config) | Per-event-type weight multipliers |
- | `highlights.combined_signal_bonus` | `1.5` | Multiplier when clip has both ball and cluster events |
+ | `highlights.combined_signal_bonus` | `1.5` | Multiplier when a clip combines multiple signal families |
  | `highlights.min_clip_score` | `2.0` | Drop clips scoring below this |
  | `highlights.max_clips` | `20` | Maximum exported highlight clips |
 
-> **Tip:** If you get too many irrelevant highlights, increase `min_clip_score`. If you miss important moments, reduce it. The `score_weights` let you tune which event types matter most — `goal_box` and `cluster_goal_zone` are weighted highest by default since goal-area action is typically most interesting.
+> **Tip:** If you get too many irrelevant highlights, increase `min_clip_score` or lower `motion_only_penalty`. If you miss important moments, reduce `min_clip_score` or relax the camera-motion thresholds. The `score_weights` let you tune which event types matter most — `goal_box` and `cluster_goal_zone` are weighted highest by default since goal-area action is typically most interesting.
 
 ### Ingest and Archival
 

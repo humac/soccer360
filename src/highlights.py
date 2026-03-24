@@ -27,6 +27,15 @@ _CLUSTER_EVENT_TYPES = {
     "cluster_goal_zone",
     "cluster_density",
 }
+_CAMERA_EVENT_TYPES = {"camera_motion"}
+_CONTEXT_EVENT_TYPES = {"goal_box", "cluster_convergence", "cluster_goal_zone"}
+_MOTION_ONLY_EVENT_TYPES = {
+    "speed",
+    "direction_change",
+    "cluster_velocity",
+    "cluster_density",
+    "camera_motion",
+}
 
 
 class HighlightDetector:
@@ -60,6 +69,11 @@ class HighlightDetector:
             "cluster_density_min_players",
             config.get("center_of_play", {}).get("min_players", 5),
         )
+        self.camera_motion_window = hl_cfg.get("camera_motion_window", 5)
+        self.camera_motion_deg_per_sec = hl_cfg.get("camera_motion_deg_per_sec", 12.0)
+        self.camera_zoom_delta = hl_cfg.get("camera_zoom_delta", 4.0)
+        self.same_type_cooldown_sec = hl_cfg.get("same_type_cooldown_sec", 0.75)
+        self.motion_only_penalty = hl_cfg.get("motion_only_penalty", 0.8)
 
         # Scoring and ranking config
         self.score_weights = hl_cfg.get("score_weights", {
@@ -70,6 +84,7 @@ class HighlightDetector:
             "cluster_velocity": 0.7,
             "cluster_goal_zone": 1.3,
             "cluster_density": 0.5,
+            "camera_motion": 0.8,
         })
         self.combined_signal_bonus = hl_cfg.get("combined_signal_bonus", 1.5)
         self.min_clip_score = hl_cfg.get("min_clip_score", 2.0)
@@ -136,15 +151,28 @@ class HighlightDetector:
             detector_stats["cluster_goal_zone_events"] = len(zone_events)
             detector_stats["cluster_density_events"] = len(density_events)
 
+        camera_entries = self._load_camera_path(camera_path_file)
+        if camera_entries is not None:
+            camera_motion_events = self._detect_camera_motion(camera_entries, fps)
+            events.extend(camera_motion_events)
+            detector_stats["camera_motion_events"] = len(camera_motion_events)
+
         detector_stats["total_raw_events"] = len(events)
+        events = self._apply_same_type_cooldown(events)
+        detector_stats["events_after_same_type_cooldown"] = len(events)
         detector_stats["ball_tracking_available"] = tracks_path is not None
         detector_stats["cluster_data_available"] = clusters is not None
+        detector_stats["camera_path_available"] = camera_entries is not None
 
         if not events:
             logger.info("No highlight events detected")
             return
 
-        logger.info("Detected %d raw highlight events", len(events))
+        logger.info(
+            "Detected %d raw highlight events (%d after cooldown)",
+            detector_stats["total_raw_events"],
+            len(events),
+        )
 
         # Cluster events into scored clips
         clips = self._cluster_events(events, fps)
@@ -188,6 +216,18 @@ class HighlightDetector:
             return load_json(path)
         except Exception:
             logger.warning("Failed to load cluster data from %s", path)
+            return None
+
+    def _load_camera_path(self, path: Path | None) -> list[dict] | None:
+        """Load camera path data if available."""
+        if path is None:
+            return None
+        if not path.exists():
+            return None
+        try:
+            return load_json(path)
+        except Exception:
+            logger.warning("Failed to load camera path from %s", path)
             return None
 
     # ------------------------------------------------------------------
@@ -438,6 +478,49 @@ class HighlightDetector:
 
         return events
 
+    def _detect_camera_motion(
+        self, camera_entries: list[dict], fps: float
+    ) -> list[dict]:
+        """Detect strong camera pan/zoom moments from the generated camera path."""
+        events = []
+        window = max(1, int(self.camera_motion_window))
+        duration_sec = window / fps if fps > 0 else 0.0
+        if duration_sec <= 0:
+            return events
+
+        for i in range(window, len(camera_entries)):
+            curr = camera_entries[i]
+            prev = camera_entries[i - window]
+            if not curr or not prev:
+                continue
+
+            yaw_delta = abs(self._angle_delta_deg(curr.get("yaw", 0.0), prev.get("yaw", 0.0)))
+            pitch_delta = abs(curr.get("pitch", 0.0) - prev.get("pitch", 0.0))
+            fov_delta = abs(curr.get("fov", 0.0) - prev.get("fov", 0.0))
+            pan_distance_deg = math.hypot(yaw_delta, pitch_delta)
+            pan_speed_deg_per_sec = pan_distance_deg / duration_sec
+
+            if (
+                pan_speed_deg_per_sec < self.camera_motion_deg_per_sec
+                and fov_delta < self.camera_zoom_delta
+            ):
+                continue
+
+            value = max(
+                pan_speed_deg_per_sec / max(self.camera_motion_deg_per_sec, 1e-6),
+                fov_delta / max(self.camera_zoom_delta, 1e-6),
+            )
+            events.append({
+                "frame": i,
+                "time_sec": i / fps,
+                "type": "camera_motion",
+                "value": value,
+                "pan_speed_deg_per_sec": pan_speed_deg_per_sec,
+                "fov_delta": fov_delta,
+            })
+
+        return events
+
     # ------------------------------------------------------------------
     # Clustering, scoring, and export
     # ------------------------------------------------------------------
@@ -468,18 +551,23 @@ class HighlightDetector:
             if duration < self.min_clip_duration_sec:
                 continue
 
-            event_types = list(set(e["type"] for e in cluster))
+            event_types = sorted(set(e["type"] for e in cluster))
 
             # Compute score
             total_score = sum(
-                self.score_weights.get(e["type"], 1.0) for e in cluster
+                self._score_event(e) for e in cluster
             )
 
-            # Combined signal bonus: clip has both ball and cluster events
+            # Combined signal bonus: clip has multiple signal families.
             has_ball = any(e["type"] in _BALL_EVENT_TYPES for e in cluster)
             has_cluster = any(e["type"] in _CLUSTER_EVENT_TYPES for e in cluster)
-            if has_ball and has_cluster:
+            has_camera = any(e["type"] in _CAMERA_EVENT_TYPES for e in cluster)
+            if sum((has_ball, has_cluster, has_camera)) >= 2:
                 total_score *= self.combined_signal_bonus
+
+            # Down-rank generic motion-only clips to reduce midfield churn.
+            if set(event_types).issubset(_MOTION_ONLY_EVENT_TYPES):
+                total_score *= self.motion_only_penalty
 
             if total_score < self.min_clip_score:
                 continue
@@ -504,6 +592,52 @@ class HighlightDetector:
         clips.sort(key=lambda c: c["start_sec"])
 
         return clips
+
+    def _apply_same_type_cooldown(self, events: list[dict]) -> list[dict]:
+        """Collapse same-type bursts into their strongest nearby event."""
+        if not events:
+            return []
+        if self.same_type_cooldown_sec <= 0:
+            return sorted(events, key=lambda e: e["time_sec"])
+
+        kept_by_type: dict[str, list[dict]] = {}
+        for event in sorted(events, key=lambda e: e["time_sec"]):
+            event_type = event["type"]
+            same_type_events = kept_by_type.setdefault(event_type, [])
+            if not same_type_events:
+                same_type_events.append(event.copy())
+                continue
+
+            prev = same_type_events[-1]
+            if event["time_sec"] - prev["time_sec"] > self.same_type_cooldown_sec:
+                same_type_events.append(event.copy())
+                continue
+
+            if self._event_priority(event) >= self._event_priority(prev):
+                same_type_events[-1] = event.copy()
+
+        collapsed = [
+            event
+            for events_for_type in kept_by_type.values()
+            for event in events_for_type
+        ]
+        collapsed.sort(key=lambda e: e["time_sec"])
+        return collapsed
+
+    def _score_event(self, event: dict) -> float:
+        """Base score contribution for a single event."""
+        return float(self.score_weights.get(event["type"], 1.0))
+
+    def _event_priority(self, event: dict) -> float:
+        """Prefer the strongest event when collapsing bursts."""
+        return float(event.get("value", 0.0))
+
+    def _angle_delta_deg(self, current: float, previous: float) -> float:
+        """Shortest signed angular delta in degrees."""
+        delta = (current - previous) % 360.0
+        if delta > 180.0:
+            delta -= 360.0
+        return delta
 
     def _export_clip(self, source_video: Path, clip: dict, output_path: Path):
         """Extract a clip from the broadcast video using ffmpeg."""

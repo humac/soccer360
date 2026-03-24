@@ -21,7 +21,7 @@ The orchestrator is in `src/pipeline.py` and supports three runtime modes:
 - Phase 2: `BallStabilizer.run()` (temporal persistence/jump-speed rejection, filters to class 32 only)
 - Phase 2.5: `ActiveLearningExporter.run()` (low-conf, lost-run, jump-reject hard frames)
 - Phase 2.7: `PlayerClusterComputer.run()` (trimmed-mean player centroid + spread, EMA smoothing)
-- Phase 3+: camera (hybrid ball+cluster blend), broadcast render, tactical render, highlights, export, cleanup
+- Phase 3+: camera (hybrid ball+cluster blend), broadcast render, tactical render, highlights (ball + cluster + camera-motion heuristics), export, cleanup
 
 1. `legacy mode` (if `detection` section is removed):
 
@@ -45,7 +45,7 @@ src/
   hard_frames.py     Legacy hard-frame export
   camera.py          Camera path smoothing (hybrid ball+cluster blend + Kalman + EMA + deadband + FOV EMA smoothing)
   reframer.py        360->perspective rendering (parallel segments with overlap)
-  highlights.py      Highlight detection (ball + cluster signals, scoring/ranking, manifest)
+  highlights.py      Highlight detection (ball + cluster + camera-motion signals, cooldown, scoring/ranking, manifest)
   exporter.py        Final outputs, metadata, ingest archival bookkeeping
   watcher.py         Ingest daemon + persistent dedupe state + EventBus creation
   trainer.py         Fine-tuning + TensorRT export + manual hard-frame export command
@@ -203,6 +203,13 @@ When adding/changing config:
 1. Update `configs/pipeline.yaml`
 2. Wire defaults in the owning module `__init__`
 3. Update `tests/conftest.py` fixture config (includes `center_of_play`, `detection.classes: [32, 0]`)
+
+## Highlight Heuristics
+
+- `src/highlights.py` now combines ball, player-cluster, and camera-path motion signals when ranking clips.
+- Same-type highlight bursts are collapsed with `highlights.same_type_cooldown_sec` before clip scoring so one sustained event does not dominate.
+- Clips containing only generic motion signals are down-ranked via `highlights.motion_only_penalty`; goal-pressure and convergence context still score normally.
+- If you add or rename highlight config keys, also update the dashboard settings inventory in `src/dashboard.py` and the shared test fixture in `tests/conftest.py`.
 
 ## Ingest and Watcher Behavior
 

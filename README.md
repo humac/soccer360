@@ -38,6 +38,14 @@ docker compose logs -f worker
 # 6. Find outputs in /tank/processed/<match_name>/
 ```
 
+## Documentation
+
+- `docs/admin-guide.md` -- current install, server setup, and configuration reference
+- `docs/operator-guide.md` -- day-to-day ingest, monitoring, and reprocess workflow
+- `docs/labeling-guide.md` -- hard-frame review, Label Studio, dataset build, and training loop
+- `docs/prompts/` -- internal prompt/design aids, not committed product behavior
+- `docs/archive/` -- historical planning and review documents kept for reference only
+
 ## Architecture
 
 Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 minutes:
@@ -61,7 +69,7 @@ Two-pass streaming pipeline designed to process 1-hour 5.7K matches in under 90 
 |3|Camera path (Kalman filter + EMA + hybrid blend)|CPU|
 |4|Broadcast reframing (py360convert)|CPU (12 workers)|
 |5|Tactical wide view|CPU (parallel)|
-|6|Highlight detection & export|CPU|
+|6|Highlight detection (ball + cluster + camera motion) & export|CPU|
 |7|Output organization|I/O|
 |8|Scratch cleanup|I/O|
 
@@ -219,7 +227,7 @@ All parameters are in `configs/pipeline.yaml`:
 - **tracker** -- ByteTrack thresholds, track buffer, ball selection sanity checks (detector.resolution pixel space)
 - **camera** -- pan speed limits, FOV range, FOV EMA smoothing (`fov_ema_alpha`), Kalman filter noise, deadband, velocity threshold, ball-lost behavior
 - **reframer** -- output resolution, source downscale, worker count, segment overlap, tactical view (FOV 120)
-- **highlights** -- ball detectors (speed, direction, goal-box), cluster detectors (convergence, velocity, goal zone, density), scoring weights, clip margins, max clips
+- **highlights** -- ball detectors (speed, direction, goal-box), cluster detectors (convergence, velocity, goal zone, density), camera-motion heuristics, same-type cooldown, scoring weights, clip margins, max clips
 - **exporter** -- codec, CRF quality, encoder (cpu/nvenc), raw file handling
 - **watcher** -- file extensions, staging suffix ignore list, stability checks (5x10s), dotfile filtering, persistent processed-state dedupe file
 - **ingest** -- post-success archival (archive mode, collision handling, name template)
@@ -648,7 +656,7 @@ src/
   player_cluster.py  Player cluster computation (center of play, trimmed mean, EMA)
   camera.py       Camera path generation (hybrid blend + Kalman + EMA + deadband + FOV EMA smoothing)
   reframer.py     360-to-perspective rendering (parallel segments, overlap warmup)
-  highlights.py   Heuristic highlight detection (ball + cluster signals, scoring/ranking)
+  highlights.py   Heuristic highlight detection (ball + cluster + camera-motion signals, cooldown, scoring/ranking)
   exporter.py     Output organization + metadata + artifact preservation
   hard_frames.py       Automatic hard-frame export for active learning (legacy)
   active_learning.py   YOLO pipeline active learning export (three-trigger identification)

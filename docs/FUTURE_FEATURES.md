@@ -158,7 +158,7 @@
 
 #### P1-11 Highlight heuristics upgrades
 - Status: `Partial`
-- Current repo state: the highlight system already combines ball and cluster signals, score weights, dedup spacing, ranking, clip caps, and writes `highlights.json`; remaining work is quality tuning and validation against real matches.
+- Current repo state: the highlight system now combines ball, cluster, and camera-motion signals, includes same-type burst cooldown and motion-only downranking, and writes ranked `highlights.json`; remaining work is validation against real matches and threshold tuning on a small review set.
 - Problem: false positives from midfield action.
 - Proposed Solution: combine goal-box proximity + speed spikes + camera pan/zoom magnitude; add pre/post padding config, dedup logic, max clips per match.
 - Config/Paths Impact: highlight thresholds and clip limits in config.
