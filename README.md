@@ -301,8 +301,8 @@ soccer360 train --epochs 50 --data /tank/labeling/dataset/dataset.yaml
 
 `/tank/stagging/` is a **holding folder** for videos you want visible in the UI without immediately starting the watcher. The dashboard's **Staging** panel lets you:
 
-- **Upload** video files directly from the browser with a real-time progress bar. Uploads are resumable — if the connection drops, the browser retries from where it left off using the `X-Upload-Offset` header. A `.uploading` partial file is kept on disk between retries and atomically renamed to the final filename on completion.
-- **Send To Ingest** — move a staged file into `/tank/ingest/` for immediate watcher pickup.
+- **Upload** video files directly from the browser with a real-time progress bar. Uploads are resumable — if the connection drops, the browser retries from where it left off using the `X-Upload-Offset` header. A `.uploading` partial file is kept on disk between retries and atomically renamed to the final filename on completion. A resume modal appears if a partial upload is detected.
+- **Send To Ingest** — move a staged file into `/tank/ingest/` for immediate watcher pickup. A confirmation modal appears before the move; a toast notification confirms success.
 
 **Safe ingest:** Use atomic copy to avoid processing partial files:
 
@@ -353,12 +353,12 @@ This also applies to `archive_mode: copy` / `leave` and `archive_collision: skip
 
 The preferred per-match reprocess flow is now the dashboard:
 
-1. Open the processed match in the dashboard
-2. Click **Remove Processed Match**
-3. Confirm the **Are you sure?** prompt
-4. The dashboard deletes processed outputs, highlights, labeling data, built dataset, dashboard history, and the related watcher dedupe entries
+1. Click the match row in the dashboard to open its dedicated match page (`/match/<name>`)
+2. Click **Remove Match Family**
+3. A modal previews what will be deleted — confirm to proceed
+4. The dashboard deletes processed outputs, highlights, labeling data, built dataset, dashboard history, and the related watcher dedupe entries; a toast confirms the result
 5. One original source video is restored to `/tank/stagging/<match>_reprocess.ext`
-6. Use **Send To Ingest** in the dashboard Staging panel to queue it again
+6. Use **Send To Ingest** in the dashboard Staging panel to queue it again; a toast confirms the move
 
 Use the manual dedupe reset below only for broader administrative resets affecting many files.
 

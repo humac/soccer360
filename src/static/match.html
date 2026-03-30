@@ -3,327 +3,1099 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Soccer360 · Match Playback</title>
+<title>Soccer360 · Match Control</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
-    --text: #e1e4eb; --muted: #8b8fa3; --accent: #3b82f6;
-    --green: #22c55e; --yellow: #eab308; --red: #ef4444;
+    --bg: #081019;
+    --bg-soft: #0d1722;
+    --surface: rgba(14, 20, 30, 0.96);
+    --surface-strong: rgba(10, 16, 24, 0.98);
+    --border: rgba(113, 132, 158, 0.24);
+    --border-strong: rgba(169, 190, 214, 0.4);
+    --text: #edf3fb;
+    --muted: #92a0b2;
+    --accent: #5c97ff;
+    --green: #43c983;
+    --yellow: #f1b557;
+    --orange: #ff9f57;
+    --red: #e27872;
+    --shadow: 0 18px 40px rgba(0, 0, 0, 0.26);
+    --radius-lg: 20px;
+    --radius-md: 12px;
+    --radius-sm: 8px;
   }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background:
-      radial-gradient(circle at top left, rgba(59, 130, 246, 0.1), transparent 24%),
-      var(--bg);
-    color: var(--text);
-    font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
     min-height: 100vh;
+    background:
+      linear-gradient(rgba(120, 138, 160, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(120, 138, 160, 0.05) 1px, transparent 1px),
+      radial-gradient(circle at top left, rgba(92, 151, 255, 0.12), transparent 28%),
+      radial-gradient(circle at top right, rgba(67, 201, 131, 0.08), transparent 18%),
+      linear-gradient(180deg, #081019 0%, #0a131d 100%);
+    background-size: 128px 128px, 128px 128px, auto, auto, auto;
+    color: var(--text);
+    font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+    font-size: 14px;
+    line-height: 1.42;
+    padding: 16px;
+  }
+
+  a, button, input { font: inherit; }
+  a { color: inherit; text-decoration: none; }
+
+  .shell {
+    max-width: 1660px;
+    margin: 0 auto;
+    min-width: 0;
   }
 
   .topbar {
-    display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap;
-    padding: 12px clamp(14px, 2vw, 20px); background: rgba(26, 29, 39, 0.94);
-    border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10;
-    backdrop-filter: blur(12px);
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+    align-items: start;
   }
-  .topbar a { color: var(--accent); text-decoration: none; font-size: 0.85rem; }
-  .topbar a:hover { text-decoration: underline; }
-  .topbar h1 { font-size: 1rem; font-weight: 600; flex: 1 1 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .masthead, .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    backdrop-filter: none;
+  }
+
+  .masthead {
+    padding: 18px 20px 16px;
+    background:
+      linear-gradient(90deg, rgba(92, 151, 255, 0.12), transparent 18%),
+      linear-gradient(180deg, rgba(255,255,255,0.015), rgba(255,255,255,0.01)),
+      var(--surface);
+  }
+
+  .brandline, .toolbar, .action-row, .tag-row, .button-row, .inline-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .button-row > *,
+  .action-row > * {
+    max-width: 100%;
+    min-width: 0;
+    flex: 1 1 220px;
+  }
+
+  .brandline {
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 14px;
+  }
+
+  .brandline > :first-child {
+    flex: 1 1 360px;
+    min-width: 0;
+  }
+
+  .brandline .button-row {
+    flex: 0 1 auto;
+    justify-content: flex-end;
+  }
+
+  .brandline .button-row > * {
+    flex: 0 1 auto;
+  }
+
+  .primary-actions > * {
+    flex: 0 1 auto;
+  }
+
+  .eyebrow {
+    font-size: 0.66rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+    font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  h1 {
+    font-size: clamp(1.65rem, 3.2vw, 3.15rem);
+    line-height: 0.98;
+    letter-spacing: -0.03em;
+    max-width: 14ch;
+    text-wrap: balance;
+  }
+
+  .subtitle {
+    margin-top: 8px;
+    max-width: 900px;
+    color: var(--muted);
+    font-size: 0.84rem;
+    overflow-wrap: anywhere;
+  }
+
+  .masthead-grid {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .detail-strip {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+    gap: 10px;
+  }
+
+  .primary-actions {
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .detail-card,
+  .hero-card {
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(255,255,255,0.018), rgba(255,255,255,0.008));
+    padding: 12px;
+    min-width: 0;
+  }
+
+  .metric-label {
+    color: var(--muted);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  .metric-value {
+    margin-top: 5px;
+    font-size: 1.08rem;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    overflow-wrap: anywhere;
+  }
+
+  .metric-note {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 0.74rem;
+    overflow-wrap: anywhere;
+  }
+
+  .btn, .ghost-btn, .nav-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    padding: 0 11px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: 0.18s ease;
+    white-space: normal;
+    text-align: center;
+    overflow-wrap: anywhere;
+    font-size: 0.78rem;
+    font-weight: 500;
+  }
+
+  .btn {
+    background: linear-gradient(180deg, rgba(92, 151, 255, 0.26), rgba(92, 151, 255, 0.18));
+    border-color: rgba(255, 255, 255, 0.12);
+    color: #eef5ff;
+  }
+  .btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  .btn.secondary { background: rgba(92, 151, 255, 0.14); color: #d7e8ff; border-color: rgba(92, 151, 255, 0.24); }
+  .btn.green { background: rgba(67, 201, 131, 0.13); color: #dcffec; border-color: rgba(67, 201, 131, 0.24); }
+  .btn.yellow { background: rgba(241, 181, 87, 0.12); color: #fff1c8; border-color: rgba(241, 181, 87, 0.24); }
+  .btn.red { background: rgba(226, 120, 114, 0.14); color: #ffe1e1; border-color: rgba(226, 120, 114, 0.24); }
+  .ghost-btn, .nav-link {
+    background: rgba(255, 255, 255, 0.015);
+    border-color: var(--border);
+    color: var(--muted);
+  }
+  .ghost-btn:hover, .nav-link:hover { color: var(--text); border-color: var(--border-strong); }
+  .btn:disabled, .ghost-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .status-pill, .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.7rem;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .status-ready_to_label, .status-labeling { background: rgba(78, 213, 143, 0.12); border-color: rgba(78, 213, 143, 0.22); color: #dcffec; }
+  .status-processing { background: rgba(92, 162, 255, 0.16); border-color: rgba(92, 162, 255, 0.24); color: #e4efff; }
+  .status-queued { background: rgba(240, 199, 94, 0.12); border-color: rgba(240, 199, 94, 0.22); color: #fff1c8; }
+  .status-dataset_pending { background: rgba(255, 153, 102, 0.12); border-color: rgba(255, 153, 102, 0.2); color: #ffe7d7; }
+  .status-ready_to_train { background: rgba(186, 143, 255, 0.16); border-color: rgba(186, 143, 255, 0.22); color: #f2e9ff; }
+  .status-processed { color: var(--muted); }
+  .status-staged { background: rgba(115, 196, 255, 0.1); border-color: rgba(115, 196, 255, 0.18); color: #def4ff; }
 
   .layout {
     display: grid;
-    grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
-    gap: 0;
-    min-height: calc(100vh - 57px);
+    gap: 14px;
+    align-items: start;
+    min-width: 0;
   }
 
-  .sidebar {
-    background: var(--surface); border-right: 1px solid var(--border);
-    padding: 16px 12px; overflow-y: auto; min-width: 0;
-  }
-  .sidebar h3 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 10px; }
-
-  .video-list { display: flex; flex-direction: column; gap: 4px; }
-  .video-item {
-    display: flex; align-items: center; gap: 8px;
-    padding: 8px 10px; border-radius: 6px; cursor: pointer;
-    border: 1px solid transparent; font-size: 0.83rem;
-    transition: background 0.15s;
-  }
-  .video-item:hover { background: rgba(255,255,255,0.05); border-color: var(--border); }
-  .video-item.active { background: rgba(59,130,246,0.15); border-color: var(--accent); color: var(--accent); }
-  .video-item .label { flex: 1; font-weight: 500; }
-  .video-item .size { font-size: 0.72rem; color: var(--muted); }
-  .video-item .badge {
-    font-size: 0.65rem; padding: 1px 6px; border-radius: 10px;
-    background: rgba(234,179,8,0.2); color: var(--yellow); border: 1px solid rgba(234,179,8,0.3);
+  .stack {
+    display: grid;
+    gap: 14px;
+    min-width: 0;
   }
 
-  .divider { height: 1px; background: var(--border); margin: 12px 0; }
-
-  .sidebar-meta { font-size: 0.75rem; color: var(--muted); line-height: 1.6; }
-  .sidebar-meta span { display: block; }
-
-  .main { display: flex; flex-direction: column; min-width: 0; }
-
-  .player-wrap {
-    background: #000; flex: 1;
-    display: flex; align-items: center; justify-content: center;
-    min-height: min(56vw, 420px);
-  }
-  .player-wrap video { width: 100%; max-height: calc(100vh - 200px); display: block; }
-  .player-empty {
-    color: var(--muted); font-size: 0.9rem; text-align: center; padding: 60px 20px;
+  .panel {
+    padding: 16px;
+    min-width: 0;
   }
 
-  .player-info {
-    padding: 10px clamp(14px, 2vw, 20px); background: var(--surface); border-top: 1px solid var(--border);
-    display: flex; align-items: center; gap: 10px 16px; font-size: 0.8rem; color: var(--muted);
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 12px;
     flex-wrap: wrap;
+    min-width: 0;
   }
-  .player-info .filename { color: var(--text); font-weight: 500; flex: 1 1 220px; min-width: 0; word-break: break-word; }
 
-  .btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 8px 14px; border-radius: 8px; border: none;
-    cursor: pointer; font-size: 0.82rem; font-weight: 500;
-    text-decoration: none; transition: opacity 0.15s;
+  .panel-title {
+    font-size: 0.76rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
   }
-  .btn:hover { opacity: 0.85; }
-  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  #remove-match-btn { background: var(--red); color: #fff; }
+  .panel-copy {
+    color: var(--muted);
+    font-size: 0.76rem;
+    max-width: 720px;
+    overflow-wrap: anywhere;
+  }
+
+  .hero-card {
+    padding: 12px 14px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.012));
+  }
+
+  .hero-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .detail-card .metric-value {
+    font-size: 0.92rem;
+    line-height: 1.3;
+  }
+
+  .detail-card .metric-note {
+    font-size: 0.72rem;
+  }
+
+  .video-stage {
+    overflow: hidden;
+    border-radius: 18px;
+    border: 1px solid var(--border);
+    background: #000;
+    min-height: 280px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .video-stage video {
+    width: 100%;
+    max-height: 72vh;
+    display: block;
+    background: #000;
+  }
+
+  .empty-state {
+    padding: 48px 20px;
+    color: var(--muted);
+    text-align: center;
+    font-size: 0.84rem;
+  }
+
+  .video-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 12px;
+  }
+
+  .support-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .support-grid .stepper {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .support-grid .facts-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .video-card {
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(255,255,255,0.018), rgba(255,255,255,0.008));
+    padding: 12px;
+    display: grid;
+    gap: 6px;
+    cursor: pointer;
+    transition: 0.18s ease;
+    min-width: 0;
+  }
+
+  .video-card:hover {
+    border-color: var(--border-strong);
+    transform: translateY(-1px);
+  }
+
+  .video-card.active {
+    border-color: rgba(92, 162, 255, 0.38);
+    background: rgba(92, 162, 255, 0.12);
+  }
+
+  .video-name {
+    font-size: 0.84rem;
+    font-weight: 600;
+    word-break: break-word;
+    line-height: 1.2;
+  }
+
+  .tiny, .muted {
+    color: var(--muted);
+    font-size: 0.74rem;
+    overflow-wrap: anywhere;
+  }
+
+  .mono {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    word-break: break-word;
+  }
+
+  .stepper {
+    display: grid;
+    gap: 8px;
+  }
+
+  .step {
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.015);
+    padding: 10px 12px;
+    color: var(--muted);
+  }
+
+  .step strong {
+    display: block;
+    color: var(--text);
+    margin-bottom: 4px;
+    font-size: 0.8rem;
+  }
+
+  .step.ready {
+    background: rgba(78, 213, 143, 0.09);
+    border-color: rgba(78, 213, 143, 0.22);
+  }
+
+  .step.pending {
+    background: rgba(255, 153, 102, 0.08);
+    border-color: rgba(255, 153, 102, 0.2);
+  }
+
+  .facts-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 12px;
+  }
+
+  .fact {
+    border: 1px solid rgba(113, 132, 158, 0.18);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.015);
+    padding: 10px;
+    min-width: 0;
+  }
+
+  .fact-label {
+    color: var(--muted);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 5px;
+    font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  .fact-value {
+    font-size: 0.82rem;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
 
   .error-banner {
-    margin: 20px; padding: 14px 18px;
-    background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);
-    border-radius: 6px; color: var(--red); font-size: 0.88rem;
+    margin-bottom: 14px;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(255, 127, 127, 0.2);
+    background: rgba(255, 127, 127, 0.1);
+    padding: 12px 14px;
+    color: #ffdada;
+    display: none;
   }
 
-  @media (max-width: 920px) {
-    .layout {
+  .warning-banner {
+    margin-top: 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(255, 153, 102, 0.2);
+    background: rgba(255, 153, 102, 0.08);
+    padding: 10px 12px;
+    color: #ffe5d3;
+    display: none;
+  }
+
+  @media (max-width: 1160px) {
+    .hero-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .support-grid {
       grid-template-columns: 1fr;
-      grid-template-areas:
-        "main"
-        "sidebar";
-      min-height: auto;
     }
-    .main { grid-area: main; }
-    .sidebar {
-      grid-area: sidebar;
-      border-right: none;
-      border-top: 1px solid var(--border);
-      padding: 14px;
-    }
-    .video-list {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 8px;
-    }
-    .video-item {
-      align-items: flex-start;
-      min-height: 60px;
+
+    .detail-strip {
+      grid-template-columns: 1fr;
     }
   }
 
-  @media (max-width: 640px) {
-    .topbar h1 {
-      flex-basis: 100%;
-      white-space: normal;
+  @media (max-width: 720px) {
+    body { padding: 12px; }
+    .masthead, .panel { padding: 14px; }
+    .brandline {
+      flex-direction: column;
+      align-items: stretch;
     }
-    .topbar a,
-    #remove-match-btn {
-      width: 100%;
-      justify-content: center;
+    .hero-grid, .facts-grid, .support-grid {
+      grid-template-columns: 1fr;
     }
-    .player-wrap {
+    .video-grid {
+      grid-template-columns: 1fr;
+    }
+    .video-stage {
       min-height: 220px;
     }
-    .player-wrap video {
+    .video-stage video {
       max-height: none;
     }
-    .video-list {
-      grid-template-columns: 1fr;
+    .button-row > *,
+    .action-row > * {
+      flex-basis: 100%;
     }
-    .player-info {
+    .inline-meta {
       align-items: flex-start;
     }
   }
+
+  /* ── Toasts ── */
+  .toast-stack { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: grid; gap: 8px; max-width: 420px; pointer-events: none; }
+  .toast { pointer-events: auto; background: var(--surface-strong); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 11px 14px; display: flex; align-items: flex-start; gap: 10px; box-shadow: 0 8px 28px rgba(0,0,0,0.45); font-size: 0.82rem; line-height: 1.45; animation: toast-in 0.22s ease; }
+  .toast.out { animation: toast-out 0.18s ease forwards; }
+  .toast.success { border-color: rgba(67,201,131,0.35); }
+  .toast.error { border-color: rgba(226,120,114,0.35); }
+  .toast.info { border-color: rgba(92,151,255,0.28); }
+  .toast-icon { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.72rem; font-weight: 700; margin-top: 1px; }
+  .toast.success .toast-icon { background: rgba(67,201,131,0.18); color: var(--green); }
+  .toast.error .toast-icon { background: rgba(226,120,114,0.18); color: var(--red); }
+  .toast.info .toast-icon { background: rgba(92,151,255,0.18); color: var(--accent); }
+  .toast-body { flex: 1; min-width: 0; word-break: break-word; }
+  .toast-close { flex-shrink: 0; background: none; border: none; color: var(--muted); cursor: pointer; padding: 0; line-height: 1; font-size: 0.8rem; margin-left: 4px; }
+  .toast-close:hover { color: var(--text); }
+  @keyframes toast-in { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+  @keyframes toast-out { to { opacity: 0; transform: translateX(10px); } }
+
+  /* ── Modal ── */
+  .modal-backdrop { position: fixed; inset: 0; z-index: 1000; background: rgba(2,5,10,0.72); display: flex; align-items: center; justify-content: center; padding: 24px; animation: modal-fade 0.16s ease; }
+  .modal-box { background: var(--surface-strong); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: 0 24px 64px rgba(0,0,0,0.55); padding: 22px 24px; max-width: 460px; width: 100%; animation: modal-slide 0.2s ease; }
+  .modal-title { font-size: 0.98rem; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .modal-body { color: var(--muted); font-size: 0.82rem; line-height: 1.55; margin-bottom: 18px; white-space: pre-line; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  @keyframes modal-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes modal-slide { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: none; } }
 </style>
 </head>
 <body>
+<div class="shell">
+  <div id="error-banner" class="error-banner"></div>
 
-<div class="topbar">
-  <a href="/">&#8592; Dashboard</a>
-  <h1 id="page-title">Loading…</h1>
-  <button id="remove-match-btn" class="btn" onclick="removeMatch()" disabled title="Delete processed outputs and restore source to staging">
-    Remove Match
-  </button>
-</div>
-
-<div id="error-banner" class="error-banner" style="display:none"></div>
-
-<div class="layout" id="layout" style="display:none">
-  <div class="sidebar">
-    <h3>Videos</h3>
-    <div id="video-list" class="video-list"></div>
-    <div class="divider"></div>
-    <div class="sidebar-meta" id="match-meta"></div>
+  <div class="topbar">
+    <section class="masthead">
+      <div class="brandline">
+        <div>
+          <div class="eyebrow">Match Control</div>
+          <h1 id="page-title">Loading match…</h1>
+          <p class="subtitle" id="page-subtitle">Gathering playback outputs, labeling state, model lineage, and reset impact.</p>
+        </div>
+        <div class="button-row">
+          <a class="nav-link" href="/#matches">Back To Dashboard</a>
+          <a class="nav-link" id="open-dashboard-link" href="/#labeling">Training Console</a>
+        </div>
+      </div>
+      <div class="tag-row" id="hero-tags"></div>
+      <div class="masthead-grid">
+        <div class="hero-grid">
+          <div class="hero-card">
+            <div class="metric-label">Status</div>
+            <div class="metric-value" id="hero-status">--</div>
+            <div class="metric-note" id="hero-status-note">Workflow state will appear here.</div>
+          </div>
+          <div class="hero-card">
+            <div class="metric-label">Outputs</div>
+            <div class="metric-value" id="hero-outputs">0</div>
+            <div class="metric-note" id="hero-output-note">Processed videos and highlight clips</div>
+          </div>
+          <div class="hero-card">
+            <div class="metric-label">Labeling</div>
+            <div class="metric-value" id="hero-labeling">0 / 0</div>
+            <div class="metric-note" id="hero-labeling-note">Uploaded labels vs exported hard frames</div>
+          </div>
+          <div class="hero-card">
+            <div class="metric-label">Dataset</div>
+            <div class="metric-value" id="hero-dataset">--</div>
+            <div class="metric-note" id="hero-dataset-note">Freshness and training readiness</div>
+          </div>
+        </div>
+        <div class="detail-strip">
+          <div class="detail-card">
+            <div class="metric-label">Processed</div>
+            <div class="metric-value" id="metric-processed-at">--</div>
+            <div class="metric-note">Latest processed timestamp</div>
+          </div>
+          <div class="detail-card">
+            <div class="metric-label">Job</div>
+            <div class="metric-value" id="metric-job">--</div>
+            <div class="metric-note">Pipeline job lineage</div>
+          </div>
+        </div>
+        <div id="primary-actions" class="button-row primary-actions"></div>
+        <div id="reset-warning" class="warning-banner"></div>
+      </div>
+    </section>
   </div>
-  <div class="main">
-    <div class="player-wrap" id="player-wrap">
-      <div class="player-empty" id="player-empty">Select a video to play</div>
-      <video id="player" controls preload="metadata" style="display:none"></video>
-    </div>
-    <div class="player-info" id="player-info" style="display:none">
-      <span class="filename" id="player-filename"></span>
-      <span id="player-size"></span>
+
+  <div class="layout" id="layout" style="display:none">
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Playback</div>
+          <div class="panel-copy">Broadcast, tactical, and highlight outputs stay anchored to the same match detail surface so operators can review media without losing workflow context.</div>
+        </div>
+        <div class="tag-row" id="player-tags"></div>
+      </div>
+      <div class="video-stage" id="player-stage">
+        <div id="player-empty" class="empty-state">Select an output to begin playback.</div>
+        <video id="player" controls preload="metadata" style="display:none"></video>
+      </div>
+      <div class="inline-meta" style="justify-content:space-between;margin-top:12px">
+        <div class="tiny" id="player-filename">No output selected</div>
+        <div class="tiny" id="player-size">--</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Available Outputs</div>
+          <div class="panel-copy">Processed family members, highlight clips, and file sizes in one place.</div>
+        </div>
+      </div>
+      <div id="video-grid" class="video-grid"></div>
+    </section>
+
+    <div class="support-grid">
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Lifecycle</div>
+            <div class="panel-copy">This is the per-match stepper for frames, task generation, labels, dataset freshness, and training readiness.</div>
+          </div>
+        </div>
+        <div id="lifecycle-stepper" class="stepper"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Lineage</div>
+            <div class="panel-copy">Source paths, archived media, and model runtime metadata recorded when this match was processed.</div>
+          </div>
+        </div>
+        <div id="lineage-grid" class="facts-grid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Reset Preview</div>
+            <div class="panel-copy">Destructive actions are summarized before they run: deleted outputs, restored source target, dataset invalidation, and history cleanup.</div>
+          </div>
+        </div>
+        <div id="reset-grid" class="facts-grid"></div>
+      </section>
     </div>
   </div>
 </div>
 
 <script>
-function escapeHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function escapeHtml(value) {
+  const div = document.createElement('div');
+  div.textContent = value == null ? '' : String(value);
+  return div.innerHTML;
 }
 
-// Extract match name from URL path: /match/{matchName}
+function quoteJs(value) {
+  return JSON.stringify(value == null ? '' : String(value)).replace(/"/g, '&quot;');
+}
+
+(function() {
+  function getStack() {
+    let s = document.getElementById('_toast_stack');
+    if (!s) { s = document.createElement('div'); s.id = '_toast_stack'; s.className = 'toast-stack'; document.body.appendChild(s); }
+    return s;
+  }
+  window.showToast = function(message, type) {
+    type = type || 'info';
+    const icons = {success: '✓', error: '✕', info: 'i'};
+    const el = document.createElement('div');
+    el.className = 'toast ' + type;
+    el.innerHTML =
+      '<div class="toast-icon">' + (icons[type] || 'i') + '</div>' +
+      '<div class="toast-body">' + escapeHtml(String(message)) + '</div>' +
+      '<button class="toast-close" aria-label="Dismiss">✕</button>';
+    let gone = false;
+    function dismiss() {
+      if (gone) return; gone = true;
+      clearTimeout(timer);
+      el.classList.add('out');
+      el.addEventListener('animationend', () => el.remove(), {once: true});
+    }
+    el.querySelector('.toast-close').addEventListener('click', dismiss);
+    getStack().appendChild(el);
+    const timer = setTimeout(dismiss, type === 'error' ? 6000 : 4000);
+  };
+  window.showModal = function(title, body, confirmLabel, danger) {
+    return new Promise(function(resolve) {
+      const bd = document.createElement('div');
+      bd.className = 'modal-backdrop';
+      bd.setAttribute('role', 'dialog');
+      bd.setAttribute('aria-modal', 'true');
+      bd.innerHTML =
+        '<div class="modal-box">' +
+          '<div class="modal-title">' + escapeHtml(title) + '</div>' +
+          '<div class="modal-body">' + escapeHtml(body) + '</div>' +
+          '<div class="modal-actions">' +
+            '<button class="btn secondary" id="_mcl">Cancel</button>' +
+            '<button class="btn' + (danger ? ' red' : '') + '" id="_mco">' + escapeHtml(confirmLabel || 'Confirm') + '</button>' +
+          '</div>' +
+        '</div>';
+      function close(r) { document.removeEventListener('keydown', onKey); bd.remove(); resolve(r); }
+      function onKey(e) { if (e.key === 'Escape') close(false); }
+      bd.querySelector('#_mcl').addEventListener('click', function() { close(false); });
+      bd.querySelector('#_mco').addEventListener('click', function() { close(true); });
+      bd.addEventListener('click', function(e) { if (e.target === bd) close(false); });
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(bd);
+      bd.querySelector('#_mco').focus();
+    });
+  };
+})();
+
+function formatDate(value) {
+  if (!value || value === '--') return '--';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+
+function formatFileSizeMb(value) {
+  if (value == null) return '--';
+  return value + ' MB';
+}
+
+function showError(message) {
+  const banner = document.getElementById('error-banner');
+  banner.textContent = message;
+  banner.style.display = 'block';
+}
+
+function statusClassFor(labeling) {
+  if (!labeling) return 'status-processed';
+  if (labeling.training_ready) return 'status-ready_to_train';
+  if ((labeling.labeled || 0) > 0 && ['missing', 'stale'].includes(labeling.dataset_state || '')) return 'status-dataset_pending';
+  if (labeling.tasks_generated && (labeling.labeled || 0) === 0) return 'status-labeling';
+  if (!labeling.tasks_generated && (labeling.frames || 0) > 0) return 'status-ready_to_label';
+  return 'status-processed';
+}
+
 const pathParts = window.location.pathname.split('/');
 const matchName = decodeURIComponent(pathParts[pathParts.length - 1] || pathParts[pathParts.length - 2] || '');
+const labelStudioUrl = location.protocol + '//' + location.hostname + ':8080';
 
-let matchData = null;
-let currentVideo = null;
-
-function showError(msg) {
-  const el = document.getElementById('error-banner');
-  el.textContent = msg;
-  el.style.display = 'block';
-}
+const appState = {
+  match: null,
+  currentVideo: null,
+};
 
 async function loadMatch() {
-  if (!matchName) { showError('No match name in URL.'); return; }
-
-  try {
-    const resp = await fetch('/api/media/matches/' + encodeURIComponent(matchName));
-    if (!resp.ok) {
-      showError('Match not found: ' + matchName);
-      return;
-    }
-    matchData = await resp.json();
-  } catch(e) {
-    showError('Failed to load match: ' + e.message);
+  if (!matchName) {
+    showError('No match name was found in the URL.');
     return;
   }
 
-  document.getElementById('page-title').textContent = matchData.canonical_match || matchData.name;
-  document.title = 'Soccer360 · ' + (matchData.canonical_match || matchData.name);
+  let resp;
+  try {
+    resp = await fetch('/api/media/matches/' + encodeURIComponent(matchName));
+  } catch (error) {
+    showError('Failed to load match data: ' + error.message);
+    return;
+  }
 
-  // Sidebar meta
-  const metaEl = document.getElementById('match-meta');
-  const date = matchData.processed_at && matchData.processed_at !== '--'
-    ? new Date(matchData.processed_at).toLocaleString() : '--';
-  metaEl.innerHTML =
-    '<span><strong>Mode:</strong> ' + escapeHtml(matchData.mode || '--') + '</span>' +
-    '<span><strong>Processed:</strong> ' + escapeHtml(date) + '</span>' +
-    (matchData.job_id ? '<span style="margin-top:4px;word-break:break-all"><strong>Job:</strong> ' + escapeHtml(matchData.job_id) + '</span>' : '');
+  if (!resp.ok) {
+    showError('Match not found: ' + matchName);
+    return;
+  }
 
-  // Video list
-  const listEl = document.getElementById('video-list');
-  const videos = matchData.videos || [];
-  listEl.innerHTML = videos.map((v, i) => {
-    const isHL = v.name.startsWith('highlights/');
-    const rawLabel = v.name.replace(/^highlights\//, '').replace(/\.mp4$/, '');
+  appState.match = await resp.json();
+  renderMatch();
+}
+
+function renderMatch() {
+  const match = appState.match;
+  if (!match) return;
+
+  const labeling = match.labeling || {};
+  const preview = match.reset_preview || {};
+  const videos = Array.isArray(match.videos) ? match.videos : [];
+  const statusText = labeling.training_ready
+    ? 'ready to train'
+    : (labeling.blocker || match.dataset_state || 'processed');
+
+  document.title = 'Soccer360 · ' + (match.canonical_match || match.name);
+  document.getElementById('page-title').textContent = match.canonical_match || match.name;
+  const sourceLabel = (match.ingest_source_path || match.source_path || 'lineage unavailable').split('/').pop();
+  document.getElementById('page-subtitle').textContent =
+    'Source ' + sourceLabel +
+    ' · processed ' + formatDate(match.processed_at) +
+    ' · ' + String(videos.length) + ' outputs available.';
+
+  document.getElementById('hero-status').textContent = (labeling.training_ready ? 'Ready' : (match.dataset_state || 'Processed')).replace(/_/g, ' ');
+  document.getElementById('hero-status-note').textContent = statusText;
+  document.getElementById('hero-outputs').textContent = String(videos.length);
+  document.getElementById('hero-output-note').textContent = videos.filter(video => video.name.startsWith('highlights/')).length + ' highlight clips in this family';
+  document.getElementById('hero-labeling').textContent = String(labeling.labeled || 0) + ' / ' + String(labeling.frames || match.hard_frames_count || 0);
+  document.getElementById('hero-labeling-note').textContent = (labeling.tasks_generated ? 'Tasks generated' : 'Tasks not generated yet');
+  document.getElementById('hero-dataset').textContent = String(match.dataset_state || 'unknown');
+  document.getElementById('hero-dataset-note').textContent = labeling.training_ready ? 'Training can start now' : (labeling.blocker || 'Waiting on a later step');
+
+  document.getElementById('metric-processed-at').textContent = formatDate(match.processed_at);
+  document.getElementById('metric-job').textContent = match.job_id || '--';
+
+  const heroTags = [];
+  heroTags.push('<span class="status-pill ' + statusClassFor(labeling) + '">' + escapeHtml((match.dataset_state || 'processed').replace(/_/g, ' ')) + '</span>');
+  if (match.mode) heroTags.push('<span class="tag">Mode ' + escapeHtml(match.mode) + '</span>');
+  if (match.model_runtime && match.model_runtime.dual_model_enabled) heroTags.push('<span class="tag">Dual model ingest</span>');
+  document.getElementById('hero-tags').innerHTML = heroTags.join('');
+
+  renderPrimaryActions(match);
+  renderPlayer(videos);
+  renderLifecycle(labeling, match);
+  renderLineage(match);
+  renderResetPreview(preview);
+
+  const warning = document.getElementById('reset-warning');
+  if (preview.blocked_reason) {
+    warning.style.display = 'block';
+    warning.textContent = preview.blocked_reason;
+  } else {
+    warning.style.display = 'none';
+    warning.textContent = '';
+  }
+
+  document.getElementById('layout').style.display = 'grid';
+}
+
+function renderPrimaryActions(match) {
+  const labeling = match.labeling || {};
+  const preview = match.reset_preview || {};
+  const actions = [];
+  actions.push('<a class="ghost-btn" href="/#matches">Open Dashboard</a>');
+  if ((labeling.frames || 0) > 0 && !labeling.tasks_generated) {
+    actions.push('<button class="btn secondary" onclick="importTasks(' + quoteJs(match.family_key || match.name) + ')">Generate Tasks</button>');
+  }
+  if (labeling.tasks_generated) {
+    actions.push('<a class="btn secondary" href="' + escapeHtml(labelStudioUrl) + '" target="_blank">Open Label Studio</a>');
+    actions.push('<button class="btn secondary" onclick="uploadLabels(' + quoteJs(match.family_key || match.name) + ')">Upload Labels</button>');
+  }
+  if ((labeling.labeled || 0) > 0 && ['missing', 'stale'].includes(labeling.dataset_state || '')) {
+    actions.push('<button class="btn yellow" onclick="buildDataset()">Build Dataset</button>');
+  }
+  actions.push('<a class="btn green" href="/#labeling">Open Training Console</a>');
+  actions.push('<button id="remove-match-btn" class="btn red" ' + (preview.allowed ? '' : 'disabled ') + 'onclick="removeMatch()">Remove Match Family</button>');
+  document.getElementById('primary-actions').innerHTML = actions.join('');
+}
+
+function renderPlayer(videos) {
+  const grid = document.getElementById('video-grid');
+  if (!videos.length) {
+    grid.innerHTML = '<div class="empty-state">No playable outputs were found for this match.</div>';
+    document.getElementById('player-tags').innerHTML = '';
+    document.getElementById('player-empty').style.display = 'block';
+    document.getElementById('player').style.display = 'none';
+    return;
+  }
+
+  grid.innerHTML = videos.map((video, index) => {
+    const isHighlight = video.name.startsWith('highlights/');
+    const rawLabel = video.name.replace(/^highlights\//, '').replace(/\.mp4$/, '');
     const label = rawLabel.replace(/_/g, ' ');
-    return '<div class="video-item" id="vitem-' + i + '" onclick="playVideo(' + i + ')">' +
-      (isHL ? '<span class="badge">HL</span>' : '') +
-      '<span class="label">' + escapeHtml(label) + '</span>' +
-      '<span class="size">' + v.size_mb + ' MB</span>' +
+    return '<div class="video-card' + (appState.currentVideo === video.name ? ' active' : '') + '" onclick="playVideo(' + index + ')">' +
+      '<div class="tag-row">' +
+        (isHighlight ? '<span class="tag">Highlight</span>' : '<span class="tag">Output</span>') +
+        '<span class="tiny">' + escapeHtml(formatFileSizeMb(video.size_mb)) + '</span>' +
+      '</div>' +
+      '<div class="video-name">' + escapeHtml(label) + '</div>' +
+      '<div class="muted">' + escapeHtml(video.name) + '</div>' +
     '</div>';
   }).join('');
 
-  document.getElementById('layout').style.display = 'grid';
-  document.getElementById('remove-match-btn').disabled = false;
-
-  // Auto-play broadcast
-  const broadcastIdx = videos.findIndex(v => v.name === 'broadcast.mp4');
-  if (broadcastIdx >= 0) playVideo(broadcastIdx);
-  else if (videos.length > 0) playVideo(0);
+  const defaultIndex = videos.findIndex(video => video.name === 'broadcast.mp4');
+  const targetIndex = defaultIndex >= 0 ? defaultIndex : 0;
+  if (!appState.currentVideo || !videos.some(video => video.name === appState.currentVideo)) {
+    playVideo(targetIndex);
+  } else {
+    updatePlayerMeta(videos.find(video => video.name === appState.currentVideo));
+  }
 }
 
-function playVideo(idx) {
-  if (!matchData) return;
-  const v = matchData.videos[idx];
-  if (!v) return;
+function updatePlayerMeta(video) {
+  const tags = [];
+  if (!video) {
+    document.getElementById('player-filename').textContent = 'No output selected';
+    document.getElementById('player-size').textContent = '--';
+    document.getElementById('player-tags').innerHTML = '';
+    return;
+  }
+  if (video.name.startsWith('highlights/')) tags.push('<span class="tag">Highlight</span>');
+  else tags.push('<span class="tag">Primary output</span>');
+  document.getElementById('player-tags').innerHTML = tags.join('');
+  document.getElementById('player-filename').textContent = video.name.replace(/^highlights\//, '').replace(/_/g, ' ');
+  document.getElementById('player-size').textContent = formatFileSizeMb(video.size_mb);
+}
 
-  // Update active state
-  document.querySelectorAll('.video-item').forEach(el => el.classList.remove('active'));
-  const item = document.getElementById('vitem-' + idx);
-  if (item) { item.classList.add('active'); item.scrollIntoView({block:'nearest'}); }
+function playVideo(index) {
+  const match = appState.match;
+  if (!match || !match.videos || !match.videos[index]) return;
 
+  const video = match.videos[index];
   const player = document.getElementById('player');
-  const emptyEl = document.getElementById('player-empty');
-  const infoEl = document.getElementById('player-info');
+  const empty = document.getElementById('player-empty');
+  const sourceUrl = '/api/media/' + encodeURIComponent(match.name) + '/' + encodeURIComponent(video.name);
+  const isSame = appState.currentVideo === video.name;
 
-  const url = '/api/media/' + encodeURIComponent(matchData.name) + '/' + encodeURIComponent(v.name);
-
-  // Preserve playback position if same file (e.g. accidental re-click)
-  const isSame = currentVideo === v.name;
   if (!isSame) {
-    player.src = url;
+    player.src = sourceUrl;
     player.load();
   }
-  currentVideo = v.name;
+  appState.currentVideo = video.name;
   player.style.display = 'block';
-  emptyEl.style.display = 'none';
+  empty.style.display = 'none';
   if (!isSame) player.play().catch(() => {});
 
-  // Info bar
-  const rawLabel = v.name.replace(/^highlights\//, '').replace(/\.mp4$/, '').replace(/_/g, ' ');
-  document.getElementById('player-filename').textContent = rawLabel;
-  document.getElementById('player-size').textContent = v.size_mb + ' MB';
-  infoEl.style.display = 'flex';
+  document.querySelectorAll('.video-card').forEach(card => card.classList.remove('active'));
+  const cards = document.querySelectorAll('.video-card');
+  if (cards[index]) cards[index].classList.add('active');
+  updatePlayerMeta(video);
+}
+
+function renderLifecycle(labeling, match) {
+  const stepper = document.getElementById('lifecycle-stepper');
+  const steps = [
+    {
+      title: 'Frames exported',
+      ready: (labeling.frames || match.hard_frames_count || 0) > 0,
+      copy: String(labeling.frames || match.hard_frames_count || 0) + ' hard frames available',
+    },
+    {
+      title: 'Tasks generated',
+      ready: !!labeling.tasks_generated,
+      copy: labeling.tasks_generated ? String(labeling.tasks_count || 0) + ' tasks ready for Label Studio' : 'Generate tasks before review starts',
+    },
+    {
+      title: 'Labels uploaded',
+      ready: (labeling.labeled || 0) > 0,
+      copy: String(labeling.labeled || 0) + ' YOLO labels uploaded',
+    },
+    {
+      title: 'Dataset freshness',
+      ready: labeling.dataset_state === 'ready',
+      pending: ['missing', 'stale'].includes(labeling.dataset_state || ''),
+      copy: (labeling.dataset_state || match.dataset_state || 'unknown').replace(/_/g, ' '),
+    },
+    {
+      title: 'Training readiness',
+      ready: !!labeling.training_ready,
+      copy: labeling.training_ready ? 'Training can launch now' : (labeling.blocker || 'Waiting on previous step'),
+    },
+  ];
+
+  stepper.innerHTML = steps.map(step =>
+    '<div class="step ' + (step.ready ? 'ready' : (step.pending ? 'pending' : '')) + '">' +
+      '<strong>' + escapeHtml(step.title) + '</strong>' +
+      escapeHtml(step.copy) +
+    '</div>'
+  ).join('');
+}
+
+function renderLineage(match) {
+  const runtime = match.model_runtime || {};
+  const items = [
+    ['Ingest source', match.ingest_source_path || match.source_path || '--'],
+    ['Archived source', match.ingest_archived_path || '--'],
+    ['Archive status', match.ingest_archive_status || '--'],
+    ['Ball model', runtime.ball_model_path || '--'],
+    ['Ball source', runtime.ball_model_source || '--'],
+    ['Player model', runtime.player_model_path || '--'],
+    ['Player source', runtime.player_model_source || '--'],
+    ['Dual model enabled', runtime.dual_model_enabled ? 'yes' : 'no'],
+  ];
+
+  document.getElementById('lineage-grid').innerHTML = items.map(item =>
+    '<div class="fact">' +
+      '<div class="fact-label">' + escapeHtml(item[0]) + '</div>' +
+      '<div class="fact-value mono">' + escapeHtml(item[1]) + '</div>' +
+    '</div>'
+  ).join('');
+}
+
+function renderResetPreview(preview) {
+  const items = [
+    ['Outputs removed', String((preview.deleted_processed_dirs_count || 0) + (preview.deleted_highlights_dirs_count || 0))],
+    ['Restore target', preview.restore_target_name || '--'],
+    ['Restorable source', preview.restorable_source_path || 'None found'],
+    ['Labeling deleted', preview.labeling_deleted ? 'yes' : 'no'],
+    ['Dataset invalidated', preview.dataset_invalidated ? 'yes' : 'no'],
+    ['Jobs purged', String((preview.purged_job_ids || []).length)],
+    ['Dedupe paths cleared', String((preview.dedupe_target_paths || []).length)],
+  ];
+
+  document.getElementById('reset-grid').innerHTML = items.map(item =>
+    '<div class="fact">' +
+      '<div class="fact-label">' + escapeHtml(item[0]) + '</div>' +
+      '<div class="fact-value mono">' + escapeHtml(item[1]) + '</div>' +
+    '</div>'
+  ).join('');
+}
+
+async function importTasks(matchKey) {
+  const resp = await fetch('/api/training/import-tasks/' + encodeURIComponent(matchKey), {method: 'POST'});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    showToast(data.detail || 'Failed to generate labeling tasks.', 'error');
+    return;
+  }
+  showToast('Generated ' + data.tasks + ' tasks for ' + matchKey + '.', 'success');
+  await loadMatch();
+}
+
+async function uploadLabels(matchKey) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.zip';
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append('file', file);
+    const resp = await fetch('/api/training/upload-labels/' + encodeURIComponent(matchKey), {
+      method: 'POST',
+      body: form,
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      showToast(data.detail || 'Failed to upload labels.', 'error');
+      return;
+    }
+    showToast('Uploaded ' + data.labels_extracted + ' label files.', 'success');
+    await loadMatch();
+  };
+  input.click();
+}
+
+async function buildDataset() {
+  if (!await showModal('Build dataset?', 'Build or rebuild the shared dataset from all uploaded labels?', 'Build dataset')) return;
+  const resp = await fetch('/api/training/build-dataset', {method: 'POST'});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    showToast(data.detail || 'Failed to build dataset.', 'error');
+    return;
+  }
+  showToast('Dataset build started.', 'success');
+  await loadMatch();
 }
 
 async function removeMatch() {
-  if (!matchData) return;
+  const match = appState.match;
+  if (!match) return;
 
-  const canonicalMatch = matchData.canonical_match || matchData.name;
-  if (!confirm(
-    'Remove "' + canonicalMatch + '"?\n\n' +
-    'This deletes processed videos, highlights, labels, hard-frame exports, ' +
-    'dataset folder, and job history.\n\n' +
-    'The source video will be restored to /tank/stagging for requeue.'
-  )) return;
+  const preview = match.reset_preview || {};
+  const previewBody = [
+    'Processed dirs: ' + String(preview.deleted_processed_dirs_count || 0),
+    'Highlight dirs: ' + String(preview.deleted_highlights_dirs_count || 0),
+    'Labeling deleted: ' + (preview.labeling_deleted ? 'yes' : 'no'),
+    'Dataset invalidated: ' + (preview.dataset_invalidated ? 'yes' : 'no'),
+    'Jobs purged: ' + String((preview.purged_job_ids || []).length),
+    'Restore target: ' + (preview.restore_target_name || '--'),
+  ].join('\n');
+  if (!await showModal('Remove "' + (match.canonical_match || match.name) + '"?', previewBody, 'Remove', true)) return;
 
-  const btn = document.getElementById('remove-match-btn');
-  btn.disabled = true;
-  btn.textContent = 'Removing…';
-
-  try {
-    const resp = await fetch('/api/media/matches/' + encodeURIComponent(matchData.name) + '/reset', {
-      method: 'POST'
-    });
-    const d = await resp.json();
-    if (!resp.ok) {
-      alert(d.detail || 'Failed to remove match');
-      btn.disabled = false;
-      btn.textContent = 'Remove Match';
-      return;
-    }
-
-    let msg = 'Removed "' + d.canonical_match + '".\n' +
-      'Deleted ' + d.deleted_processed_dirs_count + ' processed dir(s), ' +
-      d.purged_job_count + ' job(s).';
-    if (d.restored_staging_path) msg += '\nRestored to staging: ' + d.restored_staging_path;
-    if (d.warnings && d.warnings.length) msg += '\n\nWarnings:\n- ' + d.warnings.join('\n- ');
-    alert(msg);
-
-    window.location.href = '/';
-  } catch(e) {
-    alert('Failed: ' + e.message);
-    btn.disabled = false;
-    btn.textContent = 'Remove Match';
+  const button = document.getElementById('remove-match-btn');
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Removing…';
   }
+
+  const resp = await fetch('/api/media/matches/' + encodeURIComponent(match.name) + '/reset', {method: 'POST'});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    showToast(data.detail || 'Failed to remove match.', 'error');
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Remove Match Family';
+    }
+    return;
+  }
+
+  showToast('Removed "' + data.canonical_match + '".' + (data.restored_staging_path ? ' Source restored to staging.' : ''), 'success');
+  if (data.warnings && data.warnings.length) showToast('Warnings: ' + data.warnings.join('; '), 'error');
+  window.location.href = '/';
 }
 
 loadMatch();

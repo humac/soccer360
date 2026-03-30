@@ -3,670 +3,1887 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Soccer360 Dashboard</title>
+<title>Soccer360 Control Room</title>
 <style>
   :root {
-    --bg: #0f1117;
-    --surface: #1a1d27;
-    --surface-strong: rgba(26, 29, 39, 0.92);
-    --border: #2a2d3a;
-    --text: #e1e4eb;
-    --muted: #8b8fa3;
-    --accent: #3b82f6;
-    --green: #22c55e;
-    --yellow: #eab308;
-    --red: #ef4444;
-    --orange: #f97316;
+    --bg: #081019;
+    --bg-soft: #101924;
+    --surface: rgba(14, 20, 30, 0.96);
+    --surface-strong: rgba(10, 16, 24, 0.98);
+    --surface-elevated: rgba(18, 26, 38, 0.98);
+    --border: rgba(113, 132, 158, 0.22);
+    --border-strong: rgba(169, 190, 214, 0.4);
+    --text: #edf3fb;
+    --muted: #92a0b2;
+    --accent: #5c97ff;
+    --accent-strong: #427de6;
+    --green: #43c983;
+    --yellow: #f1b557;
+    --orange: #ff9f57;
+    --red: #e27872;
+    --shadow: 0 18px 40px rgba(0, 0, 0, 0.26);
+    --radius-lg: 20px;
+    --radius-md: 12px;
+    --radius-sm: 8px;
   }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  button, input, select, textarea { font: inherit; }
   body {
-    font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
-    background:
-      radial-gradient(circle at top left, rgba(59, 130, 246, 0.12), transparent 28%),
-      radial-gradient(circle at top right, rgba(34, 197, 94, 0.08), transparent 22%),
-      var(--bg);
-    color: var(--text);
-    line-height: 1.5;
-    padding: clamp(12px, 2vw, 24px);
     min-height: 100vh;
+    background:
+      linear-gradient(rgba(120, 138, 160, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(120, 138, 160, 0.05) 1px, transparent 1px),
+      radial-gradient(circle at top left, rgba(92, 151, 255, 0.12), transparent 28%),
+      radial-gradient(circle at top right, rgba(67, 201, 131, 0.08), transparent 18%),
+      linear-gradient(180deg, #081019 0%, #0a131d 100%);
+    background-size: 128px 128px, 128px 128px, auto, auto, auto;
+    color: var(--text);
+    font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+    font-size: 14px;
+    line-height: 1.42;
+    padding: 14px;
   }
-  h1 { font-size: clamp(1.35rem, 2vw, 1.7rem); font-weight: 600; }
-  h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 12px; }
-  .header {
+
+  button, input, select, textarea { font: inherit; }
+  a { color: inherit; }
+
+  .shell {
+    max-width: 1660px;
+    margin: 0 auto;
+    position: relative;
+  }
+
+  .topbar {
+    display: grid;
+    grid-template-columns: 1.3fr auto;
+    gap: 14px;
+    margin-bottom: 14px;
+    align-items: stretch;
+  }
+
+  .masthead, .signalbar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    backdrop-filter: none;
+  }
+
+  .masthead {
+    padding: 16px 18px 13px;
+    background:
+      linear-gradient(90deg, rgba(92, 151, 255, 0.12), transparent 18%),
+      linear-gradient(180deg, rgba(255,255,255,0.015), rgba(255,255,255,0.01)),
+      var(--surface);
+  }
+
+  .brandline {
     display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 12px 16px;
-    margin-bottom: 24px;
-    padding: 0 0 16px;
-    border-bottom: 1px solid var(--border);
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 16px;
   }
-  .header-spacer { flex: 1 1 auto; min-width: 0; }
-  .nav-link {
-    color: var(--accent);
+
+  .eyebrow {
+    font-size: 0.64rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+    font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  h1 {
+    font-size: clamp(1.42rem, 1.8vw, 2rem);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+  }
+
+  .subtitle {
+    margin-top: 6px;
+    max-width: 820px;
+    color: var(--muted);
+    font-size: 0.84rem;
+  }
+
+  .brand-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .brand-actions > *,
+  .action-row > * {
+    max-width: 100%;
+  }
+
+  .nav-link, .ghost-btn, .btn, .chip-btn {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    min-height: 34px;
+    padding: 0 11px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     text-decoration: none;
-    font-size: 0.85rem;
+    cursor: pointer;
+    transition: 0.2s ease;
+    white-space: nowrap;
+    font-size: 0.8rem;
     font-weight: 500;
   }
-  .nav-link:hover { text-decoration: underline; }
-  .header .status-badge {
-    padding: 4px 12px; border-radius: 12px; font-size: 0.85rem; font-weight: 500;
-  }
-  .badge-idle { background: var(--border); color: var(--muted); }
-  .badge-processing { background: #1e3a5f; color: var(--accent); }
-  .badge-connected { background: #0f2e1f; color: var(--green); font-size: 0.75rem; }
-  .badge-disconnected { background: #2e0f0f; color: var(--red); font-size: 0.75rem; }
 
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    gap: 20px;
-    margin-bottom: 24px;
-  }
-  .card {
-    background: var(--surface-strong);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: clamp(14px, 2vw, 18px);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
-    min-width: 0;
-  }
-  .card-full { grid-column: 1 / -1; }
-
-  /* Phase progress */
-  .phases {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
-    gap: 6px;
-    margin-top: 8px;
-  }
-  .phase-block {
-    min-height: 48px; border-radius: 8px;
-    display: flex; align-items: center; justify-content: center; flex-direction: column;
-    font-size: 0.7rem; font-weight: 500; text-transform: uppercase;
-    background: var(--border); color: var(--muted); position: relative;
-    transition: all 0.3s;
-    text-align: center;
-    padding: 6px;
-  }
-  .phase-block.running {
-    background: #1e3a5f; color: var(--accent); border: 1px solid var(--accent);
-    animation: pulse 2s infinite;
-  }
-  .phase-block.completed { background: #0f2e1f; color: var(--green); }
-  .phase-block.failed { background: #2e0f0f; color: var(--red); }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
-
-  .phase-timing { font-size: 0.65rem; color: var(--muted); display: block; }
-
-  /* GPU gauge */
-  .gauge-row { display: flex; gap: 20px; margin-top: 8px; }
-  .gauge { flex: 1; }
-  .gauge-label { font-size: 0.75rem; color: var(--muted); margin-bottom: 4px; }
-  .gauge-bar {
-    height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;
-  }
-  .gauge-fill {
-    height: 100%; border-radius: 4px; transition: width 0.5s;
-  }
-  .gauge-value { font-size: 0.85rem; font-weight: 600; margin-top: 2px; }
-
-  /* Job history table */
-  .table-scroll { overflow-x: auto; }
-  table { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 0.85rem; }
-  th { text-align: left; padding: 8px; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); }
-  td { padding: 8px; border-bottom: 1px solid var(--border); }
-  .status-dot {
-    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-    margin-right: 6px; vertical-align: middle;
-  }
-  .dot-completed { background: var(--green); }
-  .dot-running { background: var(--accent); }
-  .dot-failed { background: var(--red); }
-  .dot-queued { background: var(--yellow); }
-
-  /* Decision banner */
-  .decision-banner {
-    background: #2e1f0f; border: 1px solid var(--orange); border-radius: 8px;
-    padding: 16px; margin-bottom: 20px; display: none;
-  }
-  .decision-banner.active { display: block; }
-  .decision-banner h3 { color: var(--orange); font-size: 0.95rem; margin-bottom: 8px; }
-  .decision-banner p { margin-bottom: 12px; }
-  .decision-banner .countdown { color: var(--orange); font-weight: 600; }
-  .decision-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .btn {
-    padding: 8px 16px; border-radius: 8px; border: none;
-    font-size: 0.85rem; font-weight: 500; cursor: pointer;
-    min-height: 38px;
-  }
-  .btn-approve { background: var(--green); color: #000; }
-  .btn-reject { background: var(--red); color: #fff; }
-  .btn:hover { opacity: 0.85; }
-
-  .empty-state { color: var(--muted); text-align: center; padding: 40px; }
-
-  .video-btn {
-    padding: 4px 12px; border-radius: 4px; border: 1px solid var(--border);
-    background: var(--bg); color: var(--muted); font-size: 0.8rem; cursor: pointer;
-  }
-  .video-btn.active { border-color: var(--accent); color: var(--accent); background: #1e3a5f; }
-  .video-btn:hover { border-color: var(--accent); }
-
-  .section-toolbar,
-  .stack-row,
-  .history-header {
-    display: flex;
-    align-items: center;
-    gap: 10px 12px;
-    flex-wrap: wrap;
-  }
-  .toolbar-note,
-  .subtle-note {
-    font-size: 0.75rem;
+  .nav-link, .ghost-btn {
+    background: rgba(255, 255, 255, 0.015);
+    border-color: var(--border);
     color: var(--muted);
   }
-  .upload-progress-header,
-  .progress-meta {
+  .nav-link:hover, .ghost-btn:hover { color: var(--text); border-color: var(--border-strong); }
+
+  .btn {
+    background: linear-gradient(180deg, rgba(92, 151, 255, 0.26), rgba(92, 151, 255, 0.18));
+    color: #eef5ff;
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+  .btn:hover { background: linear-gradient(180deg, rgba(92, 151, 255, 0.3), rgba(92, 151, 255, 0.22)); transform: translateY(-1px); }
+  .btn.secondary { background: rgba(92, 151, 255, 0.14); color: #d7e8ff; border-color: rgba(92, 151, 255, 0.24); }
+  .btn.green { background: rgba(67, 201, 131, 0.13); color: #d6ffe8; border-color: rgba(67, 201, 131, 0.24); }
+  .btn.yellow { background: rgba(241, 181, 87, 0.12); color: #fff1c8; border-color: rgba(241, 181, 87, 0.24); }
+  .btn.red { background: rgba(226, 120, 114, 0.14); color: #ffdada; border-color: rgba(226, 120, 114, 0.24); }
+  .btn[disabled], .ghost-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+  .workspace-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .workspace-nav .chip-btn {
+    flex: 1 1 160px;
+  }
+
+  .chip-btn {
+    background: rgba(255, 255, 255, 0.015);
+    border-color: var(--border);
+    color: var(--muted);
+    padding-inline: 14px;
+  }
+  .chip-btn.active {
+    background: rgba(92, 151, 255, 0.14);
+    border-color: rgba(92, 151, 255, 0.3);
+    color: #fff;
+    box-shadow: inset 0 -2px 0 rgba(92, 151, 255, 0.55);
+  }
+
+  .signalbar {
+    padding: 14px;
+    display: grid;
+    gap: 10px;
+    min-width: 320px;
+  }
+
+  .signal-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .metric-tile {
+    padding: 10px;
+    border-radius: var(--radius-md);
+    background: linear-gradient(180deg, rgba(255,255,255,0.018), rgba(255,255,255,0.008));
+    border: 1px solid var(--border);
+    min-width: 0;
+  }
+
+  .metric-label {
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    margin-bottom: 5px;
+    font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  .metric-value {
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+  }
+
+  .metric-note {
+    margin-top: 3px;
+    color: var(--muted);
+    font-size: 0.7rem;
+  }
+
+  .decision-area { margin-bottom: 14px; display: grid; gap: 8px; }
+  .decision-banner {
+    background: rgba(255, 153, 102, 0.12);
+    border: 1px solid rgba(255, 153, 102, 0.24);
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+  }
+  .decision-banner h3 { color: #ffd4bf; margin-bottom: 5px; font-size: 0.9rem; }
+  .decision-banner p { color: #ffe9de; margin-bottom: 8px; }
+  .decision-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+  .workspace {
+    display: none;
+    gap: 14px;
+  }
+  .workspace.active { display: grid; }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    backdrop-filter: none;
+    padding: 14px;
+    min-width: 0;
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .panel-title { font-size: 0.76rem; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace; }
+  .panel-copy { color: var(--muted); font-size: 0.76rem; max-width: 760px; }
+
+  .overview-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.8fr);
+    gap: 14px;
+  }
+
+  .stack { display: grid; gap: 14px; min-width: 0; }
+
+  .hero-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .hero-tile {
+    border-radius: var(--radius-md);
+    background: linear-gradient(180deg, rgba(255,255,255,0.028), rgba(255,255,255,0.01));
+    border: 1px solid var(--border);
+    padding: 12px;
+  }
+
+  .hero-tile strong {
+    display: block;
+    font-size: 0.98rem;
+    letter-spacing: -0.03em;
+    margin-top: 4px;
+  }
+
+  .status-pills, .inline-tags, .filter-bar, .toolbar-row, .form-row, .action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .status-pill, .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.66rem;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.015);
+    color: var(--muted);
+  }
+
+  .status-processing { color: #d9e8ff; background: rgba(92, 162, 255, 0.16); border-color: rgba(92, 162, 255, 0.28); }
+  .status-queued { color: #fff1c8; background: rgba(240, 199, 94, 0.14); border-color: rgba(240, 199, 94, 0.24); }
+  .status-staged { color: #dff5ff; background: rgba(115, 196, 255, 0.12); border-color: rgba(115, 196, 255, 0.22); }
+  .status-ready_to_label, .status-labeling { color: #d6ffe8; background: rgba(78, 213, 143, 0.12); border-color: rgba(78, 213, 143, 0.22); }
+  .status-dataset_pending { color: #ffe8d0; background: rgba(255, 153, 102, 0.12); border-color: rgba(255, 153, 102, 0.22); }
+  .status-ready_to_train { color: #f2ebff; background: rgba(185, 140, 255, 0.16); border-color: rgba(185, 140, 255, 0.24); }
+  .status-processed { color: var(--muted); }
+
+  .phase-strip {
+    display: grid;
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .phase-block {
+    min-height: 46px;
+    padding: 7px 6px;
+    border-radius: 14px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .phase-block.running { background: rgba(92, 162, 255, 0.18); border-color: rgba(92, 162, 255, 0.34); color: #eef5ff; }
+  .phase-block.completed { background: rgba(78, 213, 143, 0.13); border-color: rgba(78, 213, 143, 0.25); color: #dbffea; }
+  .phase-block.failed { background: rgba(255, 115, 115, 0.14); border-color: rgba(255, 115, 115, 0.28); color: #ffe0e0; }
+  .phase-timing { margin-top: 2px; font-size: 0.54rem; color: var(--muted); }
+
+  .bar-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .bar-card {
+    background: linear-gradient(180deg, rgba(255,255,255,0.018), rgba(255,255,255,0.008));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 10px;
+  }
+
+  .bar-label {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 0.75rem;
+    margin-bottom: 8px;
+  }
+
+  .bar-track {
+    height: 9px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.06);
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: inherit;
+    transition: width 0.35s ease;
+  }
+
+  .attention-list, .queue-list, .model-list, .history-list, .staging-list, .match-list, .drawer-videos {
+    display: grid;
+    gap: 10px;
+  }
+
+  .attention-card, .queue-card, .staging-row, .history-row, .model-row, .match-row, .drawer-video {
+    background: linear-gradient(180deg, rgba(255,255,255,0.018), rgba(255,255,255,0.008));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 10px;
+    min-width: 0;
+  }
+
+  .match-controls, .section-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .match-controls > input,
+  .section-controls > input[type="search"] {
+    flex: 1 1 280px;
+  }
+
+  .match-controls .filter-bar {
+    flex: 1 1 100%;
+  }
+
+  input[type="search"], input[type="text"], input[type="number"], select {
+    min-height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: rgba(8, 13, 21, 0.96);
+    color: var(--text);
+    padding: 0 9px;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .match-table {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .match-table-head, .match-row {
+    display: grid;
+    grid-template-columns: minmax(260px, 1.1fr) minmax(140px, 0.6fr) minmax(180px, 0.8fr) minmax(160px, 0.7fr) minmax(210px, 0.9fr) auto;
+    gap: 10px;
+    align-items: center;
+    min-width: 980px;
+  }
+
+  .match-table-head {
+    padding: 9px 11px;
+    color: var(--muted);
+    font-size: 0.64rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    background: rgba(255,255,255,0.015);
+    border-bottom: 1px solid var(--border);
+    font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  .match-row {
+    padding: 10px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    border-top: 1px solid rgba(255,255,255,0.03);
+  }
+  .match-row:hover, .match-row.active {
+    background: rgba(92, 162, 255, 0.08);
+  }
+
+  .title-stack, .meta-stack {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .match-name {
+    font-size: 0.92rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    word-break: break-word;
+  }
+  .muted { color: var(--muted); font-size: 0.76rem; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+  .tiny { font-size: 0.68rem; color: var(--muted); }
+
+  .drawer {
+    position: fixed;
+    top: 0;
+    right: -560px;
+    width: min(560px, 100vw);
+    height: 100vh;
+    z-index: 40;
+    background: var(--surface-strong);
+    border-left: 1px solid var(--border);
+    box-shadow: -24px 0 60px rgba(0, 0, 0, 0.4);
+    transition: right 0.28s ease;
+    padding: 18px;
+    overflow-y: auto;
+  }
+  .drawer.open { right: 0; }
+  .drawer-close {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    justify-content: flex-end;
+    background: linear-gradient(180deg, rgba(14,20,30,0.98), rgba(14,20,30,0.82), transparent);
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+  }
+  .drawer-grid { display: grid; gap: 14px; }
+  .drawer-section {
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(255,255,255,0.018), rgba(255,255,255,0.008));
+    border-radius: var(--radius-md);
+    padding: 14px;
+  }
+  .drawer-video {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px 12px;
-    flex-wrap: wrap;
-  }
-  .upload-filename {
-    font-size: 0.82rem;
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-    flex: 1 1 220px;
-  }
-  .scroll-list {
-    font-size: 0.8rem;
-    max-height: 220px;
-    overflow-y: auto;
-  }
-  .inference-grid,
-  .split-grid,
-  .stats-grid {
-    display: grid;
-    gap: 16px;
-  }
-  .inference-grid,
-  .stats-grid {
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  }
-  .split-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 20px;
-  }
-  .stats-grid {
     gap: 10px;
-    font-size: 0.85rem;
+    padding: 10px 12px;
   }
-  .workflow-steps {
+
+  .stepper {
     display: grid;
-    grid-template-columns: repeat(9, minmax(0, 1fr));
-    gap: 4px;
-    margin-bottom: 16px;
-    font-size: 0.75rem;
-    color: var(--muted);
-  }
-  .workflow-step {
-    text-align: center;
-    padding: 8px;
-    background: var(--bg);
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    border-radius: 8px;
-  }
-  .workflow-step strong {
-    display: block;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .workflow-arrow {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--border);
-  }
-  .inline-checkbox {
-    display: flex;
-    align-items: center;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 8px;
-    margin-top: 6px;
-    font-size: 0.78rem;
+  }
+  .step {
+    border-radius: 14px;
+    padding: 9px 8px;
+    text-align: center;
+    background: rgba(255,255,255,0.015);
+    border: 1px solid var(--border);
     color: var(--muted);
   }
-  .list-row,
-  .model-row {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px 12px;
-    padding: 8px 0;
-    border-bottom: 1px solid var(--border);
+  .step strong { display: block; margin-bottom: 4px; color: var(--text); font-size: 0.74rem; }
+  .step.ready { border-color: rgba(78, 213, 143, 0.25); background: rgba(78, 213, 143, 0.1); color: #d7ffe8; }
+  .step.pending { border-color: rgba(255, 153, 102, 0.25); background: rgba(255, 153, 102, 0.08); color: #ffe4d6; }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr);
+    gap: 14px;
   }
-  .list-main,
-  .model-main {
-    flex: 1 1 220px;
+
+  .grid-2, .grid-3, .form-grid {
+    display: grid;
+    gap: 10px;
+  }
+  .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .form-grid { grid-template-columns: 1fr; }
+  .grid-2 > *, .grid-3 > *, .form-grid > * { min-width: 0; }
+
+  .field-stack {
+    display: grid;
+    gap: 5px;
     min-width: 0;
   }
-  .list-title,
-  .model-name {
-    font-weight: 500;
-    word-break: break-word;
-  }
-  .list-meta,
-  .model-meta {
-    color: var(--muted);
-    font-size: 0.75rem;
-  }
-  .list-actions,
-  .model-actions {
+
+  .checkbox-row {
     display: flex;
-    gap: 6px;
+    align-items: center;
     flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-  .status-icon {
-    font-size: 0.82rem;
-    flex: 0 0 auto;
-  }
-  .match-link,
-  .compact-btn {
+    gap: 8px;
+    color: var(--muted);
     font-size: 0.78rem;
-    padding: 6px 12px;
+    min-width: 0;
   }
 
-  @media (max-width: 980px) {
-    .split-grid { grid-template-columns: 1fr; }
-    .gauge-row { flex-direction: column; gap: 12px; }
-    .workflow-steps {
+  .checkbox-row label {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .table-scroll { overflow-x: auto; }
+  table {
+    width: 100%;
+    min-width: 720px;
+    border-collapse: collapse;
+    font-size: 0.74rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 7px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    vertical-align: top;
+  }
+  th {
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.68rem;
+  }
+
+  .upload-progress {
+    display: none;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.03);
+    padding: 12px;
+  }
+  .upload-progress.active { display: grid; gap: 10px; }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgba(2, 5, 10, 0.56);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.24s ease;
+  }
+  .overlay.active { opacity: 1; pointer-events: auto; }
+
+  .empty {
+    padding: 22px 16px;
+    border-radius: var(--radius-md);
+    border: 1px dashed var(--border);
+    color: var(--muted);
+    text-align: center;
+  }
+
+  @media (max-width: 1260px) {
+    .topbar, .overview-grid, .two-col { grid-template-columns: 1fr; }
+    .hero-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .match-table-head, .match-row {
+      grid-template-columns: minmax(220px, 1fr) minmax(130px, 0.7fr) minmax(160px, 0.8fr) minmax(150px, 0.8fr);
+      min-width: 760px;
+    }
+    .match-table-head > :nth-child(5),
+    .match-table-head > :nth-child(6),
+    .match-row > :nth-child(5),
+    .match-row > :nth-child(6) { display: none; }
+  }
+
+  @media (max-width: 860px) {
+    body { padding: 12px; }
+    .hero-grid, .signal-grid, .grid-2, .grid-3, .bar-row, .stepper { grid-template-columns: 1fr; }
+    .match-table-head { display: none; }
+    .match-row {
       grid-template-columns: 1fr;
-      gap: 8px;
+      gap: 10px;
+      min-width: 0;
     }
-    .workflow-arrow { display: none; }
+    .brandline { flex-direction: column; }
+    .brand-actions { justify-content: flex-start; }
+    .match-controls > *,
+    .section-controls > *,
+    .workspace-nav .chip-btn {
+      width: 100%;
+      flex-basis: 100%;
+    }
+    .drawer { width: 100vw; right: -100vw; }
   }
 
-  @media (max-width: 720px) {
-    .header { align-items: flex-start; }
-    .header-spacer { display: none; }
-    .section-toolbar,
-    .stack-row,
-    .history-header,
-    .upload-progress-header,
-    .progress-meta,
-    .list-row,
-    .model-row {
-      align-items: stretch;
-    }
-    .upload-filename { white-space: normal; }
-    .list-actions,
-    .model-actions {
-      width: 100%;
-      justify-content: flex-start;
-    }
-    .btn,
-    .match-link,
-    .compact-btn {
-      width: 100%;
-      justify-content: center;
-    }
-    table { min-width: 560px; }
-  }
+  /* ── Toasts ── */
+  .toast-stack { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: grid; gap: 8px; max-width: 420px; pointer-events: none; }
+  .toast { pointer-events: auto; background: var(--surface-strong); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 11px 14px; display: flex; align-items: flex-start; gap: 10px; box-shadow: 0 8px 28px rgba(0,0,0,0.45); font-size: 0.82rem; line-height: 1.45; animation: toast-in 0.22s ease; }
+  .toast.out { animation: toast-out 0.18s ease forwards; }
+  .toast.success { border-color: rgba(67,201,131,0.35); }
+  .toast.error { border-color: rgba(226,120,114,0.35); }
+  .toast.info { border-color: rgba(92,151,255,0.28); }
+  .toast-icon { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.72rem; font-weight: 700; margin-top: 1px; }
+  .toast.success .toast-icon { background: rgba(67,201,131,0.18); color: var(--green); }
+  .toast.error .toast-icon { background: rgba(226,120,114,0.18); color: var(--red); }
+  .toast.info .toast-icon { background: rgba(92,151,255,0.18); color: var(--accent); }
+  .toast-body { flex: 1; min-width: 0; word-break: break-word; }
+  .toast-close { flex-shrink: 0; background: none; border: none; color: var(--muted); cursor: pointer; padding: 0; line-height: 1; font-size: 0.8rem; margin-left: 4px; }
+  .toast-close:hover { color: var(--text); }
+  @keyframes toast-in { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+  @keyframes toast-out { to { opacity: 0; transform: translateX(10px); } }
 
-  @media (max-width: 520px) {
-    .grid { grid-template-columns: 1fr; }
-    .phases { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .inference-grid,
-    .stats-grid {
-      grid-template-columns: 1fr;
-    }
-  }
+  /* ── Modal ── */
+  .modal-backdrop { position: fixed; inset: 0; z-index: 1000; background: rgba(2,5,10,0.72); display: flex; align-items: center; justify-content: center; padding: 24px; animation: modal-fade 0.16s ease; }
+  .modal-box { background: var(--surface-strong); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: 0 24px 64px rgba(0,0,0,0.55); padding: 22px 24px; max-width: 460px; width: 100%; animation: modal-slide 0.2s ease; }
+  .modal-title { font-size: 0.98rem; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .modal-body { color: var(--muted); font-size: 0.82rem; line-height: 1.55; margin-bottom: 18px; white-space: pre-line; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  @keyframes modal-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes modal-slide { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: none; } }
 </style>
 </head>
 <body>
-
-<div class="header">
-  <h1>Soccer360</h1>
-  <a class="nav-link" href="/settings/detection">Detection Settings</a>
-  <span id="pipeline-badge" class="status-badge badge-idle">Idle</span>
-  <span id="sse-badge" class="status-badge badge-disconnected">Disconnected</span>
-  <span class="header-spacer"></span>
-  <span id="queue-count" style="color:var(--muted);font-size:0.85rem"></span>
-</div>
-
-<div id="decision-area"></div>
-
-<div class="grid">
-  <!-- Current Job / Phase Progress -->
-  <div class="card card-full">
-    <h2>Pipeline Progress</h2>
-    <div id="current-job-info" style="color:var(--muted);font-size:0.85rem;margin-bottom:8px"></div>
-    <div class="phases" id="phase-bar">
-      <div class="phase-block" data-phase="detection">Detect</div>
-      <div class="phase-block" data-phase="tracking">Track</div>
-      <div class="phase-block" data-phase="hard_frames">Hard Fr</div>
-      <div class="phase-block" data-phase="player_cluster">Cluster</div>
-      <div class="phase-block" data-phase="camera">Camera</div>
-      <div class="phase-block" data-phase="broadcast_reframe">Bcast</div>
-      <div class="phase-block" data-phase="tactical_reframe">Tactic</div>
-      <div class="phase-block" data-phase="highlights">Hilite</div>
-      <div class="phase-block" data-phase="export">Export</div>
-    </div>
-  </div>
-
-  <!-- Staging -->
-  <div class="card card-full">
-    <h2>Staging</h2>
-    <div class="section-toolbar" style="margin-bottom:10px">
-      <button id="staging-upload-btn" class="btn" style="background:var(--green);color:#000" onclick="triggerStagingUpload()">
-        Upload To Staging
-      </button>
-      <span class="toolbar-note">Upload a video here first, then choose the ingest model and click Send To Ingest.</span>
-      <input id="staging-upload-input" type="file" accept=".mp4,.mov,.insv" style="display:none" onchange="uploadToStaging(this)">
-    </div>
-    <div id="upload-progress-container" style="display:none;margin-bottom:12px;padding:10px;border:1px solid var(--border);border-radius:6px;background:rgba(255,255,255,0.03)">
-      <div class="upload-progress-header" style="margin-bottom:6px">
-        <span id="upload-filename" class="upload-filename"></span>
-        <span id="upload-status-text" style="font-size:0.75rem;color:var(--muted)"></span>
-      </div>
-      <div style="width:100%;height:8px;background:var(--border);border-radius:4px;overflow:hidden;margin-bottom:6px">
-        <div id="upload-progress-bar" style="height:100%;width:0%;background:var(--green);border-radius:4px;transition:width 0.3s ease"></div>
-      </div>
-      <div class="progress-meta" style="font-size:0.72rem;color:var(--muted)">
-        <span id="upload-transferred"></span>
-        <span id="upload-speed"></span>
-        <span id="upload-eta"></span>
-      </div>
-      <button id="upload-cancel-btn" class="btn" style="margin-top:8px;background:#e74c3c;color:#fff;font-size:0.72rem;padding:2px 12px" onclick="cancelUpload()">Cancel</button>
-    </div>
-    <div id="staging-summary" style="font-size:0.85rem;margin-bottom:8px;color:var(--muted)">Loading...</div>
-    <div id="staging-files" class="scroll-list"></div>
-    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-      <label style="font-size:0.82rem;color:var(--muted);display:block;margin-bottom:6px">Next Ingest Detection Models</label>
-      <div id="inference-model-summary" style="font-size:0.78rem;color:var(--muted);margin-bottom:8px">Loading...</div>
-      <div class="inference-grid" style="gap:10px">
+<div class="shell">
+  <div class="topbar">
+    <div class="masthead">
+      <div class="brandline">
         <div>
-          <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:4px">Ball Detection Model</label>
-          <select id="inference-ball-model-select"
-            style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
-            <option value="config">Loading models...</option>
-          </select>
+          <div class="eyebrow">Soccer360 Operations</div>
+          <h1>Control Room</h1>
+          <p class="subtitle">Operate ingest, match assets, labeling, training, and model selection from one match-centric surface instead of juggling separate utility panels.</p>
         </div>
-        <div>
-          <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:4px">Player Detection Model</label>
-          <select id="inference-player-model-select"
-            style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
-            <option value="config">Loading models...</option>
-          </select>
+        <div class="brand-actions">
+          <a class="nav-link" href="/settings/detection">Detection Settings</a>
+          <a class="nav-link" id="labelstudio-link" href="#" target="_blank">Open Label Studio</a>
         </div>
       </div>
-      <div id="inference-model-note" style="font-size:0.72rem;color:var(--muted);margin-top:6px">
-        Choose the ball model and player model for the next ingest jobs, then send a staged file into ingest. One ingest run will use both models.
+      <div class="workspace-nav">
+        <button class="chip-btn active" data-workspace-btn="overview" onclick="switchWorkspace('overview')">Overview</button>
+        <button class="chip-btn" data-workspace-btn="matches" onclick="switchWorkspace('matches')">Matches</button>
+        <button class="chip-btn" data-workspace-btn="labeling" onclick="switchWorkspace('labeling')">Labeling &amp; Training</button>
+        <button class="chip-btn" data-workspace-btn="models" onclick="switchWorkspace('models')">Models &amp; Files</button>
       </div>
-      <div style="margin-top:8px">
-        <button id="apply-inference-model-btn" class="btn" style="background:var(--accent);color:#fff" onclick="applyInferenceModelSelection()">
-          Apply Ingest Models
-        </button>
+    </div>
+    <div class="signalbar">
+      <div class="status-pills">
+        <span id="pipeline-pill" class="status-pill">Idle</span>
+        <span id="sse-pill" class="status-pill">Connecting</span>
+      </div>
+      <div class="signal-grid">
+        <div class="metric-tile">
+          <div class="metric-label">Queue</div>
+          <div class="metric-value" id="queue-count">0</div>
+          <div class="metric-note" id="queue-copy">No queued jobs</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-label">Attention</div>
+          <div class="metric-value" id="attention-count">0</div>
+          <div class="metric-note">Matches needing action</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-label">Dataset</div>
+          <div class="metric-value" id="dataset-state">--</div>
+          <div class="metric-note" id="dataset-copy">Waiting for data</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-label">Training</div>
+          <div class="metric-value" id="training-state-hero">idle</div>
+          <div class="metric-note" id="training-copy">No training active</div>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- GPU Status -->
-  <div class="card">
-    <h2>GPU</h2>
-    <div class="gauge-row">
-      <div class="gauge">
-        <div class="gauge-label">Utilization</div>
-        <div class="gauge-bar"><div id="gpu-util-fill" class="gauge-fill" style="width:0%;background:var(--accent)"></div></div>
-        <div class="gauge-value" id="gpu-util-val">--</div>
-      </div>
-      <div class="gauge">
-        <div class="gauge-label">Memory</div>
-        <div class="gauge-bar"><div id="gpu-mem-fill" class="gauge-fill" style="width:0%;background:var(--orange)"></div></div>
-        <div class="gauge-value" id="gpu-mem-val">--</div>
-      </div>
-    </div>
-    <div style="margin-top:8px;font-size:0.75rem;color:var(--muted)">
-      Temp: <span id="gpu-temp">--</span>
-    </div>
-  </div>
+  <div id="decision-area" class="decision-area"></div>
 
-  <!-- CPU / RAM Status -->
-  <div class="card">
-    <h2>System</h2>
-    <div class="gauge-row">
-      <div class="gauge">
-        <div class="gauge-label">CPU</div>
-        <div class="gauge-bar"><div id="cpu-util-fill" class="gauge-fill" style="width:0%;background:var(--green)"></div></div>
-        <div class="gauge-value" id="cpu-util-val">--</div>
-      </div>
-      <div class="gauge">
-        <div class="gauge-label">RAM</div>
-        <div class="gauge-bar"><div id="ram-util-fill" class="gauge-fill" style="width:0%;background:#c084fc"></div></div>
-        <div class="gauge-value" id="ram-util-val">--</div>
-      </div>
-    </div>
-    <div style="margin-top:8px;font-size:0.75rem;color:var(--muted)">
-      CPUs: <span id="cpu-count">--</span>
-    </div>
-  </div>
-
-  <!-- Quick Stats -->
-  <div class="card">
-    <h2>Stats</h2>
-    <div class="stats-grid">
-      <div><span style="color:var(--muted)">Total jobs:</span> <span id="stat-total">0</span></div>
-      <div><span style="color:var(--muted)">Completed:</span> <span id="stat-completed">0</span></div>
-      <div><span style="color:var(--muted)">Failed:</span> <span id="stat-failed">0</span></div>
-      <div><span style="color:var(--muted)">Running:</span> <span id="stat-running">0</span></div>
-    </div>
-  </div>
-
-  <!-- Active Learning / Training -->
-  <div class="card card-full">
-    <h2>Active Learning</h2>
-
-    <!-- Workflow steps -->
-    <div class="workflow-steps">
-      <div class="workflow-step">
-        <strong>1. Process</strong>Hard frames auto-exported
-      </div>
-      <div class="workflow-arrow">&#9654;</div>
-      <div class="workflow-step">
-        <strong>2. Import</strong>Generate tasks for Label Studio
-      </div>
-      <div class="workflow-arrow">&#9654;</div>
-      <div class="workflow-step">
-        <strong>3. Label</strong>Draw boxes in Label Studio
-      </div>
-      <div class="workflow-arrow">&#9654;</div>
-      <div class="workflow-step">
-        <strong>4. Export</strong>YOLO labels from Label Studio
-      </div>
-      <div class="workflow-arrow">&#9654;</div>
-      <div class="workflow-step">
-        <strong>5. Train</strong>Build dataset + fine-tune
-      </div>
-    </div>
-
-    <div class="split-grid">
-      <!-- Labeling Status -->
-      <div>
-        <h3 style="font-size:0.9rem;color:var(--muted);margin-bottom:8px">Matches</h3>
-        <div id="labeling-summary" style="font-size:0.85rem;margin-bottom:8px">Loading...</div>
-        <div id="labeling-matches" class="scroll-list"></div>
-        <div class="stack-row" style="margin-top:12px">
-          <a id="labelstudio-link" href="#" target="_blank" class="btn" style="background:var(--accent);color:#fff;text-decoration:none;display:inline-block">
-            Open Label Studio
-          </a>
-          <span class="subtle-note">Import `tasks.json` there after clicking Import above.</span>
-          <script>document.getElementById('labelstudio-link').href = location.protocol + '//' + location.hostname + ':8080';</script>
-        </div>
-      </div>
-      <!-- Training Controls -->
-      <div>
-        <h3 style="font-size:0.9rem;color:var(--muted);margin-bottom:8px">Model Training</h3>
-        <div id="training-status" style="font-size:0.85rem;margin-bottom:8px">Status: idle</div>
-        <div id="training-error" style="font-size:0.8rem;color:var(--red);margin-bottom:8px;display:none"></div>
-        <div class="stack-row" style="margin-bottom:12px">
-          <button class="btn" style="background:var(--yellow);color:#000" onclick="buildDataset()">
-            Build Dataset
-          </button>
-          <button class="btn" style="background:var(--green);color:#000" onclick="startTraining()">
-            Train Model
-          </button>
-          <label style="font-size:0.8rem;color:var(--muted)">
-            Epochs: <input id="train-epochs" type="number" value="50" min="1" max="500"
-              style="width:60px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px">
-          </label>
-        </div>
-        <div style="margin-bottom:12px">
-          <label style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:4px">Training Base Model</label>
-          <select id="train-base-model"
-            style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
-            <option value="">Loading models...</option>
-          </select>
-          <div style="font-size:0.72rem;color:var(--muted);margin-top:4px">
-            Future training starts from the selected model. It does not automatically reuse the latest trained model unless you choose it.
+  <section id="workspace-overview" class="workspace active">
+    <div class="overview-grid">
+      <div class="stack">
+        <div id="training-console-panel" class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Live Pipeline</div>
+              <div class="panel-copy" id="current-job-copy">No active job right now. Staged files and ready-to-label matches will surface below as they need attention.</div>
+            </div>
+          </div>
+          <div class="hero-grid" id="overview-hero">
+            <div class="hero-tile"><div class="metric-label">Current Job</div><strong id="hero-job">Idle</strong><div class="metric-note" id="hero-job-note">No active processing</div></div>
+            <div class="hero-tile"><div class="metric-label">Matches Tracked</div><strong id="hero-matches">0</strong><div class="metric-note">Across staging, jobs, processed, labeling</div></div>
+            <div class="hero-tile"><div class="metric-label">Ready To Label</div><strong id="hero-label">0</strong><div class="metric-note">Processed matches waiting for task generation</div></div>
+            <div class="hero-tile"><div class="metric-label">Ready To Train</div><strong id="hero-train">0</strong><div class="metric-note">Matches with fresh dataset coverage</div></div>
           </div>
         </div>
-        <div style="margin-bottom:12px">
-          <label style="font-size:0.8rem;color:var(--muted);display:block;margin-bottom:4px">Save Best As</label>
-          <input id="train-output-model-name" type="text" value="ball_best"
-            style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:0.8rem">
-          <label class="inline-checkbox">
-            <input id="train-update-active" type="checkbox" checked>
-            Also set as active inference model (`ball_best.pt`)
-          </label>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Phase Progress</div>
+              <div class="panel-copy">Current pipeline phase tracking for the live job. This keeps the operator grounded in where work is stuck or flowing.</div>
+            </div>
+          </div>
+          <div class="phase-strip" id="phase-strip">
+            <div class="phase-block" data-phase="detection">Detect</div>
+            <div class="phase-block" data-phase="tracking">Track</div>
+            <div class="phase-block" data-phase="hard_frames">Frames</div>
+            <div class="phase-block" data-phase="player_cluster">Cluster</div>
+            <div class="phase-block" data-phase="camera">Camera</div>
+            <div class="phase-block" data-phase="broadcast_reframe">Broadcast</div>
+            <div class="phase-block" data-phase="tactical_reframe">Tactical</div>
+            <div class="phase-block" data-phase="highlights">Highlights</div>
+            <div class="phase-block" data-phase="export">Export</div>
+          </div>
         </div>
-        <div id="training-log" style="font-size:0.75rem;font-family:monospace;max-height:100px;overflow-y:auto;background:var(--bg);border-radius:4px;padding:8px;display:none"></div>
-        <h3 style="font-size:0.9rem;color:var(--muted);margin:12px 0 8px">Available Models</h3>
-        <div id="model-list" style="font-size:0.8rem">Loading...</div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Matches Needing Attention</div>
+              <div class="panel-copy">The shortest path to the next useful action. If a first-time operator opens the dashboard, this list should tell them what to do without reading docs.</div>
+            </div>
+          </div>
+          <div id="attention-list" class="attention-list"></div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">System Signals</div>
+              <div class="panel-copy">Live GPU and host utilization for quick operational sanity checks.</div>
+            </div>
+          </div>
+          <div class="bar-row">
+            <div class="bar-card">
+              <div class="bar-label"><span>GPU Utilization</span><span id="gpu-util-value">--</span></div>
+              <div class="bar-track"><div id="gpu-util-fill" class="bar-fill" style="width:0%;background:var(--accent)"></div></div>
+            </div>
+            <div class="bar-card">
+              <div class="bar-label"><span>GPU Memory</span><span id="gpu-mem-value">--</span></div>
+              <div class="bar-track"><div id="gpu-mem-fill" class="bar-fill" style="width:0%;background:var(--orange)"></div></div>
+            </div>
+            <div class="bar-card">
+              <div class="bar-label"><span>CPU</span><span id="cpu-util-value">--</span></div>
+              <div class="bar-track"><div id="cpu-util-fill" class="bar-fill" style="width:0%;background:var(--green)"></div></div>
+            </div>
+            <div class="bar-card">
+              <div class="bar-label"><span>RAM</span><span id="ram-util-value">--</span></div>
+              <div class="bar-track"><div id="ram-util-fill" class="bar-fill" style="width:0%;background:#c084fc"></div></div>
+            </div>
+          </div>
+          <div class="toolbar-row" style="margin-top:12px">
+            <span class="tiny">GPU temp: <span id="gpu-temp">--</span></span>
+            <span class="tiny">CPUs: <span id="cpu-count">--</span></span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Recent Job History</div>
+              <div class="panel-copy">Operational record of recent runs, useful when resets or retraining invalidate prior state.</div>
+            </div>
+            <button id="clear-history-btn-top" class="ghost-btn" onclick="clearHistory()">Clear History</button>
+          </div>
+          <div id="history-preview" class="history-list"></div>
+        </div>
       </div>
     </div>
-  </div>
+  </section>
 
-  <!-- Processed Matches -->
-  <div class="card card-full">
-    <h2>Processed Matches</h2>
-    <div id="media-empty" style="display:none;padding:12px 0;font-size:0.85rem;color:var(--muted)">No processed matches found.</div>
-    <div id="media-list"></div>
-  </div>
+  <section id="workspace-matches" class="workspace">
+    <div class="panel">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Match Library</div>
+          <div class="panel-copy">One canonical row per match family across staging, queue, processed outputs, labeling, and reset eligibility. Click a row to inspect lineage and safe actions.</div>
+        </div>
+      </div>
+      <div class="match-controls">
+        <input id="match-search" type="search" placeholder="Search matches, source files, jobs..." oninput="renderMatches()">
+        <div class="filter-bar">
+          <button class="chip-btn active" data-match-filter="all" onclick="setMatchFilter('all')">All</button>
+          <button class="chip-btn" data-match-filter="processing" onclick="setMatchFilter('processing')">Processing</button>
+          <button class="chip-btn" data-match-filter="staged" onclick="setMatchFilter('staged')">Staged</button>
+          <button class="chip-btn" data-match-filter="labeling" onclick="setMatchFilter('labeling')">Labeling</button>
+          <button class="chip-btn" data-match-filter="ready_to_train" onclick="setMatchFilter('ready_to_train')">Ready To Train</button>
+          <button class="chip-btn" data-match-filter="processed" onclick="setMatchFilter('processed')">Processed</button>
+        </div>
+      </div>
+      <div class="match-table">
+        <div class="match-table-head">
+          <div>Match</div>
+          <div>Status</div>
+          <div>Outputs</div>
+          <div>Labeling</div>
+          <div>Model Lineage</div>
+          <div>Next Action</div>
+        </div>
+        <div id="match-library"></div>
+      </div>
+    </div>
+  </section>
 
-  <!-- Job History -->
-  <div class="card card-full">
-    <div class="history-header" style="justify-content:space-between;margin-bottom:10px">
-      <h2 style="margin:0">Job History</h2>
-      <button id="clear-history-btn" class="btn" style="background:var(--red);color:#fff" onclick="clearHistory()">
-        Clear History
-      </button>
+  <section id="workspace-labeling" class="workspace">
+    <div class="two-col">
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Per-Match Labeling Flow</div>
+              <div class="panel-copy">The active-learning queue now shows exact workflow state instead of raw counts only: exported frames, tasks generated, labels uploaded, dataset freshness, and training readiness.</div>
+            </div>
+          </div>
+          <div id="labeling-queue" class="queue-list"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Dataset State</div>
+              <div class="panel-copy">A dataset can exist and still be stale. This surface should tell you whether labels have changed since the last build.</div>
+            </div>
+          </div>
+          <div class="hero-grid">
+            <div class="hero-tile"><div class="metric-label">Frames</div><strong id="dataset-total-frames">0</strong><div class="metric-note">Hard frames exported</div></div>
+            <div class="hero-tile"><div class="metric-label">Labeled</div><strong id="dataset-total-labeled">0</strong><div class="metric-note">Frames with YOLO labels</div></div>
+            <div class="hero-tile"><div class="metric-label">Dataset</div><strong id="dataset-overall-state">missing</strong><div class="metric-note" id="dataset-overall-copy">Build required</div></div>
+            <div class="hero-tile"><div class="metric-label">Label Studio</div><strong>External</strong><div class="metric-note">Handoff remains explicit</div></div>
+          </div>
+          <div class="action-row" style="margin-top:14px">
+            <button class="btn yellow" onclick="buildDataset()">Build Dataset</button>
+            <a class="btn secondary" href="#" id="labelstudio-link-inline" target="_blank">Open Label Studio</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Training Console</div>
+              <div class="panel-copy">Separate training defaults from model registry. Launches are explicit, and run history shows what happened last.</div>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="field-stack">
+              <label class="tiny" for="train-base-model">Training Base Model</label>
+              <select id="train-base-model"></select>
+            </div>
+            <div class="field-stack">
+              <label class="tiny" for="train-epochs">Epochs</label>
+              <input id="train-epochs" type="number" value="50" min="1" max="500">
+            </div>
+            <div class="field-stack">
+              <label class="tiny" for="train-output-model-name">Save Best As</label>
+              <input id="train-output-model-name" type="text" value="ball_best">
+            </div>
+            <div class="checkbox-row" style="align-self:end">
+              <input id="train-update-active" type="checkbox" checked>
+              <label for="train-update-active">Also update active `ball_best.pt`</label>
+            </div>
+          </div>
+          <div class="action-row" style="margin-top:14px">
+            <button class="btn green" onclick="startTraining()">Train Model</button>
+          </div>
+          <div id="training-status-card" class="drawer-section" style="margin-top:16px"></div>
+          <div id="training-log" class="drawer-section" style="display:none;margin-top:12px">
+            <div class="tiny" style="margin-bottom:8px">Recent training log</div>
+            <pre id="training-log-pre" class="mono" style="white-space:pre-wrap;font-size:0.78rem;color:#d8e4ff"></pre>
+          </div>
+        </div>
+      </div>
     </div>
-    <div id="job-table-area" class="table-scroll">
-      <table class="jobs-table">
-        <thead><tr><th>Job</th><th>Input</th><th>Status</th><th>Mode</th><th>Started</th></tr></thead>
-        <tbody id="job-tbody"></tbody>
-      </table>
+  </section>
+
+  <section id="workspace-models" class="workspace">
+    <div class="two-col">
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Staging Inbox</div>
+              <div class="panel-copy">Upload, search, bulk-select, and send staged files to ingest with context about whether that match is already queued, processed, or waiting on a later step.</div>
+            </div>
+          </div>
+          <div class="section-controls">
+            <button id="staging-upload-btn" class="btn green" onclick="triggerStagingUpload()">Upload To Staging</button>
+            <button class="ghost-btn" onclick="toggleAllStaging()">Toggle Select All</button>
+            <button class="btn secondary" onclick="sendSelectedToIngest()">Send Selected To Ingest</button>
+            <input id="staging-search" type="search" placeholder="Search staged files..." oninput="renderStagingInbox()">
+            <input id="staging-upload-input" type="file" accept=".mp4,.mov,.insv" style="display:none" onchange="uploadToStaging(this)">
+          </div>
+          <div id="upload-progress" class="upload-progress">
+            <div class="toolbar-row" style="justify-content:space-between">
+              <strong id="upload-filename">Uploading…</strong>
+              <span id="upload-status-text" class="tiny"></span>
+            </div>
+            <div class="bar-track"><div id="upload-progress-bar" class="bar-fill" style="width:0%;background:var(--green)"></div></div>
+            <div class="toolbar-row" style="justify-content:space-between">
+              <span id="upload-transferred" class="tiny"></span>
+              <span id="upload-speed" class="tiny"></span>
+              <span id="upload-eta" class="tiny"></span>
+            </div>
+            <div class="action-row">
+              <button id="upload-cancel-btn" class="ghost-btn" onclick="cancelUpload()">Cancel</button>
+            </div>
+          </div>
+          <div id="staging-list" class="staging-list"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Current Ingest Models</div>
+              <div class="panel-copy">This panel only controls the next ingest selection. Training defaults and model inventory live separately below.</div>
+            </div>
+          </div>
+          <div id="inference-summary" class="drawer-section" style="margin-bottom:12px"></div>
+          <div class="form-grid">
+            <div class="field-stack">
+              <label class="tiny" for="inference-ball-model-select">Ball Detection Model</label>
+              <select id="inference-ball-model-select"></select>
+            </div>
+            <div class="field-stack">
+              <label class="tiny" for="inference-player-model-select">Player Detection Model</label>
+              <select id="inference-player-model-select"></select>
+            </div>
+          </div>
+          <div class="action-row" style="margin-top:14px">
+            <button id="apply-inference-model-btn" class="btn" onclick="applyInferenceModelSelection()">Apply Ingest Models</button>
+          </div>
+          <div id="inference-note" class="tiny" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Model Registry</div>
+              <div class="panel-copy">Inventory, role hints, last-known usage, and explicit protection reasons so operators understand why a model can or cannot be removed.</div>
+            </div>
+            <input id="model-search" type="search" placeholder="Search models..." oninput="renderModelRegistry()">
+          </div>
+          <div id="model-registry" class="model-list"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Full Job History</div>
+              <div class="panel-copy">Persistent dashboard history. Clearing here only purges dashboard records, never processed videos or models.</div>
+            </div>
+            <button id="clear-history-btn" class="ghost-btn" onclick="clearHistory()">Clear History</button>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Job</th><th>Input</th><th>Status</th><th>Mode</th><th>Started</th></tr></thead>
+              <tbody id="job-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
-  </div>
+  </section>
 </div>
+
+<div id="drawer-overlay" class="overlay" onclick="closeDrawer()"></div>
+<aside id="match-drawer" class="drawer">
+  <div class="drawer-close">
+    <button class="ghost-btn" onclick="closeDrawer()">Close</button>
+  </div>
+  <div id="match-drawer-body" class="drawer-grid"></div>
+</aside>
 
 <script>
 const PHASE_ORDER = ['detection','tracking','hard_frames','player_cluster','camera','broadcast_reframe','tactical_reframe','highlights','export'];
-let evtSource = null;
-let lastEventId = 0;
+const WORKSPACE_NAMES = ['overview', 'matches', 'labeling', 'models'];
 
-// --- SSE Connection ---
-function connectSSE() {
-  if (evtSource) evtSource.close();
-  evtSource = new EventSource('/api/events?after=' + lastEventId);
+const appState = {
+  workspace: 'overview',
+  matchFilter: 'all',
+  workflow: null,
+  workflowIndex: new Map(),
+  training: null,
+  models: [],
+  jobs: [],
+  status: null,
+  gpu: null,
+  system: null,
+  stagingFiles: [],
+  selectedMatchKey: null,
+  selectedMatchDetail: null,
+  evtSource: null,
+  lastEventId: 0,
+};
 
-  evtSource.onopen = () => {
-    document.getElementById('sse-badge').className = 'status-badge badge-connected';
-    document.getElementById('sse-badge').textContent = 'Connected';
-  };
-  evtSource.onerror = () => {
-    document.getElementById('sse-badge').className = 'status-badge badge-disconnected';
-    document.getElementById('sse-badge').textContent = 'Reconnecting...';
-  };
+let _activeUpload = null;
 
-  evtSource.addEventListener('status', (e) => {
-    const d = JSON.parse(e.data);
-    updateStatus(d);
-  });
+document.getElementById('labelstudio-link').href = location.protocol + '//' + location.hostname + ':8080';
+document.getElementById('labelstudio-link-inline').href = location.protocol + '//' + location.hostname + ':8080';
 
-  evtSource.addEventListener('phase_running', (e) => {
-    const d = JSON.parse(e.data);
-    if (e.lastEventId) lastEventId = parseInt(e.lastEventId);
-    setPhaseState(d.phase_name, 'running');
-  });
-
-  evtSource.addEventListener('phase_completed', (e) => {
-    const d = JSON.parse(e.data);
-    if (e.lastEventId) lastEventId = parseInt(e.lastEventId);
-    setPhaseState(d.phase_name, 'completed', d.duration_sec);
-  });
-
-  evtSource.addEventListener('phase_failed', (e) => {
-    const d = JSON.parse(e.data);
-    if (e.lastEventId) lastEventId = parseInt(e.lastEventId);
-    setPhaseState(d.phase_name, 'failed');
-  });
-
-  evtSource.addEventListener('gpu_snapshot', (e) => {
-    const d = JSON.parse(e.data);
-    updateGPU(d);
-  });
-
-  evtSource.addEventListener('system_snapshot', (e) => {
-    const d = JSON.parse(e.data);
-    updateSystem(d);
-  });
-
-  evtSource.addEventListener('decision_pending', (e) => {
-    const d = JSON.parse(e.data);
-    showDecision(d);
-  });
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
 }
 
-// --- Status ---
-function updateStatus(d) {
-  const badge = document.getElementById('pipeline-badge');
-  const queueEl = document.getElementById('queue-count');
-  const jobInfo = document.getElementById('current-job-info');
+function quoteJs(value) {
+  return JSON.stringify(value == null ? '' : String(value)).replace(/"/g, '&quot;');
+}
 
-  if (d.state === 'processing') {
-    badge.className = 'status-badge badge-processing';
-    const phaseName = d.current_phase ? d.current_phase.phase_name : '...';
-    badge.textContent = 'Processing: ' + phaseName;
-    jobInfo.textContent = 'Job: ' + (d.job_id || '') + ' | Mode: ' + (d.mode || '...');
+(function() {
+  function getStack() {
+    let s = document.getElementById('_toast_stack');
+    if (!s) { s = document.createElement('div'); s.id = '_toast_stack'; s.className = 'toast-stack'; document.body.appendChild(s); }
+    return s;
+  }
+  window.showToast = function(message, type) {
+    type = type || 'info';
+    const icons = {success: '✓', error: '✕', info: 'i'};
+    const el = document.createElement('div');
+    el.className = 'toast ' + type;
+    el.innerHTML =
+      '<div class="toast-icon">' + (icons[type] || 'i') + '</div>' +
+      '<div class="toast-body">' + escapeHtml(String(message)) + '</div>' +
+      '<button class="toast-close" aria-label="Dismiss">✕</button>';
+    let gone = false;
+    function dismiss() {
+      if (gone) return; gone = true;
+      clearTimeout(timer);
+      el.classList.add('out');
+      el.addEventListener('animationend', () => el.remove(), {once: true});
+    }
+    el.querySelector('.toast-close').addEventListener('click', dismiss);
+    getStack().appendChild(el);
+    const timer = setTimeout(dismiss, type === 'error' ? 6000 : 4000);
+  };
+  window.showModal = function(title, body, confirmLabel, danger) {
+    return new Promise(function(resolve) {
+      const bd = document.createElement('div');
+      bd.className = 'modal-backdrop';
+      bd.setAttribute('role', 'dialog');
+      bd.setAttribute('aria-modal', 'true');
+      bd.innerHTML =
+        '<div class="modal-box">' +
+          '<div class="modal-title">' + escapeHtml(title) + '</div>' +
+          '<div class="modal-body">' + escapeHtml(body) + '</div>' +
+          '<div class="modal-actions">' +
+            '<button class="btn secondary" id="_mcl">Cancel</button>' +
+            '<button class="btn' + (danger ? ' red' : '') + '" id="_mco">' + escapeHtml(confirmLabel || 'Confirm') + '</button>' +
+          '</div>' +
+        '</div>';
+      function close(r) { document.removeEventListener('keydown', onKey); bd.remove(); resolve(r); }
+      function onKey(e) { if (e.key === 'Escape') close(false); }
+      bd.querySelector('#_mcl').addEventListener('click', function() { close(false); });
+      bd.querySelector('#_mco').addEventListener('click', function() { close(true); });
+      bd.addEventListener('click', function(e) { if (e.target === bd) close(false); });
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(bd);
+      bd.querySelector('#_mco').focus();
+    });
+  };
+})();
+
+function formatDate(value) {
+  if (!value || value === '--') return '--';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString();
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return '--';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+function formatDuration(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return '--';
+  if (sec < 60) return Math.ceil(sec) + 's';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm ' + Math.ceil(sec % 60) + 's';
+  return Math.floor(sec / 3600) + 'h ' + Math.floor((sec % 3600) / 60) + 'm';
+}
+
+function formatFileSizeMb(value) {
+  if (value == null) return '--';
+  return value + ' MB';
+}
+
+function setStatusPill(id, label, statusClass) {
+  const el = document.getElementById(id);
+  el.className = 'status-pill' + (statusClass ? ' ' + statusClass : '');
+  el.textContent = label;
+}
+
+function normalizeWorkspace(name) {
+  return WORKSPACE_NAMES.includes(name) ? name : 'overview';
+}
+
+function switchWorkspace(name, syncHash) {
+  const normalized = normalizeWorkspace(name);
+  const shouldSyncHash = syncHash !== false;
+  appState.workspace = normalized;
+  document.querySelectorAll('[data-workspace-btn]').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-workspace-btn') === normalized);
+  });
+  document.querySelectorAll('.workspace').forEach(section => {
+    section.classList.toggle('active', section.id === 'workspace-' + normalized);
+  });
+  if (shouldSyncHash) {
+    const nextHash = normalized === 'overview' ? '' : '#' + normalized;
+    const nextUrl = nextHash || window.location.pathname;
+    if ((window.location.hash || '') !== nextHash) {
+      history.replaceState(null, '', nextUrl);
+    }
+  }
+}
+
+function openTrainingConsole(options) {
+  const opts = options || {};
+  switchWorkspace('labeling');
+  if (opts.closeDrawer) closeDrawer();
+  const panel = document.getElementById('training-console-panel');
+  if (panel) {
+    requestAnimationFrame(() => {
+      panel.scrollIntoView({behavior: 'smooth', block: 'start'});
+    });
+  }
+}
+
+function setMatchFilter(filter) {
+  appState.matchFilter = filter;
+  document.querySelectorAll('[data-match-filter]').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-match-filter') === filter);
+  });
+  renderMatches();
+}
+
+function getWorkflowMatches() {
+  return appState.workflow && Array.isArray(appState.workflow.matches) ? appState.workflow.matches : [];
+}
+
+function updateHeaderSummary() {
+  const workflow = appState.workflow || {summary: {}, dataset: {}, training: {}};
+  const summary = workflow.summary || {};
+  const status = appState.status || {};
+  const queued = Number(summary.staged || 0) + Number(summary.queued || 0);
+  document.getElementById('queue-count').textContent = String(queued);
+  document.getElementById('queue-copy').textContent = queued > 0 ? queued + ' assets waiting or queued' : 'No queued jobs';
+  document.getElementById('attention-count').textContent = String(
+    (summary.staged || 0) + (summary.ready_to_label || 0) + (summary.dataset_pending || 0) + (summary.ready_to_train || 0)
+  );
+  document.getElementById('dataset-state').textContent = String((workflow.dataset && workflow.dataset.state) || '--');
+  document.getElementById('dataset-copy').textContent = (workflow.dataset && workflow.dataset.ready)
+    ? 'Dataset present' : 'Dataset missing or stale';
+  document.getElementById('training-state-hero').textContent = (appState.training && appState.training.status) || 'idle';
+  document.getElementById('training-copy').textContent = appState.training && appState.training.current_run
+    ? 'Run in progress' : ((appState.training && appState.training.last_completed_run) ? 'Latest run recorded' : 'No training active');
+
+  if (status.state === 'processing') {
+    setStatusPill('pipeline-pill', 'Processing', 'status-processing');
+    document.getElementById('current-job-copy').textContent =
+      'Job ' + (status.job_id || '--') + ' is currently in ' + ((status.current_phase && status.current_phase.phase_name) || 'an unknown phase') + '.';
+    document.getElementById('hero-job').textContent = status.job_id || 'Active';
+    document.getElementById('hero-job-note').textContent = 'Mode: ' + (status.mode || '--');
   } else {
-    badge.className = 'status-badge badge-idle';
-    badge.textContent = 'Idle';
-    jobInfo.textContent = '';
+    setStatusPill('pipeline-pill', 'Idle', '');
+    document.getElementById('current-job-copy').textContent =
+      'No active job right now. Staged files and ready-to-label matches will surface below as they need attention.';
+    document.getElementById('hero-job').textContent = 'Idle';
+    document.getElementById('hero-job-note').textContent = queued > 0 ? 'Queue has pending work' : 'No active processing';
     resetPhases();
   }
-  queueEl.textContent = d.queued > 0 ? d.queued + ' queued' : '';
+
+  document.getElementById('hero-matches').textContent = String(summary.total_matches || 0);
+  document.getElementById('hero-label').textContent = String(summary.ready_to_label || 0);
+  document.getElementById('hero-train').textContent = String(summary.ready_to_train || 0);
 }
 
-// --- Phase bar ---
+function renderOverview() {
+  const matches = getWorkflowMatches();
+  const attentionMatches = matches.filter(item => ['processing','queued','staged','ready_to_label','labeling','dataset_pending','ready_to_train'].includes(item.status)).slice(0, 8);
+  const attentionEl = document.getElementById('attention-list');
+  if (!attentionMatches.length) {
+    attentionEl.innerHTML = '<div class="empty">Everything is calm. No match currently needs operator action.</div>';
+  } else {
+    attentionEl.innerHTML = attentionMatches.map(item =>
+      '<div class="attention-card">' +
+        '<div class="toolbar-row" style="justify-content:space-between;align-items:flex-start">' +
+          '<div class="title-stack">' +
+            '<div class="match-name">' + escapeHtml(item.display_name) + '</div>' +
+            '<div class="muted">' + escapeHtml(item.source_filename || item.key) + '</div>' +
+          '</div>' +
+          '<span class="status-pill status-' + escapeHtml(item.status) + '">' + escapeHtml(item.status.replace(/_/g, ' ')) + '</span>' +
+        '</div>' +
+        '<div class="toolbar-row" style="justify-content:space-between;margin-top:10px">' +
+          '<span class="tiny">Next: ' + escapeHtml(item.next_action) + '</span>' +
+          '<button class="ghost-btn" onclick="inspectMatch(' + quoteJs(item.key) + ')">Inspect</button>' +
+        '</div>' +
+      '</div>'
+    ).join('');
+  }
+
+  const previewJobs = (appState.jobs || []).slice(0, 6);
+  const historyPreview = document.getElementById('history-preview');
+  if (!previewJobs.length) {
+    historyPreview.innerHTML = '<div class="empty">No recent jobs recorded yet.</div>';
+  } else {
+    historyPreview.innerHTML = previewJobs.map(job =>
+      '<div class="history-row">' +
+        '<div class="toolbar-row" style="justify-content:space-between;align-items:flex-start">' +
+          '<div class="title-stack">' +
+            '<div class="match-name" style="font-size:0.92rem">' + escapeHtml(job.job_id || '--') + '</div>' +
+            '<div class="muted">' + escapeHtml((job.input_path || '').split('/').pop() || '--') + '</div>' +
+          '</div>' +
+          '<span class="status-pill status-' + escapeHtml(job.status || 'idle') + '">' + escapeHtml(job.status || '--') + '</span>' +
+        '</div>' +
+        '<div class="tiny" style="margin-top:8px">Started ' + escapeHtml(formatDate(job.started_at || job.created_at)) + (job.mode ? ' · ' + escapeHtml(job.mode) : '') + '</div>' +
+      '</div>'
+    ).join('');
+  }
+}
+
+function renderMatches() {
+  const search = (document.getElementById('match-search').value || '').trim().toLowerCase();
+  const listEl = document.getElementById('match-library');
+  const matches = getWorkflowMatches().filter(item => {
+    if (appState.matchFilter !== 'all') {
+      if (appState.matchFilter === 'labeling') {
+        if (!['ready_to_label', 'labeling', 'dataset_pending'].includes(item.status)) return false;
+      } else if (item.status !== appState.matchFilter) {
+        return false;
+      }
+    }
+    if (!search) return true;
+    const haystack = [
+      item.display_name,
+      item.source_filename,
+      item.key,
+      item.job && item.job.job_id,
+      item.processed && item.processed.primary_match_name,
+    ].join(' ').toLowerCase();
+    return haystack.includes(search);
+  });
+
+  if (!matches.length) {
+    listEl.innerHTML = '<div class="empty">No matches match the current filter.</div>';
+    return;
+  }
+
+  listEl.innerHTML = matches.map(item => {
+    const labeling = item.labeling || {};
+    const processed = item.processed || {};
+    const active = appState.selectedMatchKey === item.key;
+    const modelLine = [
+      item.models && item.models.actual_ball_model ? 'Ball ' + item.models.actual_ball_model : null,
+      item.models && item.models.actual_player_model ? 'Player ' + item.models.actual_player_model : null,
+      !item.models.actual_ball_model && item.models && item.models.planned_ball_model ? 'Planned ' + item.models.planned_ball_model : null,
+    ].filter(Boolean).join(' · ');
+    return (
+      '<div class="match-row' + (active ? ' active' : '') + '" onclick="inspectMatch(' + quoteJs(item.key) + ')">' +
+        '<div class="title-stack">' +
+          '<div class="match-name">' + escapeHtml(item.display_name) + '</div>' +
+          '<div class="muted">' + escapeHtml(item.source_filename || item.key) + '</div>' +
+        '</div>' +
+        '<div><span class="status-pill status-' + escapeHtml(item.status) + '">' + escapeHtml(item.status.replace(/_/g, ' ')) + '</span></div>' +
+        '<div class="meta-stack">' +
+          '<span class="tiny">' + escapeHtml((processed.video_count || 0) + ' videos') + '</span>' +
+          '<span class="tiny">' + escapeHtml((processed.highlight_count || 0) + ' highlights') + '</span>' +
+        '</div>' +
+        '<div class="meta-stack">' +
+          '<span class="tiny">' + escapeHtml((labeling.frames || 0) + ' hard frames') + '</span>' +
+          '<span class="tiny">' + escapeHtml((labeling.labeled || 0) + ' labeled · ' + (labeling.dataset_state || 'unknown')) + '</span>' +
+        '</div>' +
+        '<div class="meta-stack">' +
+          '<span class="tiny">' + escapeHtml(modelLine || 'No recorded lineage yet') + '</span>' +
+          '<span class="tiny">' + escapeHtml('Next: ' + item.next_action) + '</span>' +
+        '</div>' +
+        '<div><button class="ghost-btn" onclick="event.stopPropagation(); performMatchNextAction(' + quoteJs(item.key) + ')">' + escapeHtml(item.next_action) + '</button></div>' +
+      '</div>'
+    );
+  }).join('');
+}
+
+function renderLabelingWorkspace() {
+  const list = getWorkflowMatches()
+    .filter(item => item.processed && item.processed.present && ((item.labeling && item.labeling.frames > 0) || ['ready_to_label','labeling','dataset_pending','ready_to_train'].includes(item.status)));
+  const queueEl = document.getElementById('labeling-queue');
+  if (!list.length) {
+    queueEl.innerHTML = '<div class="empty">No processed matches are currently in the labeling or training loop.</div>';
+  } else {
+    queueEl.innerHTML = list.map(item => {
+      const label = item.labeling || {};
+      const steps = [
+        {title: 'Frames', ready: (label.frames || 0) > 0, copy: (label.frames || 0) + ' exported'},
+        {title: 'Tasks', ready: !!label.tasks_generated, copy: label.tasks_generated ? (label.tasks_count || 0) + ' generated' : 'Generate tasks'},
+        {title: 'Labels', ready: (label.labeled || 0) > 0, copy: (label.labeled || 0) + ' uploaded'},
+        {title: 'Dataset', ready: label.dataset_state === 'ready', pending: ['missing','stale'].includes(label.dataset_state), copy: label.dataset_state || 'unknown'},
+        {title: 'Train', ready: !!label.training_ready, copy: label.training_ready ? 'Ready' : (label.blocker || 'Blocked')},
+      ];
+      return '<div class="queue-card">' +
+        '<div class="toolbar-row" style="justify-content:space-between;align-items:flex-start">' +
+          '<div class="title-stack">' +
+            '<div class="match-name" style="font-size:0.98rem">' + escapeHtml(item.display_name) + '</div>' +
+            '<div class="muted">' + escapeHtml((label.dataset_included_count || 0) + ' labels currently in dataset · ' + item.next_action) + '</div>' +
+          '</div>' +
+          '<div class="action-row">' +
+            '<button class="ghost-btn" onclick="inspectMatch(' + quoteJs(item.key) + ')">Inspect</button>' +
+            (label.tasks_generated ? '<a class="btn secondary" href="' + escapeHtml(document.getElementById('labelstudio-link').href) + '" target="_blank">Open Label Studio</a>' : '') +
+            (label.tasks_generated ? '<button class="btn secondary" onclick="uploadLabels(' + quoteJs(item.key) + ')">Upload Labels</button>' : '') +
+            (label.tasks_generated ? '' : '<button class="btn secondary" onclick="importTasks(' + quoteJs(item.key) + ')">Generate Tasks</button>') +
+            (((label.labeled || 0) > 0) && ['missing','stale'].includes(label.dataset_state || '') ? '<button class="btn yellow" onclick="buildDataset()">Build Dataset</button>' : '') +
+            (label.training_ready ? '<button class="btn green" onclick="openTrainingConsole()">Open Training</button>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="stepper" style="margin-top:12px">' +
+          steps.map(step => '<div class="step ' + (step.ready ? 'ready' : (step.pending ? 'pending' : '')) + '"><strong>' + escapeHtml(step.title) + '</strong>' + escapeHtml(step.copy) + '</div>').join('') +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  const dataset = appState.workflow && appState.workflow.dataset ? appState.workflow.dataset : {};
+  document.getElementById('dataset-total-frames').textContent = String(dataset.total_frames || 0);
+  document.getElementById('dataset-total-labeled').textContent = String(dataset.total_labeled || 0);
+  document.getElementById('dataset-overall-state').textContent = String(dataset.state || 'missing');
+  document.getElementById('dataset-overall-copy').textContent = dataset.ready ? 'Current build exists' : 'Build or rebuild required';
+
+  const trainingCard = document.getElementById('training-status-card');
+  const training = appState.training || {};
+  const current = training.current_run;
+  const lastDone = training.last_completed_run;
+  const lastFailed = training.last_failed_run;
+  const lastBuild = training.last_dataset_build;
+  trainingCard.innerHTML =
+    '<div class="title-stack">' +
+      '<div class="match-name" style="font-size:1rem">Status: ' + escapeHtml(training.status || 'idle') + '</div>' +
+      '<div class="muted">' + escapeHtml(training.error || 'No blocking training error right now.') + '</div>' +
+    '</div>' +
+    '<div class="grid-2" style="margin-top:12px">' +
+      '<div class="drawer-section">' +
+        '<div class="tiny">Current run</div>' +
+        '<div class="muted" style="margin-top:6px">' + escapeHtml(current ? ('Epochs ' + current.epochs + ' · ' + (current.base_model ? current.base_model.split('/').pop() : 'default base')) : 'No active training run') + '</div>' +
+      '</div>' +
+      '<div class="drawer-section">' +
+        '<div class="tiny">Last dataset build</div>' +
+        '<div class="muted" style="margin-top:6px">' + escapeHtml(lastBuild ? (formatDate(lastBuild.finished_at) + ' · ' + lastBuild.total_count + ' pairs') : 'No dataset build recorded') + '</div>' +
+      '</div>' +
+      '<div class="drawer-section">' +
+        '<div class="tiny">Last completed run</div>' +
+        '<div class="muted" style="margin-top:6px">' + escapeHtml(lastDone ? (formatDate(lastDone.finished_at) + ' · ' + ((lastDone.output_model_name || 'ball_best') + '.pt')) : 'No completed run recorded') + '</div>' +
+      '</div>' +
+      '<div class="drawer-section">' +
+        '<div class="tiny">Last failed run</div>' +
+        '<div class="muted" style="margin-top:6px">' + escapeHtml(lastFailed ? (formatDate(lastFailed.finished_at) + ' · ' + (lastFailed.error || 'Failed')) : 'No failed run recorded') + '</div>' +
+      '</div>' +
+    '</div>';
+
+  const logEl = document.getElementById('training-log');
+  const logPre = document.getElementById('training-log-pre');
+  if (training.log && training.log.length) {
+    logEl.style.display = 'block';
+    logPre.textContent = training.log.join('\n');
+  } else {
+    logEl.style.display = 'none';
+    logPre.textContent = '';
+  }
+}
+
+function renderStagingInbox() {
+  const search = (document.getElementById('staging-search').value || '').trim().toLowerCase();
+  const listEl = document.getElementById('staging-list');
+  const workflowMap = appState.workflowIndex;
+  const files = (appState.stagingFiles || []).filter(file => {
+    if (!search) return true;
+    return file.name.toLowerCase().includes(search);
+  });
+
+  if (!files.length) {
+    listEl.innerHTML = '<div class="empty">No staged files match the current search.</div>';
+    return;
+  }
+
+  listEl.innerHTML = files.map(file => {
+    const key = file.name.replace(/\.[^.]+$/, '');
+    const record = workflowMap.get(key);
+    const selected = record && record.staging && record.staging.files.some(f => f.name === file.name) && (window._selectedStaging || new Set()).has(file.name);
+    const hints = [];
+    if (record) {
+      if (record.job && ['queued','running'].includes(record.job.state)) hints.push('Already ' + record.job.state);
+      if (record.processed && record.processed.present) hints.push('Processed outputs already exist');
+      if (record.status === 'ready_to_label') hints.push('Ready for task generation after ingest');
+    }
+    return '<div class="staging-row">' +
+      '<div class="toolbar-row" style="justify-content:space-between;align-items:flex-start">' +
+        '<div class="title-stack">' +
+          '<label class="toolbar-row" style="gap:10px;align-items:flex-start">' +
+            '<input type="checkbox" ' + (selected ? 'checked ' : '') + 'onchange="toggleStagingSelection(' + quoteJs(file.name) + ', this.checked)">' +
+            '<span>' +
+              '<span class="match-name" style="font-size:0.95rem;display:block">' + escapeHtml(file.name) + '</span>' +
+              '<span class="muted">' + escapeHtml(formatDate(file.modified_at) + ' · ' + formatFileSizeMb(file.size_mb)) + '</span>' +
+            '</span>' +
+          '</label>' +
+          (hints.length ? '<div class="inline-tags" style="margin-top:8px">' + hints.map(h => '<span class="tag">' + escapeHtml(h) + '</span>').join('') + '</div>' : '') +
+        '</div>' +
+        '<button class="btn secondary" onclick="importStagedFile(' + quoteJs(file.name) + ')">Send To Ingest</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderInferenceControls() {
+  const inference = appState.workflow && appState.workflow.inference ? appState.workflow.inference : {};
+  const ball = inference.ball || {};
+  const player = inference.player || {};
+  const summary = document.getElementById('inference-summary');
+  summary.innerHTML =
+    '<div class="match-name" style="font-size:1rem">Ball: ' + escapeHtml((ball.resolved_path || 'no model').split('/').pop()) + '</div>' +
+    '<div class="muted">Source ' + escapeHtml(ball.resolved_source || '--') + '</div>' +
+    '<div class="match-name" style="font-size:1rem;margin-top:10px">Player: ' + escapeHtml((player.resolved_path || 'no model').split('/').pop()) + '</div>' +
+    '<div class="muted">Source ' + escapeHtml(player.resolved_source || '--') + '</div>';
+
+  document.getElementById('inference-note').textContent =
+    ball.config_locked && player.config_locked
+      ? 'Both selectors are locked by explicit config model paths.'
+      : ball.config_locked
+      ? 'Ball selection is locked by config. Player selection remains editable.'
+      : player.config_locked
+      ? 'Player selection is locked by config. Ball selection remains editable.'
+      : 'These selections affect future ingest jobs from both the dashboard and command line.';
+
+  const ballSelect = document.getElementById('inference-ball-model-select');
+  const playerSelect = document.getElementById('inference-player-model-select');
+  ballSelect.innerHTML = buildInferenceOptions('ball');
+  playerSelect.innerHTML = buildInferenceOptions('player');
+  applyInferenceSelectionToControl(ballSelect, ball);
+  applyInferenceSelectionToControl(playerSelect, player);
+  ballSelect.disabled = !!ball.config_locked;
+  playerSelect.disabled = !!player.config_locked;
+  document.getElementById('apply-inference-model-btn').disabled = !!ball.config_locked && !!player.config_locked;
+}
+
+function buildInferenceOptions(role) {
+  const models = appState.models || [];
+  const autoLabel = role === 'ball'
+    ? 'Auto: prefer ball_best.pt, else configured path'
+    : 'Auto: prefer configured/base player model';
+  return (
+    '<option value="config">Configured path behavior</option>' +
+    '<option value="auto">' + escapeHtml(autoLabel) + '</option>' +
+    models.map(model => '<option value="pinned::' + escapeHtml(model.path) + '">Pin: ' + escapeHtml(model.name) + '</option>').join('')
+  );
+}
+
+function applyInferenceSelectionToControl(selectEl, status) {
+  if (!selectEl) return;
+  if (status.selection_mode === 'pinned' && status.selected_path) {
+    const value = 'pinned::' + status.selected_path;
+    const hasValue = Array.from(selectEl.options).some(option => option.value === value);
+    selectEl.value = hasValue ? value : 'config';
+  } else {
+    selectEl.value = status.selection_mode || 'config';
+  }
+}
+
+function renderModelRegistry() {
+  const search = (document.getElementById('model-search').value || '').trim().toLowerCase();
+  const registry = document.getElementById('model-registry');
+  const allModels = appState.models || [];
+  const models = allModels.filter(model => {
+    if (!search) return true;
+    return [
+      model.name,
+      model.path,
+      (model.role_hints || []).join(' '),
+      model.protected_reason,
+      model.last_used_context,
+    ].join(' ').toLowerCase().includes(search);
+  });
+
+  if (!models.length) {
+    registry.innerHTML = '<div class="empty">No models match the current search.</div>';
+    return;
+  }
+
+  registry.innerHTML = models.map(model =>
+    '<div class="model-row">' +
+      '<div class="toolbar-row" style="justify-content:space-between;align-items:flex-start">' +
+        '<div class="title-stack">' +
+          '<div class="match-name" style="font-size:0.96rem">' + escapeHtml(model.name) + '</div>' +
+          '<div class="muted mono">' + escapeHtml(model.path) + '</div>' +
+        '</div>' +
+        '<div class="action-row">' +
+          (model.can_delete
+            ? '<button class="ghost-btn" onclick="deleteModel(' + quoteJs(model.path) + ', this)">Delete</button>'
+            : '<span class="tag">' + escapeHtml(model.protected_reason || 'Protected') + '</span>') +
+        '</div>' +
+      '</div>' +
+      '<div class="toolbar-row" style="justify-content:space-between;margin-top:10px">' +
+        '<div class="inline-tags">' +
+          (model.role_hints && model.role_hints.length ? model.role_hints.map(h => '<span class="tag">' + escapeHtml(h) + '</span>').join('') : '<span class="tag">unassigned</span>') +
+        '</div>' +
+        '<div class="tiny">' + escapeHtml(formatFileSizeMb(model.size_mb)) + '</div>' +
+      '</div>' +
+      '<div class="tiny" style="margin-top:8px">Last known usage: ' + escapeHtml(model.last_used_context || 'Not recorded yet') +
+        (model.last_used_at ? ' · ' + escapeHtml(formatDate(model.last_used_at)) : '') + '</div>' +
+    '</div>'
+  ).join('');
+
+  const trainSelect = document.getElementById('train-base-model');
+  const previous = trainSelect.value;
+  trainSelect.innerHTML = allModels.length
+    ? allModels.map(model => {
+    let label = model.name;
+    if (model.is_active) label += ' [active]';
+    if (model.is_configured_base) label += ' [base]';
+    if (model.is_ball_inference_active) label += ' [ball ingest]';
+    if (model.is_player_inference_active) label += ' [player ingest]';
+    return '<option value="' + escapeHtml(model.path) + '">' + escapeHtml(label) + '</option>';
+  }).join('')
+    : '<option value="">No local models available</option>';
+  const preferred = allModels.find(model => model.is_configured_base) || allModels.find(model => model.is_active) || allModels[0];
+  const keep = allModels.some(model => model.path === previous);
+  trainSelect.disabled = allModels.length === 0;
+  if (preferred) {
+    trainSelect.value = keep ? previous : preferred.path;
+  } else {
+    trainSelect.value = '';
+  }
+}
+
+function renderJobsTable() {
+  const tbody = document.getElementById('job-tbody');
+  const jobs = appState.jobs || [];
+  if (!jobs.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">No dashboard job history yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = jobs.map(job =>
+    '<tr>' +
+      '<td>' + escapeHtml(job.job_id || '--') + '</td>' +
+      '<td>' + escapeHtml((job.input_path || '').split('/').pop() || '--') + '</td>' +
+      '<td>' + escapeHtml(job.status || '--') + '</td>' +
+      '<td>' + escapeHtml(job.mode || '--') + '</td>' +
+      '<td>' + escapeHtml(formatDate(job.started_at || job.created_at)) + '</td>' +
+    '</tr>'
+  ).join('');
+}
+
+function getPrimaryStagedFilename(match) {
+  const stagedFiles = match && match.staging && Array.isArray(match.staging.files)
+    ? match.staging.files
+    : [];
+  if (!stagedFiles.length) return match && match.source_filename ? match.source_filename : null;
+  const exact = stagedFiles.find(file => file.name === match.source_filename);
+  return (exact || stagedFiles[0]).name;
+}
+
+function openLabelStudioWindow() {
+  const href = document.getElementById('labelstudio-link').href;
+  window.open(href, '_blank', 'noopener');
+}
+
+async function performMatchNextAction(key) {
+  const match = appState.workflowIndex.get(key);
+  if (!match) return;
+
+  const labeling = match.labeling || {};
+  const processed = match.processed || {};
+
+  if (match.status === 'staged') {
+    const filename = getPrimaryStagedFilename(match);
+    if (filename) {
+      await importStagedFile(filename);
+      return;
+    }
+  }
+
+  if (match.status === 'ready_to_label') {
+    await importTasks(match.key);
+    return;
+  }
+
+  if (match.status === 'labeling' && labeling.tasks_generated) {
+    openLabelStudioWindow();
+    return;
+  }
+
+  if (match.status === 'dataset_pending') {
+    await buildDataset();
+    return;
+  }
+
+  if (match.status === 'ready_to_train') {
+    openTrainingConsole();
+    return;
+  }
+
+  if (match.status === 'processed' && processed.primary_match_name) {
+    window.location.href = '/match/' + encodeURIComponent(processed.primary_match_name);
+    return;
+  }
+
+  await inspectMatch(key);
+}
+
+async function inspectMatch(key) {
+  appState.selectedMatchKey = key;
+  renderMatches();
+  const match = appState.workflowIndex.get(key);
+  if (!match) return;
+  if (match.processed && match.processed.primary_match_name) {
+    try {
+      const resp = await fetch('/api/media/matches/' + encodeURIComponent(match.processed.primary_match_name));
+      if (resp.ok) {
+        appState.selectedMatchDetail = await resp.json();
+      } else {
+        appState.selectedMatchDetail = null;
+      }
+    } catch (err) {
+      appState.selectedMatchDetail = null;
+    }
+  } else {
+    appState.selectedMatchDetail = null;
+  }
+  openDrawer();
+  renderDrawer();
+}
+
+function openDrawer() {
+  document.getElementById('match-drawer').classList.add('open');
+  document.getElementById('drawer-overlay').classList.add('active');
+}
+
+function closeDrawer() {
+  document.getElementById('match-drawer').classList.remove('open');
+  document.getElementById('drawer-overlay').classList.remove('active');
+}
+
+function renderDrawer() {
+  const body = document.getElementById('match-drawer-body');
+  const match = appState.workflowIndex.get(appState.selectedMatchKey);
+  if (!match) {
+    body.innerHTML = '<div class="empty">Select a match to inspect its lifecycle, outputs, and safe actions.</div>';
+    return;
+  }
+  const detail = appState.selectedMatchDetail;
+  const labeling = match.labeling || {};
+  const preview = detail && detail.reset_preview ? detail.reset_preview : match.reset_preview;
+  const videos = detail && detail.videos ? detail.videos : [];
+  body.innerHTML =
+    '<div class="drawer-section">' +
+      '<div class="toolbar-row" style="justify-content:space-between;align-items:flex-start">' +
+        '<div class="title-stack">' +
+          '<div class="match-name">' + escapeHtml(match.display_name) + '</div>' +
+          '<div class="muted">' + escapeHtml(match.source_filename || match.key) + '</div>' +
+        '</div>' +
+        '<span class="status-pill status-' + escapeHtml(match.status) + '">' + escapeHtml(match.status.replace(/_/g, ' ')) + '</span>' +
+      '</div>' +
+      '<div class="inline-tags" style="margin-top:12px">' +
+        '<span class="tag">Next action: ' + escapeHtml(match.next_action) + '</span>' +
+        (detail && detail.mode ? '<span class="tag">Mode ' + escapeHtml(detail.mode) + '</span>' : '') +
+        (detail && detail.job_id ? '<span class="tag">Job ' + escapeHtml(detail.job_id) + '</span>' : '') +
+      '</div>' +
+      '<div class="action-row" style="margin-top:14px">' +
+        (match.processed && match.processed.primary_match_name ? '<a class="btn secondary" href="/match/' + encodeURIComponent(match.processed.primary_match_name) + '">Open Playback</a>' : '') +
+        ((!labeling.tasks_generated && (labeling.frames || 0) > 0) ? '<button class="btn secondary" onclick="importTasks(' + quoteJs(match.key) + ')">Generate Tasks</button>' : '') +
+        ((labeling.tasks_generated && (labeling.labeled || 0) === 0) ? '<a class="btn secondary" href="' + escapeHtml(document.getElementById('labelstudio-link').href) + '" target="_blank">Open Label Studio</a>' : '') +
+        ((labeling.tasks_generated) ? '<button class="btn secondary" onclick="uploadLabels(' + quoteJs(match.key) + ')">Upload Labels</button>' : '') +
+        ((((labeling.labeled || 0) > 0) && ['missing','stale'].includes(labeling.dataset_state || '')) ? '<button class="btn yellow" onclick="buildDataset()">Build Dataset</button>' : '') +
+        ((labeling.training_ready) ? '<button class="btn green" onclick="openTrainingConsole({closeDrawer:true})">Open Training</button>' : '') +
+      '</div>' +
+    '</div>' +
+    '<div class="drawer-section">' +
+      '<div class="panel-title" style="font-size:0.98rem;margin-bottom:12px">Lifecycle</div>' +
+      '<div class="stepper">' +
+        '<div class="step ' + ((labeling.frames || 0) > 0 ? 'ready' : '') + '"><strong>Frames</strong>' + escapeHtml((labeling.frames || 0) + ' exported') + '</div>' +
+        '<div class="step ' + (labeling.tasks_generated ? 'ready' : '') + '"><strong>Tasks</strong>' + escapeHtml(labeling.tasks_generated ? ((labeling.tasks_count || 0) + ' generated') : 'Generate tasks') + '</div>' +
+        '<div class="step ' + ((labeling.labeled || 0) > 0 ? 'ready' : '') + '"><strong>Labels</strong>' + escapeHtml((labeling.labeled || 0) + ' uploaded') + '</div>' +
+        '<div class="step ' + (((labeling.dataset_state || '') === 'ready') ? 'ready' : (['missing','stale'].includes(labeling.dataset_state || '') ? 'pending' : '')) + '"><strong>Dataset</strong>' + escapeHtml(labeling.dataset_state || 'unknown') + '</div>' +
+        '<div class="step ' + (labeling.training_ready ? 'ready' : '') + '"><strong>Train</strong>' + escapeHtml(labeling.training_ready ? 'Ready' : (labeling.blocker || 'Blocked')) + '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="drawer-section">' +
+      '<div class="panel-title" style="font-size:0.98rem;margin-bottom:12px">Lineage</div>' +
+      '<div class="grid-2">' +
+        '<div><div class="tiny">Processed family</div><div class="muted">' + escapeHtml((match.processed && match.processed.match_names || []).join(', ') || 'None') + '</div></div>' +
+        '<div><div class="tiny">Processed at</div><div class="muted">' + escapeHtml(detail ? formatDate(detail.processed_at) : formatDate(match.processed && match.processed.processed_at)) + '</div></div>' +
+        '<div><div class="tiny">Actual ball model</div><div class="muted">' + escapeHtml(match.models && (match.models.actual_ball_model || match.models.planned_ball_model) || 'Unknown') + '</div></div>' +
+        '<div><div class="tiny">Actual player model</div><div class="muted">' + escapeHtml(match.models && (match.models.actual_player_model || match.models.planned_player_model) || 'Unknown') + '</div></div>' +
+        '<div><div class="tiny">Ingest source</div><div class="muted mono">' + escapeHtml(detail && detail.ingest_source_path || '--') + '</div></div>' +
+        '<div><div class="tiny">Archived source</div><div class="muted mono">' + escapeHtml(detail && detail.ingest_archived_path || '--') + '</div></div>' +
+        '<div><div class="tiny">Ball model source</div><div class="muted">' + escapeHtml(detail && detail.model_runtime && detail.model_runtime.ball_model_source || '--') + '</div></div>' +
+        '<div><div class="tiny">Player model source</div><div class="muted">' + escapeHtml(detail && detail.model_runtime && detail.model_runtime.player_model_source || '--') + '</div></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="drawer-section">' +
+      '<div class="panel-title" style="font-size:0.98rem;margin-bottom:12px">Workflow Facts</div>' +
+      '<div class="grid-2">' +
+        '<div><div class="tiny">Hard frames exported</div><div class="muted">' + escapeHtml(String((detail && detail.hard_frames_count) || (labeling.frames || 0) || 0)) + '</div></div>' +
+        '<div><div class="tiny">Labels uploaded</div><div class="muted">' + escapeHtml(String(labeling.labeled || 0)) + '</div></div>' +
+        '<div><div class="tiny">Tasks generated</div><div class="muted">' + escapeHtml(labeling.tasks_generated ? String(labeling.tasks_count || 0) : 'Not yet') + '</div></div>' +
+        '<div><div class="tiny">Dataset inclusion</div><div class="muted">' + escapeHtml(String(labeling.dataset_included_count || 0) + ' labels in current dataset') + '</div></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="drawer-section">' +
+      '<div class="panel-title" style="font-size:0.98rem;margin-bottom:12px">Outputs</div>' +
+      (videos.length
+        ? '<div class="drawer-videos">' + videos.map(video => '<div class="drawer-video"><span>' + escapeHtml(video.name) + '</span><span class="tiny">' + escapeHtml(formatFileSizeMb(video.size_mb)) + '</span></div>').join('') + '</div>'
+        : '<div class="empty">No processed videos available yet for this match.</div>') +
+    '</div>' +
+    (preview ? (
+      '<div class="drawer-section">' +
+        '<div class="panel-title" style="font-size:0.98rem;margin-bottom:12px">Reset Preview</div>' +
+        '<div class="grid-2">' +
+          '<div><div class="tiny">Processed dirs removed</div><div class="muted">' + escapeHtml(String(preview.deleted_processed_dirs_count || 0)) + '</div></div>' +
+          '<div><div class="tiny">Highlight dirs removed</div><div class="muted">' + escapeHtml(String(preview.deleted_highlights_dirs_count || 0)) + '</div></div>' +
+          '<div><div class="tiny">Labeling deleted</div><div class="muted">' + escapeHtml(preview.labeling_deleted ? 'yes' : 'no') + '</div></div>' +
+          '<div><div class="tiny">Dataset invalidated</div><div class="muted">' + escapeHtml(preview.dataset_invalidated ? 'yes' : 'no') + '</div></div>' +
+          '<div><div class="tiny">Jobs purged</div><div class="muted">' + escapeHtml(String((preview.purged_job_ids || []).length)) + '</div></div>' +
+          '<div><div class="tiny">Dedupe entries cleared</div><div class="muted">' + escapeHtml(String((preview.dedupe_target_paths || []).length)) + '</div></div>' +
+          '<div><div class="tiny">Restorable source</div><div class="muted mono">' + escapeHtml(preview.restorable_source_path || 'None found') + '</div></div>' +
+          '<div><div class="tiny">Restore target</div><div class="muted">' + escapeHtml(preview.restore_target_name || '--') + '</div></div>' +
+        '</div>' +
+        '<div class="tiny" style="margin-top:10px">' + escapeHtml(preview.blocked_reason || 'Reset is currently allowed for this family.') + '</div>' +
+        '<div class="action-row" style="margin-top:14px">' +
+          '<button class="btn red" ' + (preview.allowed ? '' : 'disabled ') + 'onclick="resetMatch(' + quoteJs(match.processed && match.processed.primary_match_name || '') + ', ' + quoteJs(match.display_name) + ')">Remove Match Family</button>' +
+        '</div>' +
+      '</div>'
+    ) : '') +
+    '';
+}
+
+function renderAll() {
+  updateHeaderSummary();
+  renderOverview();
+  renderMatches();
+  renderLabelingWorkspace();
+  renderStagingInbox();
+  renderInferenceControls();
+  renderModelRegistry();
+  renderJobsTable();
+  if (appState.selectedMatchKey) renderDrawer();
+}
+
+async function loadDashboardData() {
+  const requests = await Promise.allSettled([
+    fetch('/api/workflow/matches'),
+    fetch('/api/training/status'),
+    fetch('/api/training/models'),
+    fetch('/api/jobs?limit=50'),
+    fetch('/api/status'),
+    fetch('/api/gpu'),
+    fetch('/api/system'),
+    fetch('/api/staging/files'),
+    fetch('/api/decisions/pending'),
+  ]);
+
+  async function jsonAt(index, fallback) {
+    const result = requests[index];
+    if (result.status !== 'fulfilled') return fallback;
+    try {
+      return result.value.ok ? await result.value.json() : fallback;
+    } catch (err) {
+      return fallback;
+    }
+  }
+
+  appState.workflow = await jsonAt(0, {summary: {}, matches: [], dataset: {}, training: {}});
+  appState.training = await jsonAt(1, {status: 'idle', log: []});
+  appState.models = await jsonAt(2, []);
+  appState.jobs = await jsonAt(3, []);
+  appState.status = await jsonAt(4, {state: 'idle'});
+  appState.gpu = await jsonAt(5, {available: false});
+  appState.system = await jsonAt(6, {available: false});
+  appState.stagingFiles = await jsonAt(7, []);
+  const pendingDecisions = await jsonAt(8, []);
+
+  appState.workflowIndex = new Map(getWorkflowMatches().map(item => [item.key, item]));
+  renderPendingDecisions(pendingDecisions);
+  updateGPU(appState.gpu);
+  updateSystem(appState.system);
+  updateStatus(appState.status);
+  renderAll();
+}
+
+function updateGPU(data) {
+  if (!data || data.available === false) return;
+  const utilPct = Number(data.gpu_utilization_pct || 0);
+  const memUsed = Number(data.memory_used_mb || 0);
+  const memTotal = Number(data.memory_total_mb || 1);
+  const memPct = Math.round((memUsed / memTotal) * 100);
+  document.getElementById('gpu-util-fill').style.width = utilPct + '%';
+  document.getElementById('gpu-util-value').textContent = utilPct + '%';
+  document.getElementById('gpu-mem-fill').style.width = memPct + '%';
+  document.getElementById('gpu-mem-value').textContent = memUsed + ' / ' + memTotal + ' MB';
+  document.getElementById('gpu-temp').textContent = (data.temperature_c || '--') + '°C';
+}
+
+function updateSystem(data) {
+  if (!data) return;
+  const cpuPct = Number(data.cpu_utilization_pct || 0);
+  const ramPct = Number(data.ram_utilization_pct || 0);
+  const ramUsed = Number(data.ram_used_mb || 0);
+  const ramTotal = Number(data.ram_total_mb || 1);
+  document.getElementById('cpu-util-fill').style.width = cpuPct + '%';
+  document.getElementById('cpu-util-value').textContent = cpuPct + '%';
+  document.getElementById('ram-util-fill').style.width = ramPct + '%';
+  document.getElementById('ram-util-value').textContent = ramUsed + ' / ' + ramTotal + ' MB';
+  document.getElementById('cpu-count').textContent = data.cpu_count || '--';
+}
+
+function updateStatus(data) {
+  appState.status = data || {state: 'idle'};
+  if (data && data.state === 'processing') {
+    setStatusPill('pipeline-pill', 'Processing', 'status-processing');
+  } else {
+    setStatusPill('pipeline-pill', 'Idle', '');
+    resetPhases();
+  }
+  renderAll();
+}
+
 function setPhaseState(name, state, duration) {
   const el = document.querySelector('[data-phase="' + name + '"]');
   if (!el) return;
   el.className = 'phase-block ' + state;
   if (duration != null) {
-    let existing = el.querySelector('.phase-timing');
-    if (!existing) {
-      existing = document.createElement('span');
-      existing.className = 'phase-timing';
-      el.appendChild(existing);
+    let timing = el.querySelector('.phase-timing');
+    if (!timing) {
+      timing = document.createElement('span');
+      timing.className = 'phase-timing';
+      el.appendChild(timing);
     }
-    existing.textContent = duration.toFixed(1) + 's';
+    timing.textContent = duration.toFixed(1) + 's';
   }
 }
 
@@ -678,77 +1895,79 @@ function resetPhases() {
   });
 }
 
-// --- GPU ---
-function updateGPU(d) {
-  if (!d || d.available === false) return;
-  const utilPct = d.gpu_utilization_pct || 0;
-  const memUsed = d.memory_used_mb || 0;
-  const memTotal = d.memory_total_mb || 1;
-  const memPct = Math.round((memUsed / memTotal) * 100);
-
-  document.getElementById('gpu-util-fill').style.width = utilPct + '%';
-  document.getElementById('gpu-util-val').textContent = utilPct + '%';
-  document.getElementById('gpu-mem-fill').style.width = memPct + '%';
-  document.getElementById('gpu-mem-val').textContent = memUsed + ' / ' + memTotal + ' MB';
-  document.getElementById('gpu-temp').textContent = (d.temperature_c || '--') + '\u00B0C';
+function connectSSE() {
+  if (appState.evtSource) appState.evtSource.close();
+  appState.evtSource = new EventSource('/api/events?after=' + appState.lastEventId);
+  appState.evtSource.onopen = () => setStatusPill('sse-pill', 'Connected', 'status-ready_to_label');
+  appState.evtSource.onerror = () => setStatusPill('sse-pill', 'Reconnecting', 'status-dataset_pending');
+  appState.evtSource.addEventListener('status', event => {
+    const data = JSON.parse(event.data);
+    if (event.lastEventId) appState.lastEventId = parseInt(event.lastEventId, 10);
+    updateStatus(data);
+  });
+  appState.evtSource.addEventListener('phase_running', event => {
+    const data = JSON.parse(event.data);
+    if (event.lastEventId) appState.lastEventId = parseInt(event.lastEventId, 10);
+    setPhaseState(data.phase_name, 'running');
+  });
+  appState.evtSource.addEventListener('phase_completed', event => {
+    const data = JSON.parse(event.data);
+    if (event.lastEventId) appState.lastEventId = parseInt(event.lastEventId, 10);
+    setPhaseState(data.phase_name, 'completed', data.duration_sec);
+  });
+  appState.evtSource.addEventListener('phase_failed', event => {
+    const data = JSON.parse(event.data);
+    if (event.lastEventId) appState.lastEventId = parseInt(event.lastEventId, 10);
+    setPhaseState(data.phase_name, 'failed');
+  });
+  appState.evtSource.addEventListener('gpu_snapshot', event => {
+    if (event.lastEventId) appState.lastEventId = parseInt(event.lastEventId, 10);
+    updateGPU(JSON.parse(event.data));
+  });
+  appState.evtSource.addEventListener('system_snapshot', event => {
+    if (event.lastEventId) appState.lastEventId = parseInt(event.lastEventId, 10);
+    updateSystem(JSON.parse(event.data));
+  });
+  appState.evtSource.addEventListener('decision_pending', event => {
+    if (event.lastEventId) appState.lastEventId = parseInt(event.lastEventId, 10);
+    renderPendingDecisions([JSON.parse(event.data)]);
+  });
 }
 
-// --- System (CPU/RAM) ---
-function updateSystem(d) {
-  if (!d) return;
-  const cpuPct = d.cpu_utilization_pct || 0;
-  const ramPct = d.ram_utilization_pct || 0;
-  const ramUsed = d.ram_used_mb || 0;
-  const ramTotal = d.ram_total_mb || 1;
-
-  document.getElementById('cpu-util-fill').style.width = cpuPct + '%';
-  document.getElementById('cpu-util-val').textContent = cpuPct + '%';
-  document.getElementById('ram-util-fill').style.width = ramPct + '%';
-  document.getElementById('ram-util-val').textContent = ramUsed + ' / ' + ramTotal + ' MB';
-  if (d.cpu_count) document.getElementById('cpu-count').textContent = d.cpu_count;
-}
-
-// --- Decisions ---
-function showDecision(d) {
+function renderPendingDecisions(decisions) {
   const area = document.getElementById('decision-area');
-  // Don't duplicate
-  if (document.getElementById('decision-' + d.id)) return;
-
-  const div = document.createElement('div');
-  div.className = 'decision-banner active';
-  div.id = 'decision-' + d.id;
-
-  const options = d.options_json ? JSON.parse(d.options_json) : ['approve', 'reject'];
-  const timeout = d.timeout_sec || 60;
-
-  div.innerHTML = '<h3>Decision Required</h3>' +
-    '<p>' + escapeHtml(d.prompt) + '</p>' +
-    '<p class="countdown">Auto-proceeding in <span class="timer">' + timeout + '</span>s with: ' +
-    escapeHtml(d.default_option || 'default') + '</p>' +
-    '<div class="decision-actions">' +
-    '<button class="btn btn-approve" onclick="resolveDecision(' + d.id + ',\'approved\',\'' +
-    escapeHtml(options[0] || 'approve') + '\')">Approve</button>' +
-    '<button class="btn btn-reject" onclick="resolveDecision(' + d.id + ',\'rejected\',\'' +
-    escapeHtml(options[options.length - 1] || 'reject') + '\')">Reject</button>' +
-    '</div>';
-
-  area.appendChild(div);
-
-  // Countdown
-  let remaining = timeout;
-  const timer = div.querySelector('.timer');
-  const interval = setInterval(() => {
-    remaining--;
-    if (timer) timer.textContent = remaining;
-    if (remaining <= 0) {
-      clearInterval(interval);
-      div.remove();
-    }
-  }, 1000);
-  div._interval = interval;
-
-  // Audio notification
-  try { new Audio('data:audio/wav;base64,UklGRl9vT19teleXAQBHBRFWQUZNVDAAAA==').play().catch(() => {}); } catch(e) {}
+  if (!decisions || !decisions.length) {
+    area.innerHTML = '';
+    return;
+  }
+  const existingIds = Array.from(area.querySelectorAll('.decision-banner')).map(el => el.id);
+  decisions.forEach(decision => {
+    if (existingIds.includes('decision-' + decision.id)) return;
+    const timeout = decision.timeout_sec || 60;
+    const div = document.createElement('div');
+    div.className = 'decision-banner';
+    div.id = 'decision-' + decision.id;
+    div.innerHTML =
+      '<h3>Decision Required</h3>' +
+      '<p>' + escapeHtml(decision.prompt) + '</p>' +
+      '<p class="tiny">Auto-proceeds in <span class="timer">' + timeout + '</span>s with <strong>' + escapeHtml(decision.default_option || 'default') + '</strong>.</p>' +
+      '<div class="decision-actions">' +
+        '<button class="btn green" onclick="resolveDecision(' + decision.id + ', \'approved\', \'approve\')">Approve</button>' +
+        '<button class="btn red" onclick="resolveDecision(' + decision.id + ', \'rejected\', \'reject\')">Reject</button>' +
+      '</div>';
+    area.appendChild(div);
+    let remaining = timeout;
+    const timer = div.querySelector('.timer');
+    const interval = setInterval(() => {
+      remaining -= 1;
+      if (timer) timer.textContent = remaining;
+      if (remaining <= 0) {
+        clearInterval(interval);
+        div.remove();
+      }
+    }, 1000);
+    div._interval = interval;
+  });
 }
 
 async function resolveDecision(id, status, response) {
@@ -756,784 +1975,348 @@ async function resolveDecision(id, status, response) {
     await fetch('/api/decisions/' + id + '/resolve', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({status: status, response: response})
+      body: JSON.stringify({status: status, response: response}),
     });
     const el = document.getElementById('decision-' + id);
     if (el) {
       if (el._interval) clearInterval(el._interval);
       el.remove();
     }
-  } catch(e) {
-    console.error('Failed to resolve decision:', e);
+  } catch (err) {
+    showToast('Failed to resolve decision: ' + err.message, 'error');
   }
 }
 
-// --- Job history ---
-async function loadJobs() {
-  try {
-    const resp = await fetch('/api/jobs?limit=50');
-    const jobs = await resp.json();
-    const tbody = document.getElementById('job-tbody');
-    tbody.innerHTML = '';
-
-    let total = 0, completed = 0, failed = 0, running = 0;
-
-    jobs.forEach(j => {
-      total++;
-      if (j.status === 'completed') completed++;
-      if (j.status === 'failed') failed++;
-      if (j.status === 'running') running++;
-
-      const tr = document.createElement('tr');
-      const dotClass = 'dot-' + j.status;
-      const inputName = j.input_path ? j.input_path.split('/').pop() : '--';
-      const started = j.started_at ? new Date(j.started_at).toLocaleString() : '--';
-      tr.innerHTML = '<td>' + escapeHtml(j.job_id || '') + '</td>' +
-        '<td>' + escapeHtml(inputName) + '</td>' +
-        '<td><span class="status-dot ' + dotClass + '"></span>' + j.status + '</td>' +
-        '<td>' + (j.mode || '--') + '</td>' +
-        '<td>' + started + '</td>';
-      tbody.appendChild(tr);
-    });
-
-    document.getElementById('stat-total').textContent = total;
-    document.getElementById('stat-completed').textContent = completed;
-    document.getElementById('stat-failed').textContent = failed;
-    document.getElementById('stat-running').textContent = running;
-    const clearBtn = document.getElementById('clear-history-btn');
-    if (clearBtn) {
-      clearBtn.disabled = total === 0 || running > 0;
-      clearBtn.style.opacity = clearBtn.disabled ? '0.6' : '1';
-      clearBtn.title = running > 0
-        ? 'Unavailable while a pipeline job is running'
-        : (total === 0 ? 'No history to clear' : 'Delete dashboard job history');
-    }
-  } catch(e) {
-    console.error('Failed to load jobs:', e);
+function parseSelection(value) {
+  let mode = value || 'config';
+  let path = null;
+  if (mode.startsWith('pinned::')) {
+    path = mode.slice('pinned::'.length);
+    mode = 'pinned';
   }
+  return {mode, path};
 }
 
-async function clearHistory() {
-  const btn = document.getElementById('clear-history-btn');
-  if (!btn || btn.disabled) return;
-
-  const confirmed = confirm(
-    'Are you sure you want to clear dashboard job history?\n\n' +
-    'This will delete recorded jobs, phase timings, GPU snapshots, and decision history.\n' +
-    'It does not delete processed videos, labels, datasets, or models.'
-  );
-  if (!confirmed) return;
-
-  btn.disabled = true;
-  try {
-    const resp = await fetch('/api/history/clear', {method: 'POST'});
-    const data = await resp.json();
-    if (!resp.ok) {
-      throw new Error(data.detail || 'Failed to clear history');
-    }
-
-    alert(
-      'History cleared.\n\n' +
-      'Jobs deleted: ' + (data.jobs_deleted || 0) + '\n' +
-      'Phase events deleted: ' + (data.phase_events_deleted || 0) + '\n' +
-      'GPU snapshots deleted: ' + (data.metrics_snapshots_deleted || 0) + '\n' +
-      'Decisions deleted: ' + (data.decisions_deleted || 0)
-    );
-    loadJobs();
-  } catch(e) {
-    alert('Failed: ' + e.message);
-    btn.disabled = false;
+async function applyInferenceModelSelection() {
+  const ballSelect = document.getElementById('inference-ball-model-select');
+  const playerSelect = document.getElementById('inference-player-model-select');
+  const ball = parseSelection(ballSelect.value);
+  const player = parseSelection(playerSelect.value);
+  const ballLabel = ball.mode === 'pinned' ? (ball.path || 'pinned') : ball.mode;
+  const playerLabel = player.mode === 'pinned' ? (player.path || 'pinned') : player.mode;
+  if (!await showModal('Apply detection models?', 'Ball model: ' + ballLabel + '\nPlayer model: ' + playerLabel, 'Apply')) return;
+  const resp = await fetch('/api/inference/model', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      ...(ballSelect.disabled ? {} : {ball}),
+      ...(playerSelect.disabled ? {} : {player}),
+    }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    showToast(data.detail || 'Failed to update inference selection', 'error');
+    return;
   }
+  await loadDashboardData();
+  showToast('Updated ingest models.', 'success');
 }
 
-function escapeHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
-
-// --- Active Learning ---
-async function loadLabelingStatus() {
-  try {
-    const resp = await fetch('/api/training/labeling-status');
-    const d = await resp.json();
-    const summary = document.getElementById('labeling-summary');
-    const matchesEl = document.getElementById('labeling-matches');
-
-    if (d.total_frames === 0) {
-      summary.textContent = 'No hard frames exported yet. Process a video first.';
-      matchesEl.innerHTML = '';
-      return;
-    }
-
-    const pct = d.total_frames > 0 ? Math.round(d.total_labeled / d.total_frames * 100) : 0;
-    summary.innerHTML = '<strong>' + d.total_labeled + '</strong> / ' + d.total_frames +
-      ' frames labeled (' + pct + '%)' +
-      (d.dataset_ready ? ' &mdash; <span style="color:var(--green)">Dataset ready</span>' : '');
-
-    matchesEl.innerHTML = d.matches.map(m => {
-      const imported = m.tasks_imported;
-      const labelPct = m.pct_labeled;
-      let statusIcon, statusColor, statusTip;
-      if (labelPct > 0) {
-        statusIcon = '&#10003;'; statusColor = 'var(--green)'; statusTip = 'Labeling in progress';
-      } else if (imported) {
-        statusIcon = '&#9679;'; statusColor = 'var(--yellow)'; statusTip = 'Tasks generated — import into Label Studio';
-      } else {
-        statusIcon = '&#9675;'; statusColor = 'var(--muted)'; statusTip = 'Click Import to generate tasks';
-      }
-
-      const importBtn = '<button class="btn" style="font-size:0.7rem;padding:1px 8px;background:var(--accent);color:#fff" ' +
-        'onclick="importTasks(\'' + escapeHtml(m.name) + '\',this)" title="Generate tasks.json for Label Studio">' +
-        (imported ? 'Re-import' : 'Import') + '</button>';
-
-      const uploadBtn = '<button class="btn" style="font-size:0.7rem;padding:1px 8px;background:var(--green);color:#fff" ' +
-        'onclick="uploadLabels(\'' + escapeHtml(m.name) + '\',this)" title="Upload YOLO labels ZIP from Label Studio export">' +
-        'Upload</button>';
-
-      let labelText;
-      if (m.labeled > 0) {
-        labelText = m.labeled + '/' + m.frames + ' labeled';
-      } else if (m.tasks_count > 0) {
-        labelText = m.tasks_count + ' tasks ready \u00b7 0 labeled';
-      } else {
-        labelText = '0/' + m.frames + ' labeled';
-      }
-      const labelInfo = '<span style="color:var(--muted);font-size:0.75rem" title="Labeled frames">' +
-        labelText + '</span>';
-
-      return '<div class="list-row">' +
-        '<span class="status-icon" style="color:' + statusColor + '" title="' + statusTip + '">' + statusIcon + '</span>' +
-        '<div class="list-main"><div class="list-title">' + escapeHtml(m.name) + '</div></div>' +
-        '<div class="list-meta">' + labelInfo + '</div>' +
-        '<div class="list-actions">' + importBtn + uploadBtn + '</div>' +
-        '</div>';
-    }).join('');
-  } catch(e) {
-    console.error('Failed to load labeling status:', e);
+async function importTasks(matchName) {
+  const resp = await fetch('/api/training/import-tasks/' + encodeURIComponent(matchName), {method: 'POST'});
+  const data = await resp.json();
+  if (!resp.ok) {
+    showToast(data.detail || 'Failed to generate tasks', 'error');
+    return;
   }
+  showToast('Generated ' + data.tasks + ' tasks for ' + matchName + '.', 'success');
+  await loadDashboardData();
 }
 
-async function loadTrainingStatus() {
-  try {
-    const resp = await fetch('/api/training/status');
-    const d = await resp.json();
-    const el = document.getElementById('training-status');
-    const errEl = document.getElementById('training-error');
-    const logEl = document.getElementById('training-log');
-
-    const statusColors = {idle: 'var(--muted)', building: 'var(--yellow)', running: 'var(--accent)', completed: 'var(--green)', failed: 'var(--red)'};
-    el.innerHTML = 'Status: <span style="color:' + (statusColors[d.status] || 'var(--muted)') + '">' + d.status + '</span>';
-    trainingBusy = d.status === 'building' || d.status === 'running';
-
-    if (d.error) {
-      errEl.style.display = 'block';
-      errEl.textContent = d.error;
-    } else {
-      errEl.style.display = 'none';
-    }
-
-    if (d.log && d.log.length > 0) {
-      logEl.style.display = 'block';
-      logEl.textContent = d.log.join('\n');
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-  } catch(e) {}
-}
-
-async function loadModels() {
-  try {
-    const resp = await fetch('/api/training/models');
-    const models = await resp.json();
-    const el = document.getElementById('model-list');
-    const selectEl = document.getElementById('train-base-model');
-
-    if (models.length === 0) {
-      el.textContent = 'No models found';
-      selectEl.innerHTML = '<option value="">No models found</option>';
-      await loadInferenceModelStatus(models);
-      return models;
-    }
-
-    el.innerHTML = models.map(m =>
-      '<div class="model-row">' +
-      '<div class="model-main">' +
-      '<span class="model-name">' +
-      (m.is_active ? '<span style="color:var(--green)">* </span>' : '') +
-      (m.is_configured_base ? '<span style="color:var(--yellow)">&#9679; </span>' : '') +
-      (m.is_configured_inference ? '<span style="color:var(--accent)">&#9654; </span>' : '') +
-      (m.is_ball_inference_active ? '<span style="color:var(--orange)">&#9632; </span>' : '') +
-      (m.is_player_inference_active ? '<span style="color:#c084fc">▲ </span>' : '') +
-      escapeHtml(m.name) + '</span>' +
-      '<div class="model-meta">' + m.size_mb + ' MB</div>' +
-      '</div>' +
-      '<div class="model-actions">' +
-      (m.can_delete
-        ? '<button class="btn compact-btn" style="background:var(--red);color:#fff" onclick=\'deleteModel(' + JSON.stringify(m.path) + ', this)\'>Delete</button>'
-        : '') +
-      '</div>' +
-      '</div>'
-    ).join('');
-
-    const previousValue = selectEl.value;
-    selectEl.innerHTML = models.map(m => {
-      let label = m.name;
-      if (m.is_active) label += ' [active]';
-      if (m.is_configured_base) label += ' [configured base]';
-      if (m.is_configured_inference) label += ' [configured ingest]';
-      if (m.is_ball_inference_active) label += ' [ingest ball]';
-      if (m.is_player_inference_active) label += ' [ingest player]';
-      return '<option value="' + escapeHtml(m.path) + '">' + escapeHtml(label) + '</option>';
-    }).join('');
-
-    const preferred = models.find(m => m.is_active) || models.find(m => m.is_configured_base) || models[0];
-    const keepPrevious = models.some(m => m.path === previousValue);
-    selectEl.value = keepPrevious ? previousValue : preferred.path;
-    await loadInferenceModelStatus(models);
-    return models;
-  } catch(e) {}
-}
-
-function buildInferenceOptions(modelList, role) {
-  const isBall = role === 'ball';
-  const pinnedOptions = modelList.map(m => {
-    let label = 'Pin: ' + m.name;
-    if (m.is_active) label += ' [active]';
-    if (m.is_configured_inference) label += ' [configured ingest]';
-    if (m.is_ball_inference_active) label += ' [ball active]';
-    if (m.is_player_inference_active) label += ' [player active]';
-    return '<option value="pinned::' + escapeHtml(m.path) + '">' + escapeHtml(label) + '</option>';
-  }).join('');
-
-  const autoLabel = isBall
-    ? 'Auto: prefer ball_best.pt, else configured/base model'
-    : 'Auto: prefer configured/base player model';
-
-  return (
-    '<option value="config">Configured path behavior</option>' +
-    '<option value="auto">' + escapeHtml(autoLabel) + '</option>' +
-    pinnedOptions
-  );
-}
-
-function applyInferenceSelectionToControl(selectEl, status) {
-  if (!selectEl || !status) return;
-  if (status.selection_mode === 'pinned' && status.selected_path) {
-    const pinnedValue = 'pinned::' + status.selected_path;
-    const foundPinned = Array.from(selectEl.options).some(opt => opt.value === pinnedValue);
-    selectEl.value = foundPinned ? pinnedValue : 'config';
-  } else {
-    selectEl.value = status.selection_mode || 'config';
-  }
-}
-
-async function loadInferenceModelStatus(models) {
-  try {
-    const modelList = models || [];
-    const resp = await fetch('/api/inference/model');
-    const d = await resp.json();
-    const summaryEl = document.getElementById('inference-model-summary');
-    const ballSelectEl = document.getElementById('inference-ball-model-select');
-    const playerSelectEl = document.getElementById('inference-player-model-select');
-    const noteEl = document.getElementById('inference-model-note');
-    const applyBtn = document.getElementById('apply-inference-model-btn');
-    const ball = d.ball || d;
-    const player = d.player || {};
-
-    const ballName = ball.resolved_path ? ball.resolved_path.split('/').pop() : 'no model';
-    const playerName = player.resolved_path ? player.resolved_path.split('/').pop() : 'no model';
-    summaryEl.innerHTML =
-      'Ball: <strong>' + escapeHtml(ballName) + '</strong>' +
-      (ball.resolved_source ? ' <span style="color:var(--muted)">(' + escapeHtml(ball.resolved_source) + ')</span>' : '') +
-      '<br>Player: <strong>' + escapeHtml(playerName) + '</strong>' +
-      (player.resolved_source ? ' <span style="color:var(--muted)">(' + escapeHtml(player.resolved_source) + ')</span>' : '') +
-      '<br><span style="color:var(--muted)">Single ingest runs will use both models' +
-      (d.dual_model_enabled ? ' as a dual-model detector.' : ' through a shared single-model detector.') +
-      '</span>';
-
-    ballSelectEl.innerHTML = buildInferenceOptions(modelList, 'ball');
-    playerSelectEl.innerHTML = buildInferenceOptions(modelList, 'player');
-    applyInferenceSelectionToControl(ballSelectEl, ball);
-    applyInferenceSelectionToControl(playerSelectEl, player);
-
-    const ballLocked = !!ball.config_locked;
-    const playerLocked = !!player.config_locked;
-    ballSelectEl.disabled = ballLocked;
-    playerSelectEl.disabled = playerLocked;
-    applyBtn.disabled = ballLocked && playerLocked;
-    applyBtn.style.opacity = applyBtn.disabled ? '0.6' : '1';
-
-    if (ballLocked && playerLocked) {
-      noteEl.textContent = 'Both selectors are locked by explicit detector model paths in config. CLI and dashboard both follow those config overrides.';
-    } else if (ballLocked) {
-      noteEl.textContent = 'Ball model is locked by detector.model_path in config. You can still choose the player model for future ingest jobs.';
-    } else if (playerLocked) {
-      noteEl.textContent = 'Player model is locked by detector.player_model_path in config. You can still choose the ball model for future ingest jobs.';
-    } else {
-      noteEl.textContent = 'Choose the ball model and player model for future ingest jobs. Command-line runs use the same shared selectors.';
-    }
-  } catch(e) {}
-}
-
-async function importTasks(matchName, btnEl) {
-  btnEl.disabled = true;
-  btnEl.textContent = 'Generating...';
-  try {
-    const resp = await fetch('/api/training/import-tasks/' + encodeURIComponent(matchName), {method: 'POST'});
-    const d = await resp.json();
-    if (!resp.ok) { alert(d.detail || 'Import failed'); btnEl.disabled = false; btnEl.textContent = 'Import'; return; }
-    btnEl.textContent = d.tasks + ' tasks ready';
-    btnEl.style.background = 'var(--green)';
-    btnEl.style.color = '#fff';
-    setTimeout(() => { btnEl.disabled = false; btnEl.textContent = 'Re-import'; btnEl.style.background = 'var(--accent)'; }, 3000);
-    // Show next-step instructions
-    const lsHost = location.protocol + '//' + location.hostname + ':8080';
-    const tasksPath = '/tank/labeling/' + matchName + '/labelstudio/tasks.json';
-    const msg = 'Tasks generated for ' + matchName + '!\n\n' +
-      'Next steps:\n' +
-      '1. Open Label Studio: ' + lsHost + '\n' +
-      '2. Create or select a project\n' +
-      '3. Click "Import" in the project\n' +
-      '4. Upload the file: ' + tasksPath + '\n' +
-      '   (or drag-and-drop it)\n' +
-      '5. Label the ball in each frame';
-    alert(msg);
-    loadLabelingStatus();
-  } catch(e) {
-    alert('Failed: ' + e.message);
-    btnEl.disabled = false;
-    btnEl.textContent = 'Import';
-  }
-}
-
-async function uploadLabels(matchName, btn) {
+async function uploadLabels(matchName) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.zip';
   input.onchange = async () => {
-    const file = input.files[0];
+    const file = input.files && input.files[0];
     if (!file) return;
-    btn.disabled = true;
-    btn.textContent = 'Uploading...';
-    try {
-      const form = new FormData();
-      form.append('file', file);
-      const resp = await fetch('/api/training/upload-labels/' + encodeURIComponent(matchName), {
-        method: 'POST', body: form
-      });
-      const d = await resp.json();
-      if (resp.ok) {
-        btn.textContent = d.labels_extracted + ' labels';
-        btn.style.background = 'var(--green)';
-        setTimeout(() => { btn.disabled = false; btn.textContent = 'Upload'; }, 3000);
-        loadLabelingStatus();
-      } else {
-        alert('Upload failed: ' + (d.detail || 'Unknown error'));
-        btn.textContent = 'Upload';
-        btn.disabled = false;
-      }
-    } catch(e) {
-      alert('Upload error: ' + e.message);
-      btn.textContent = 'Upload';
-      btn.disabled = false;
+    const form = new FormData();
+    form.append('file', file);
+    const resp = await fetch('/api/training/upload-labels/' + encodeURIComponent(matchName), {
+      method: 'POST',
+      body: form,
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showToast(data.detail || 'Failed to upload labels', 'error');
+      return;
     }
+    showToast('Uploaded ' + data.labels_extracted + ' label files for ' + matchName + '.', 'success');
+    await loadDashboardData();
   };
   input.click();
 }
 
 async function buildDataset() {
-  if (!confirm('Build dataset from all labeled frames?')) return;
-  try {
-    const resp = await fetch('/api/training/build-dataset', {method: 'POST'});
-    if (!resp.ok) { const d = await resp.json(); alert(d.detail || 'Failed'); return; }
-    loadTrainingStatus();
-  } catch(e) { alert('Failed: ' + e.message); }
+  if (!await showModal('Build dataset?', 'Build dataset from all currently labeled frames?', 'Build dataset')) return;
+  const resp = await fetch('/api/training/build-dataset', {method: 'POST'});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    showToast(data.detail || 'Failed to build dataset', 'error');
+    return;
+  }
+  await loadDashboardData();
 }
 
 async function startTraining() {
-  const epochs = parseInt(document.getElementById('train-epochs').value) || 50;
+  const epochs = parseInt(document.getElementById('train-epochs').value || '50', 10) || 50;
   const baseModel = document.getElementById('train-base-model').value;
-  const baseModelName = baseModel ? baseModel.split('/').pop() : 'default';
   const outputModelName = (document.getElementById('train-output-model-name').value || '').trim();
   const updateActive = document.getElementById('train-update-active').checked;
-  const saveAsName = outputModelName || 'ball_best';
-  if (!confirm(
-    'Start training for ' + epochs + ' epochs from ' + baseModelName + '?\n\n' +
-    'Save best as: ' + saveAsName + (saveAsName.endsWith('.pt') ? '' : '.pt') + '\n' +
-    'Update active ball_best.pt: ' + (updateActive ? 'yes' : 'no')
-  )) return;
-  try {
-    const resp = await fetch('/api/training/train', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        epochs: epochs,
-        base_model: baseModel,
-        output_model_name: outputModelName,
-        update_active: updateActive
-      })
-    });
-    if (!resp.ok) { const d = await resp.json(); alert(d.detail || 'Failed'); return; }
-    loadTrainingStatus();
-  } catch(e) { alert('Failed: ' + e.message); }
+  if (!baseModel && (appState.models || []).length === 0) {
+    showToast('No local models are available yet. Add or train a base model first.', 'error');
+    return;
+  }
+  if (!await showModal('Start training?',
+    'Epochs: ' + epochs + '\nBase model: ' + ((baseModel && baseModel.split('/').pop()) || 'default') + '\nSave best as: ' + (outputModelName || 'ball_best') + '.pt',
+    'Start training')) return;
+  const resp = await fetch('/api/training/train', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      epochs,
+      base_model: baseModel,
+      output_model_name: outputModelName,
+      update_active: updateActive,
+    }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    showToast(data.detail || 'Failed to start training', 'error');
+    return;
+  }
+  await loadDashboardData();
 }
 
-async function deleteModel(modelPath, btnEl) {
-  const modelName = modelPath.split('/').pop();
-  if (!confirm('Delete model ' + modelName + '?\n\nThis removes the file from the models directory and cannot be undone.')) return;
-  btnEl.disabled = true;
-  btnEl.textContent = 'Deleting...';
-  try {
-    const resp = await fetch('/api/training/models/delete', {
+async function deleteModel(path, btn) {
+  const name = path.split('/').pop();
+  if (!await showModal('Delete model?', 'Delete ' + name + '?\n\nThis cannot be undone.', 'Delete', true)) return;
+  if (btn) btn.disabled = true;
+  const resp = await fetch('/api/training/models/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({path}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    showToast(data.detail || 'Failed to delete model', 'error');
+    if (btn) btn.disabled = false;
+    return;
+  }
+  await loadDashboardData();
+}
+
+async function clearHistory() {
+  if (!await showModal('Clear job history?', 'This does not delete processed videos, labels, or models.', 'Clear history')) return;
+  const resp = await fetch('/api/history/clear', {method: 'POST'});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    showToast(data.detail || 'Failed to clear history', 'error');
+    return;
+  }
+  await loadDashboardData();
+}
+
+window._selectedStaging = new Set();
+
+function toggleStagingSelection(filename, checked) {
+  if (checked) window._selectedStaging.add(filename);
+  else window._selectedStaging.delete(filename);
+  renderStagingInbox();
+}
+
+function toggleAllStaging() {
+  const files = appState.stagingFiles || [];
+  const allSelected = files.length > 0 && files.every(file => window._selectedStaging.has(file.name));
+  if (allSelected) {
+    window._selectedStaging.clear();
+  } else {
+    files.forEach(file => window._selectedStaging.add(file.name));
+  }
+  renderStagingInbox();
+}
+
+async function sendSelectedToIngest() {
+  const names = Array.from(window._selectedStaging);
+  if (!names.length) {
+    showToast('Select one or more staged files first.', 'info');
+    return;
+  }
+  if (!await showModal('Send to ingest?', 'Send ' + names.length + ' selected staged file(s) to ingest?', 'Send')) return;
+  for (const name of names) {
+    const resp = await fetch('/api/staging/import', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({path: modelPath})
+      body: JSON.stringify({filename: name}),
     });
-    const d = await resp.json();
     if (!resp.ok) {
-      alert(d.detail || 'Failed to delete model');
-      btnEl.disabled = false;
-      btnEl.textContent = 'Delete';
-      return;
+      const data = await resp.json().catch(() => ({}));
+      showToast('Failed to import ' + name + ': ' + (data.detail || resp.status), 'error');
+      break;
     }
-    loadModels();
-  } catch(e) {
-    alert('Failed: ' + e.message);
-    btnEl.disabled = false;
-    btnEl.textContent = 'Delete';
+    window._selectedStaging.delete(name);
   }
+  await loadDashboardData();
 }
 
-async function applyInferenceModelSelection() {
-  const ballSelectEl = document.getElementById('inference-ball-model-select');
-  const playerSelectEl = document.getElementById('inference-player-model-select');
-
-  function parseSelection(value) {
-    let mode = value || 'config';
-    let path = null;
-    if (mode.startsWith('pinned::')) {
-      path = mode.slice('pinned::'.length);
-      mode = 'pinned';
-    }
-    return {mode, path};
+async function importStagedFile(filename) {
+  const resp = await fetch('/api/staging/import', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({filename}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    showToast(data.detail || 'Failed to move file to ingest', 'error');
+    return;
   }
-
-  const ball = parseSelection(ballSelectEl.value);
-  const player = parseSelection(playerSelectEl.value);
-  const ballLabel = ball.mode === 'config'
-    ? 'configured path behavior'
-    : (ball.mode === 'auto' ? 'auto mode' : (ball.path ? ball.path.split('/').pop() : 'pinned model'));
-  const playerLabel = player.mode === 'config'
-    ? 'configured/base player behavior'
-    : (player.mode === 'auto' ? 'auto mode' : (player.path ? player.path.split('/').pop() : 'pinned model'));
-  if (!confirm(
-    'Apply next ingest detection models?\n\n' +
-    'Ball model: ' + ballLabel + '\n' +
-    'Player model: ' + playerLabel + '\n\n' +
-    'New ingest jobs from the dashboard and command line will use this selection in a single ingest run.'
-  )) return;
-
-  try {
-    const resp = await fetch('/api/inference/model', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        ...(ballSelectEl.disabled ? {} : {ball: ball}),
-        ...(playerSelectEl.disabled ? {} : {player: player})
-      })
-    });
-    const d = await resp.json();
-    if (!resp.ok) {
-      alert(d.detail || 'Failed to update ingest detection models');
-      return;
-    }
-    await loadModels();
-    const ballName = d.ball && d.ball.resolved_path ? d.ball.resolved_path.split('/').pop() : 'no model';
-    const playerName = d.player && d.player.resolved_path ? d.player.resolved_path.split('/').pop() : 'no model';
-    alert('Next ingest will use:\nBall: ' + ballName + '\nPlayer: ' + playerName);
-  } catch(e) {
-    alert('Failed: ' + e.message);
-  }
-}
-
-// --- Staging ---
-async function loadStaging() {
-  try {
-    const resp = await fetch('/api/staging/files');
-    const files = await resp.json();
-    const summaryEl = document.getElementById('staging-summary');
-    const filesEl = document.getElementById('staging-files');
-
-    if (!files || files.length === 0) {
-      summaryEl.textContent = 'No staged videos found in /tank/stagging.';
-      filesEl.innerHTML = '';
-      return;
-    }
-
-    summaryEl.textContent = files.length + ' file' + (files.length === 1 ? '' : 's') +
-      ' available in /tank/stagging.';
-    filesEl.innerHTML = files.map(f =>
-      '<div class="list-row">' +
-      '<div class="list-main">' +
-      '<div class="list-title">' + escapeHtml(f.name) + '</div>' +
-      '<div class="list-meta">' + escapeHtml(new Date(f.modified_at).toLocaleString()) + ' \u00b7 ' + f.size_mb + ' MB</div>' +
-      '</div>' +
-      '<div class="list-actions">' +
-      '<button class="btn compact-btn" style="background:var(--accent);color:#fff" ' +
-      'onclick=\'importStagedFile(' + JSON.stringify(f.name) + ', this)\'>Send To Ingest</button>' +
-      '</div>' +
-      '</div>'
-    ).join('');
-  } catch(e) {
-    console.error('Failed to load staging files:', e);
-  }
-}
-
-let _activeUpload = null;   // {xhr, filename, file, startTime, resumeOffset}
-let trainingBusy = false;
-
-function _formatBytes(bytes) {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
-  if (bytes < 1024*1024*1024) return (bytes/(1024*1024)).toFixed(1) + ' MB';
-  return (bytes/(1024*1024*1024)).toFixed(2) + ' GB';
-}
-
-function _formatTime(sec) {
-  if (!isFinite(sec) || sec < 0) return '--:--';
-  if (sec < 60) return Math.ceil(sec) + 's';
-  if (sec < 3600) return Math.floor(sec/60) + 'm ' + Math.ceil(sec%60) + 's';
-  return Math.floor(sec/3600) + 'h ' + Math.floor((sec%3600)/60) + 'm';
-}
-
-function _showUploadProgress(show) {
-  document.getElementById('upload-progress-container').style.display = show ? 'block' : 'none';
-  document.getElementById('staging-upload-btn').disabled = show;
-}
-
-function _updateUploadUI(loaded, total, resumeOffset) {
-  const actualLoaded = resumeOffset + loaded;
-  const pct = total > 0 ? Math.min(100, (actualLoaded / total) * 100) : 0;
-  document.getElementById('upload-progress-bar').style.width = pct.toFixed(1) + '%';
-  document.getElementById('upload-transferred').textContent =
-    _formatBytes(actualLoaded) + ' / ' + _formatBytes(total) + '  (' + pct.toFixed(1) + '%)';
-
-  if (_activeUpload) {
-    const elapsed = (Date.now() - _activeUpload.startTime) / 1000;
-    const speed = elapsed > 0 ? loaded / elapsed : 0;
-    document.getElementById('upload-speed').textContent = speed > 0 ? _formatBytes(speed) + '/s' : '';
-    const remaining = total - actualLoaded;
-    const eta = speed > 0 ? remaining / speed : -1;
-    document.getElementById('upload-eta').textContent = eta >= 0 ? 'ETA ' + _formatTime(eta) : '';
-  }
+  showToast(filename + ' sent to ingest.', 'success');
+  window._selectedStaging.delete(filename);
+  await loadDashboardData();
 }
 
 function triggerStagingUpload() {
   if (_activeUpload) return;
   const input = document.getElementById('staging-upload-input');
-  if (!input) return;
   input.value = '';
   input.click();
+}
+
+function showUploadProgress(show) {
+  document.getElementById('upload-progress').classList.toggle('active', show);
+  document.getElementById('staging-upload-btn').disabled = show;
+}
+
+function updateUploadUI(loaded, total, resumeOffset) {
+  const actual = resumeOffset + loaded;
+  const pct = total > 0 ? Math.min(100, (actual / total) * 100) : 0;
+  document.getElementById('upload-progress-bar').style.width = pct.toFixed(1) + '%';
+  document.getElementById('upload-transferred').textContent = formatBytes(actual) + ' / ' + formatBytes(total);
+  if (_activeUpload) {
+    const elapsed = (Date.now() - _activeUpload.startTime) / 1000;
+    const speed = elapsed > 0 ? loaded / elapsed : 0;
+    document.getElementById('upload-speed').textContent = speed > 0 ? formatBytes(speed) + '/s' : '';
+    const remaining = total - actual;
+    document.getElementById('upload-eta').textContent = speed > 0 ? 'ETA ' + formatDuration(remaining / speed) : '';
+  }
 }
 
 async function uploadToStaging(inputEl) {
   const file = inputEl.files && inputEl.files[0];
   if (!file) return;
   inputEl.value = '';
-
-  // Check for existing partial upload or completed file.
   let resumeOffset = 0;
   try {
     const statusResp = await fetch('/api/staging/upload-status?filename=' + encodeURIComponent(file.name));
     const status = await statusResp.json();
     if (status.complete) {
-      alert('File already exists in staging: ' + file.name);
-      loadStaging();
+      showToast('That file already exists in staging.', 'info');
+      await loadDashboardData();
       return;
     }
     if (status.uploaded_bytes > 0) {
-      if (confirm('Found partial upload (' + _formatBytes(status.uploaded_bytes) + ' of ' +
-          _formatBytes(file.size) + ').\n\nResume upload?')) {
-        resumeOffset = status.uploaded_bytes;
-      } else {
-        // Cancel the partial and restart.
+      const resume = await showModal('Resume upload?', 'A partial upload was found for "' + file.name + '". Resume from where it left off?', 'Resume');
+      if (resume) resumeOffset = status.uploaded_bytes;
+      else {
         await fetch('/api/staging/upload-cancel', {
           method: 'DELETE',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({filename: file.name})
+          body: JSON.stringify({filename: file.name}),
         });
       }
     }
-  } catch(e) {
-    console.warn('Could not check upload status:', e);
-  }
+  } catch (err) {}
 
-  // Prepare the upload with resume support.
-  // Slice the file past the already-uploaded portion.
+  document.getElementById('upload-filename').textContent = file.name;
+  document.getElementById('upload-status-text').textContent = resumeOffset > 0 ? 'Resuming' : 'Uploading';
+  updateUploadUI(0, file.size, resumeOffset);
+  showUploadProgress(true);
+
   const blob = resumeOffset > 0 ? file.slice(resumeOffset) : file;
   const form = new FormData();
   form.append('file', blob, file.name);
 
-  document.getElementById('upload-filename').textContent = file.name;
-  document.getElementById('upload-status-text').textContent = resumeOffset > 0 ? 'Resuming...' : 'Uploading...';
-  _updateUploadUI(0, file.size, resumeOffset);
-  _showUploadProgress(true);
-
   const xhr = new XMLHttpRequest();
-  _activeUpload = {xhr, filename: file.name, file, startTime: Date.now(), resumeOffset};
-
-  xhr.upload.addEventListener('progress', function(e) {
-    if (e.lengthComputable) {
-      _updateUploadUI(e.loaded, file.size, resumeOffset);
-    }
+  _activeUpload = {xhr, filename: file.name, startTime: Date.now()};
+  xhr.upload.addEventListener('progress', event => {
+    if (event.lengthComputable) updateUploadUI(event.loaded, file.size, resumeOffset);
   });
-
-  xhr.addEventListener('load', function() {
+  xhr.addEventListener('load', async () => {
     _activeUpload = null;
     if (xhr.status >= 200 && xhr.status < 300) {
-      document.getElementById('upload-status-text').textContent = 'Complete!';
+      document.getElementById('upload-status-text').textContent = 'Complete';
       document.getElementById('upload-progress-bar').style.width = '100%';
-      document.getElementById('upload-progress-bar').style.background = 'var(--green)';
-      document.getElementById('upload-speed').textContent = '';
-      document.getElementById('upload-eta').textContent = '';
-      document.getElementById('upload-cancel-btn').style.display = 'none';
-      setTimeout(function() {
-        _showUploadProgress(false);
-        document.getElementById('upload-cancel-btn').style.display = '';
-        document.getElementById('upload-progress-bar').style.background = 'var(--green)';
-        loadStaging();
-      }, 2000);
+      setTimeout(async () => {
+        showUploadProgress(false);
+        await loadDashboardData();
+      }, 1000);
     } else {
-      let detail = 'Upload failed (HTTP ' + xhr.status + ')';
-      try { detail = JSON.parse(xhr.responseText).detail || detail; } catch(e) {}
-      document.getElementById('upload-status-text').textContent = 'Failed';
-      document.getElementById('upload-progress-bar').style.background = '#e74c3c';
-      alert(detail + '\n\nThe partial file is preserved. You can retry to resume.');
-      setTimeout(function() { _showUploadProgress(false); }, 3000);
+      let detail = 'Upload failed';
+      try { detail = JSON.parse(xhr.responseText).detail || detail; } catch (err) {}
+      showToast(detail, 'error');
+      showUploadProgress(false);
     }
   });
-
-  xhr.addEventListener('error', function() {
+  xhr.addEventListener('error', () => {
     _activeUpload = null;
-    document.getElementById('upload-status-text').textContent = 'Connection lost';
-    document.getElementById('upload-progress-bar').style.background = '#e74c3c';
-    alert('Upload interrupted. The partial file is preserved.\nClick "Upload To Staging" and select the same file to resume.');
-    setTimeout(function() { _showUploadProgress(false); }, 3000);
+    showToast('Upload interrupted. The partial file is preserved for resume.', 'error');
+    showUploadProgress(false);
   });
-
-  xhr.addEventListener('abort', function() {
+  xhr.addEventListener('abort', () => {
     _activeUpload = null;
-    document.getElementById('upload-status-text').textContent = 'Cancelled';
-    setTimeout(function() { _showUploadProgress(false); }, 1500);
+    showUploadProgress(false);
   });
-
   xhr.open('POST', '/api/staging/upload');
-  if (resumeOffset > 0) {
-    xhr.setRequestHeader('X-Upload-Offset', String(resumeOffset));
-  }
+  if (resumeOffset > 0) xhr.setRequestHeader('X-Upload-Offset', String(resumeOffset));
   xhr.send(form);
 }
 
-function cancelUpload() {
+async function cancelUpload() {
   if (!_activeUpload) return;
   const filename = _activeUpload.filename;
   _activeUpload.xhr.abort();
-  // Keep the partial file for resume — don't delete unless user confirms.
-  if (confirm('Keep partial upload for later resume?\n\nClick "Cancel" to delete the partial file.')) {
+  const keep = await showModal('Cancel upload?', 'Keep the partial upload for later resume, or delete it to restart from zero.', 'Keep partial');
+  if (!keep) {
+    fetch('/api/staging/upload-cancel', {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename}),
+    }).catch(() => {});
+  }
+}
+
+async function resetMatch(matchName, label) {
+  if (!matchName) return;
+  if (!await showModal('Remove match family?', 'Remove "' + label + '"?\n\nThis permanently deletes processed outputs, highlights, labels, and dataset state. One source video will be restored to staging when available.', 'Remove', true)) return;
+  const resp = await fetch('/api/media/matches/' + encodeURIComponent(matchName) + '/reset', {method: 'POST'});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    showToast(data.detail || 'Failed to remove match family', 'error');
     return;
   }
-  fetch('/api/staging/upload-cancel', {
-    method: 'DELETE',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({filename: filename})
-  }).catch(function(){});
+  showToast('Removed "' + data.canonical_match + '". Deleted ' + data.deleted_processed_dirs_count + ' processed dir(s), ' + data.deleted_highlights_dirs_count + ' highlight dir(s).' + (data.restored_staging_path ? ' Source restored to staging.' : ''), 'success');
+  if (data.warnings && data.warnings.length) showToast('Warnings: ' + data.warnings.join('; '), 'error');
+  closeDrawer();
+  await loadDashboardData();
 }
 
-async function importStagedFile(filename, btnEl) {
-  btnEl.disabled = true;
-  btnEl.textContent = 'Sending...';
-  try {
-    const resp = await fetch('/api/staging/import', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({filename: filename})
-    });
-    const d = await resp.json();
-    if (!resp.ok) {
-      alert(d.detail || 'Failed to move staged file into ingest');
-      btnEl.disabled = false;
-      btnEl.textContent = 'Send To Ingest';
-      return;
-    }
-
-    alert('Moved to ingest queue:\n' + d.ingest_path);
-    loadStaging();
-  } catch(e) {
-    alert('Failed: ' + e.message);
-    btnEl.disabled = false;
-    btnEl.textContent = 'Send To Ingest';
-  }
-}
-
-// --- Processed Matches List ---
-async function loadMedia() {
-  try {
-    const resp = await fetch('/api/media/matches');
-    const matches = await resp.json();
-    const emptyEl = document.getElementById('media-empty');
-    const listEl = document.getElementById('media-list');
-
-    if (!matches || matches.length === 0) {
-      emptyEl.style.display = 'block';
-      listEl.innerHTML = '';
-      return;
-    }
-    emptyEl.style.display = 'none';
-    listEl.innerHTML = matches.map(m => {
-      const date = m.processed_at && m.processed_at !== '--'
-        ? new Date(m.processed_at).toLocaleString() : '--';
-      const videoCount = m.videos ? m.videos.length : 0;
-      const hlCount = m.videos ? m.videos.filter(v => v.name.startsWith('highlights/')).length : 0;
-      const vidLabel = (videoCount - hlCount) + ' video' + (videoCount - hlCount !== 1 ? 's' : '') +
-        (hlCount > 0 ? ', ' + hlCount + ' highlight' + (hlCount !== 1 ? 's' : '') : '');
-      return '<div class="list-row">' +
-        '<div class="list-main">' +
-          '<div class="list-title" style="font-size:0.9rem">' +
-            escapeHtml(m.canonical_match || m.name) + '</div>' +
-          '<div class="list-meta" style="margin-top:2px">' +
-            escapeHtml(date) + ' &nbsp;&middot;&nbsp; ' + escapeHtml(vidLabel) +
-          '</div>' +
-        '</div>' +
-        '<div class="list-actions">' +
-        '<a href="/match/' + encodeURIComponent(m.name) + '" class="btn match-link" ' +
-          'style="background:var(--accent);color:#fff;text-decoration:none">' +
-          'Open' +
-        '</a>' +
-        '</div>' +
-      '</div>';
-    }).join('');
-  } catch(e) {
-    console.error('Failed to load media:', e);
-  }
-}
-
-// --- Init ---
+loadDashboardData();
+switchWorkspace(normalizeWorkspace(window.location.hash.replace(/^#/, '')), false);
 connectSSE();
-loadJobs();
-loadLabelingStatus();
-loadTrainingStatus();
-loadModels();
-loadStaging();
-loadMedia();
-// Fetch initial GPU status immediately (SSE snapshots arrive every ~5s)
-fetch('/api/gpu').then(r => r.json()).then(d => updateGPU(d)).catch(() => {});
-fetch('/api/system').then(r => r.json()).then(d => updateSystem(d)).catch(() => {});
-setInterval(loadJobs, 10000);
-setInterval(loadLabelingStatus, 15000);
-setInterval(loadTrainingStatus, 5000);
-setInterval(loadModels, 30000);
-setInterval(loadStaging, 15000);
-setInterval(loadMedia, 60000);
+setInterval(loadDashboardData, 15000);
+window.addEventListener('hashchange', () => {
+  switchWorkspace(normalizeWorkspace(window.location.hash.replace(/^#/, '')), false);
+});
 </script>
 </body>
 </html>

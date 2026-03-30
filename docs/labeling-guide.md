@@ -143,10 +143,10 @@ You can generate task files from either the dashboard or the command line.
 **From the Dashboard (recommended):**
 
 1. Open the Soccer360 Dashboard at `http://<server-address>:8088`
-2. Scroll to the **Active Learning** section
-3. Find your match in the **Matches** list
+2. Switch to the **Labeling & Training** workspace tab
+3. Find your match in the list
 4. Click the **Import** button next to the match name
-5. The button turns green and shows the number of tasks created
+5. A toast notification confirms the number of tasks created
 
 **From the command line:**
 
@@ -296,11 +296,11 @@ The ZIP contains a `labels/` directory with one `.txt` file per labeled image.
 The simplest way to get labels back to the server is the **Upload** button in the dashboard:
 
 1. Open the Soccer360 Dashboard at `http://<server-address>:8088`
-2. Scroll to the **Active Learning** section
+2. Switch to the **Labeling & Training** workspace tab
 3. Find your match in the list
-4. Click the green **Upload** button next to the match name
+4. Click the **Upload** button next to the match name
 5. Select the YOLO export ZIP file you downloaded from Label Studio
-6. The button shows the number of labels extracted (e.g., "47 labels")
+6. A toast notification confirms the number of label files extracted (e.g., "Uploaded 47 label files for Match-A.")
 7. The label count updates automatically in the match row
 
 The dashboard extracts the `.txt` label files from the ZIP and places them in `/tank/labeling/<match_name>/labels/` automatically. No manual file handling needed.
@@ -358,11 +358,11 @@ Once you have labeled frames from one or more matches, you can build a training 
 
 The Soccer360 Dashboard at `http://<server-address>:8088` has a built-in training interface:
 
-1. Open the dashboard and scroll to the **Active Learning** section
-2. Review the **Labeling Status** -- it shows frame counts, imported task counts, and label counts per match
-3. If you haven't uploaded labels yet, click **Upload** next to the match and select your YOLO export ZIP
-4. Click **1. Build Dataset** -- this combines all labeled matches into train/val splits
-5. Once the build completes, click **2. Train Model** (adjust epochs if desired, default is 50)
+1. Open the dashboard and switch to the **Labeling & Training** workspace tab
+2. Review the labeling status — it shows frame counts, imported task counts, and label counts per match
+3. If you haven't uploaded labels yet, click **Upload** next to the match and select your YOLO export ZIP; a toast confirms the label count
+4. Click **Build Dataset** — a confirmation modal appears before the build starts; a toast confirms completion
+5. Once the build completes, click **Train Model** (adjust epochs if desired, default is 50) — a modal shows training parameters for confirmation
 6. Training progress is shown in the log area below the buttons
 
 > **Note:** The dashboard now builds the dataset with native Python logic and starts training with `python -m src.cli train`. Training uses the GPU and can take 30 minutes to 2 hours depending on dataset size and number of epochs. The pipeline continues to work while training runs.
@@ -423,7 +423,7 @@ Model resolved: /tank/models/ball_best.pt (source=runtime.auto)
 ```
 
 1. **Reprocess a previous match** to compare results:
-   Use the dashboard's **Remove Processed Match** action, confirm the deletion prompt, then use the **Staging** panel to move the restored `*_reprocess` source file back into ingest.
+   Open the match page from the dashboard, click **Remove Match Family**, confirm in the modal, then use the **Staging** panel to move the restored `*_reprocess` source file back into ingest.
 
 ---
 

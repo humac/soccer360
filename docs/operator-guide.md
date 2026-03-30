@@ -69,7 +69,7 @@ The pipeline runs as an always-on background service (the "watcher"). When you p
 4. Saves outputs to the processed folder
 5. Archives the original recording (if configured)
 
-A typical 1-hour match at 5.7K resolution takes approximately 60-90 minutes to process.
+A typical 1-hour match at 5.7K resolution takes approximately 60-90 minutes to process. At 8K (7680x3840) with full-resolution inference, expect 4-5 hours — this is the quality-first overnight mode.
 
 ## Ingesting a Match Recording
 
@@ -81,7 +81,7 @@ Before ingesting, ensure your video meets these requirements:
 | ----------- | ------- |
 | Format | MP4 or MOV |
 | Projection | Equirectangular (full 360x180) |
-| Resolution | 5760x2880 recommended (other equirectangular resolutions work) |
+| Resolution | 7680x3840 (8K) for best quality; 5760x2880 (5.7K) for faster processing; other equirectangular resolutions work |
 | Duration | Full match length (no need to trim) |
 
 > **Warning:** Do not ingest partial recordings, corrupted files, or non-equirectangular video. The pipeline will fail or produce unusable output.
@@ -145,9 +145,12 @@ The dashboard shows:
 - **Decision prompts** -- approve/reject buttons when the pipeline needs input (with countdown timers that auto-proceed)
 - **Job history** -- all completed and failed jobs with timing details
 - **Active learning** -- labeling status per match, Upload/Import buttons, Build Dataset and Train controls
-- **Staging** -- view files already uploaded to `/tank/stagging`, choose the ball/player models for the next ingest run, and move one into ingest with **Send To Ingest**
-- **Processed match reset** -- remove a completed match from the UI with an explicit **Are you sure?** confirmation, restore one source video to `/tank/stagging`, and requeue it when ready
+- **Staging** -- view files already uploaded to `/tank/stagging`, choose the ball/player models for the next ingest run, and move one into ingest with **Send To Ingest** (a confirmation modal appears before the file moves; a success notification confirms the action)
+- **Processed match page** -- click any processed match row to open a dedicated match page (`/match/<name>`) with video playback, lifecycle status, lineage, and a **Remove Match Family** button
+- **Processed match reset** -- remove a completed match via the match page using a confirmation modal that previews exactly what will be deleted; a notification confirms the result; one source video is restored to `/tank/stagging`
 - **Detection Settings** -- a read-only page showing the effective processing configuration used by the dashboard/runtime
+
+All confirmations (remove match, delete model, build dataset, start training, apply model selection, cancel upload) use in-page modal dialogs. All action results (success, error, warnings) appear as notification toasts in the lower-right corner — no browser `alert()` or `confirm()` dialogs are used anywhere.
 
 The dashboard streams events in real time -- no need to refresh the page.
 
@@ -196,18 +199,18 @@ Press `Ctrl+C` to stop following logs (the worker keeps running).
 
 ### Understanding Processing Phases
 
-| Phase | What Happens | Duration (typical) |
-| ----- | ------------ | ------------------ |
-| 1. Detection | YOLO finds the ball and players in each frame using the GPU | 15-25 min |
-| 2. Tracking | Ball positions are stabilized and smoothed | < 1 min |
-| 2.5. Hard frames | Difficult frames exported for future labeling | < 1 min |
-| 2.7. Player cluster | Center-of-play estimated from player positions | < 1 min |
-| 3. Camera path | Virtual camera angles calculated, blending ball and player data | < 1 min |
-| 4. Broadcast | Auto-follow video rendered (12 parallel workers) | 20-40 min |
-| 5. Tactical | Wide-angle view rendered in parallel | 10-20 min |
-| 6. Highlights | Key moments detected and clips exported | 2-5 min |
-| 7. Export | Outputs organized, metadata written | < 1 min |
-| 8. Cleanup | Temporary scratch files removed | < 1 min |
+| Phase | What Happens | 5.7K typical | 8K typical |
+| ----- | ------------ | ------------ | ---------- |
+| 1. Detection | YOLO finds the ball and players in each frame using the GPU | 15-25 min | 2-2.5 hr |
+| 2. Tracking | Ball positions are stabilized and smoothed | < 1 min | < 1 min |
+| 2.5. Hard frames | Difficult frames exported for future labeling | < 1 min | ~24 min |
+| 2.7. Player cluster | Center-of-play estimated from player positions | < 1 min | < 1 min |
+| 3. Camera path | Virtual camera angles calculated, blending ball and player data | < 1 min | < 1 min |
+| 4. Broadcast | Auto-follow video rendered (12 parallel workers) | 20-40 min | ~80 min |
+| 5. Tactical | Wide-angle view rendered in parallel | 10-20 min | ~30 min |
+| 6. Highlights | Key moments detected and clips exported | 2-5 min | ~5 min |
+| 7. Export | Outputs organized, metadata written | < 1 min | < 1 min |
+| 8. Cleanup | Temporary scratch files removed | < 1 min | < 1 min |
 
 ## Retrieving Outputs
 
@@ -341,13 +344,13 @@ These "hard frames" are exported as JPEG images to `/tank/labeling/<match_name>/
 Label Studio runs alongside the pipeline for annotating hard frames:
 
 1. **Open Label Studio** at `http://<server-address>:8080` (or use the dashboard's **Open Label Studio** button)
-2. **Import hard frames** (run `bash scripts/labelstudio_import.sh <match_name>` first)
+2. **Import hard frames** -- click **Import** next to the match in the dashboard's Labeling & Training workspace; a toast notification confirms the task count
 3. **Create a bounding box** around the ball in each image
    - If no ball is visible, skip the frame
    - Draw a tight box around the ball only
 4. **Export annotations** in YOLO format (downloads a ZIP file)
-5. **Upload labels** -- click the green **Upload** button next to the match in the dashboard and select the ZIP, or extract manually to `/tank/labeling/<match>/labels/`
-6. **Build dataset and train** using the dashboard's Active Learning section or the command-line scripts
+5. **Upload labels** -- click the **Upload** button next to the match in the dashboard and select the ZIP; a toast confirms the label count extracted; or extract manually to `/tank/labeling/<match>/labels/`
+6. **Build dataset and train** using the dashboard's Build Dataset and Train buttons in the Labeling & Training workspace; all confirmations appear as in-page modals, results as toasts
 
 > **Tip:** Even 5-10 minutes of labeling per week makes a meaningful difference. Focus on frames where you can clearly see a ball that the model missed.
 
@@ -364,14 +367,14 @@ For detailed step-by-step instructions including Label Studio setup, labeling te
 
 ## Reprocessing a Match
 
-The easiest way to reprocess a completed match is now the dashboard:
+The easiest way to reprocess a completed match is through the dashboard:
 
-1. Open the processed match in the media section
-2. Click **Remove Processed Match**
-3. Confirm the **Are you sure?** dialog
-4. The dashboard removes processed outputs, highlights, labels, built dataset, related dashboard history, and the relevant watcher dedupe entry
+1. Click the match row to open its dedicated match page (`/match/<name>`)
+2. Click **Remove Match Family**
+3. A modal previews exactly what will be deleted (processed dirs, highlights, labeling state, jobs purged, restore target) — confirm to proceed
+4. The dashboard removes processed outputs, highlights, labels, built dataset, related dashboard history, and the relevant watcher dedupe entry; a toast confirms the result
 5. One original source video is restored to `/tank/stagging/<match>_reprocess.ext`
-6. In the **Staging** panel, click **Send To Ingest** to queue the restored file again
+6. In the **Staging** panel, click **Send To Ingest** to queue the restored file; a toast confirms it moved to ingest
 
 If you need to bypass the watcher entirely, an administrator can still run a one-off job against an archived source file:
 
