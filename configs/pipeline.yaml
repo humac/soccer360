@@ -84,11 +84,12 @@ camera:
     measurement_noise: 2.0
 
 reframer:
-  output_resolution: [1920, 1080]
+  output_resolution: [3840, 2160]
   # Pass source frames at native resolution to e2p (null = no downscale)
   # Set to [3840, 1920] to downscale before reframing for speed
-  # Recommended when source is 5.7K+ and output is 1080p (no visible quality loss)
-  source_downscale: [3840, 1920]
+  # Set to [3840, 1920] to downscale before reframing for speed (1080p output only)
+  # null = use full source resolution for best output quality (recommended for 8K source)
+  source_downscale: null
   num_workers: 12
   interpolation: bilinear
   # Seconds of overlap at segment boundaries for codec warmup (clean cuts)
@@ -137,10 +138,10 @@ highlights:
 
 exporter:
   codec: libx264
-  crf: 18
-  preset: medium
+  crf: 16
+  preset: slow
   # Encoder: cpu (libx264/libx265) or nvenc (NVIDIA hardware encoder)
-  encoder: cpu
+  encoder: nvenc
   audio: copy
   archive_raw: false
   delete_raw: false
@@ -194,7 +195,7 @@ detection:
   classes: [32, 0]           # COCO sports ball + person
   conf: 0.10
   iou: 0.5
-  img_size: 1920
+  img_size: 3840
   max_det: 50
   half: true
   device: "cuda:0"
