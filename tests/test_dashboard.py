@@ -88,6 +88,9 @@ class _ASGIClient:
     def post(self, url: str, **kwargs):
         return self.request("POST", url, **kwargs)
 
+    def delete(self, url: str, **kwargs):
+        return self.request("DELETE", url, **kwargs)
+
 
 class TestDashboardAPI:
     def test_index_returns_html(self, client):
@@ -1005,3 +1008,178 @@ class TestTrainingAPI:
         result = _build_dataset_from_labels(labeling_dir=labeling_dir, val_ratio=0.5)
 
         assert result["total_count"] == 1
+
+
+class TestUploadResume:
+    """Tests for resumable upload endpoints: status, resume, and cancel."""
+
+    def test_upload_status_no_partial(self, client, dashboard_config):
+        """Returns uploaded_bytes=0 when no partial or final file exists."""
+        resp = client.get("/api/staging/upload-status?filename=game.mp4")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["filename"] == "game.mp4"
+        assert data["complete"] is False
+        assert data["uploaded_bytes"] == 0
+
+    def test_upload_status_partial_file_exists(self, client, dashboard_config):
+        """Returns correct byte offset when a .uploading partial file exists."""
+        staging_dir = Path(dashboard_config["paths"]["stagging"])
+        partial = staging_dir / "game.mp4.uploading"
+        partial.write_bytes(b"partial-content")
+
+        resp = client.get("/api/staging/upload-status?filename=game.mp4")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["complete"] is False
+        assert data["uploaded_bytes"] == len(b"partial-content")
+
+    def test_upload_status_complete_when_final_file_exists(self, client, dashboard_config):
+        """Returns complete=True when the final file (not .uploading) exists."""
+        staging_dir = Path(dashboard_config["paths"]["stagging"])
+        (staging_dir / "game.mp4").write_bytes(b"full-video")
+
+        resp = client.get("/api/staging/upload-status?filename=game.mp4")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["complete"] is True
+        assert "size" in data
+
+    def test_upload_resume_appends_to_partial(self, client, dashboard_config):
+        """Upload with X-Upload-Offset appends to existing partial file."""
+        staging_dir = Path(dashboard_config["paths"]["stagging"])
+        partial = staging_dir / "game.mp4.uploading"
+        partial.write_bytes(b"first-chunk-")
+
+        offset = len(b"first-chunk-")
+        resp = client.post(
+            "/api/staging/upload",
+            headers={"x-upload-offset": str(offset)},
+            files={"file": ("game.mp4", b"second-chunk", "video/mp4")},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["filename"] == "game.mp4"
+        final = staging_dir / "game.mp4"
+        assert final.read_bytes() == b"first-chunk-second-chunk"
+
+    def test_upload_resume_offset_mismatch_returns_409(self, client, dashboard_config):
+        """Upload with wrong X-Upload-Offset returns 409 conflict."""
+        staging_dir = Path(dashboard_config["paths"]["stagging"])
+        partial = staging_dir / "game.mp4.uploading"
+        partial.write_bytes(b"abc")  # 3 bytes
+
+        # Client claims offset 10 but file has 3 bytes
+        resp = client.post(
+            "/api/staging/upload",
+            headers={"x-upload-offset": "10"},
+            files={"file": ("game.mp4", b"more-bytes", "video/mp4")},
+        )
+        assert resp.status_code == 409
+        assert "Offset mismatch" in resp.json()["detail"]
+
+    def test_upload_partial_file_renamed_to_final_on_completion(self, client, dashboard_config):
+        """Upload creates .uploading temp and renames to final filename on success."""
+        staging_dir = Path(dashboard_config["paths"]["stagging"])
+
+        resp = client.post(
+            "/api/staging/upload",
+            files={"file": ("newgame.mp4", b"video-data", "video/mp4")},
+        )
+        assert resp.status_code == 200
+        assert (staging_dir / "newgame.mp4").exists()
+        assert not (staging_dir / "newgame.mp4.uploading").exists()
+
+    def test_upload_cancel_removes_partial_file(self, client, dashboard_config):
+        """DELETE /api/staging/upload-cancel removes the .uploading file."""
+        staging_dir = Path(dashboard_config["paths"]["stagging"])
+        partial = staging_dir / "game.mp4.uploading"
+        partial.write_bytes(b"partial-data")
+
+        resp = client.delete(
+            "/api/staging/upload-cancel",
+            json={"filename": "game.mp4"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert not partial.exists()
+
+    def test_upload_cancel_no_partial_is_idempotent(self, client, dashboard_config):
+        """Cancel when no partial file exists returns ok without error."""
+        resp = client.delete(
+            "/api/staging/upload-cancel",
+            json={"filename": "nonexistent.mp4"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+
+class TestMatchEndpoints:
+    """Tests for match playback page and single-match API."""
+
+    def test_match_page_returns_html(self, client, dashboard_config):
+        """GET /match/{name} serves the match.html page."""
+        resp = client.get("/match/some_match")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+
+    def test_get_match_returns_metadata_and_videos(self, client, dashboard_config):
+        """GET /api/media/matches/{name} returns match info and video list."""
+        processed_dir = Path(dashboard_config["paths"]["processed"])
+        match_dir = processed_dir / "game_2024"
+        match_dir.mkdir(parents=True)
+        (match_dir / "broadcast.mp4").write_bytes(b"x" * 1000)
+        (match_dir / "tactical_wide.mp4").write_bytes(b"y" * 2000)
+        (match_dir / "metadata.json").write_text(
+            json.dumps({"game_name": "Team A vs Team B", "mode": "v1", "job_id": "job-123"}),
+            encoding="utf-8",
+        )
+
+        resp = client.get("/api/media/matches/game_2024")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "game_2024"
+        assert data["canonical_match"] == "Team A vs Team B"
+        assert data["mode"] == "v1"
+        assert data["job_id"] == "job-123"
+        video_names = {v["name"] for v in data["videos"]}
+        assert "broadcast.mp4" in video_names
+        assert "tactical_wide.mp4" in video_names
+
+    def test_get_match_includes_highlights(self, client, dashboard_config):
+        """Highlights are included prefixed with 'highlights/'."""
+        processed_dir = Path(dashboard_config["paths"]["processed"])
+        highlights_dir = Path(dashboard_config["paths"]["highlights"])
+        match_dir = processed_dir / "game_2024"
+        match_dir.mkdir(parents=True)
+        hl_dir = highlights_dir / "game_2024"
+        hl_dir.mkdir(parents=True)
+        (match_dir / "broadcast.mp4").write_bytes(b"b")
+        (hl_dir / "clip_001.mp4").write_bytes(b"h")
+
+        resp = client.get("/api/media/matches/game_2024")
+        assert resp.status_code == 200
+        video_names = {v["name"] for v in resp.json()["videos"]}
+        assert "highlights/clip_001.mp4" in video_names
+
+    def test_get_match_not_found_returns_404(self, client, dashboard_config):
+        """GET /api/media/matches/{name} returns 404 for a non-existent match."""
+        resp = client.get("/api/media/matches/no_such_match")
+        assert resp.status_code == 404
+
+    def test_get_match_rejects_path_traversal(self, client, dashboard_config):
+        """Returns 400 for path-traversal match names."""
+        resp = client.get("/api/media/matches/..%2Fsomething")
+        assert resp.status_code in (400, 404)
+
+    def test_get_match_fallback_canonical_name(self, client, dashboard_config):
+        """When metadata.json is absent, canonical_match falls back to match name."""
+        processed_dir = Path(dashboard_config["paths"]["processed"])
+        match_dir = processed_dir / "raw_game"
+        match_dir.mkdir(parents=True)
+        (match_dir / "broadcast.mp4").write_bytes(b"v")
+
+        resp = client.get("/api/media/matches/raw_game")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["canonical_match"] == "raw_game"

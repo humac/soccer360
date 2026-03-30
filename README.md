@@ -299,7 +299,10 @@ soccer360 train --epochs 50 --data /tank/labeling/dataset/dataset.yaml
 
 `/tank/ingest/` is a **queue folder**: drop raw 360 videos here for processing. After a successful run, the original file is automatically archived to `/tank/archive_raw/` (when enabled), keeping the ingest folder clean with only pending jobs.
 
-`/tank/stagging/` is a **holding folder** for videos you want visible in the UI without immediately starting the watcher. The dashboard's **Staging** panel lists files in `/tank/stagging` and moves the selected file into `/tank/ingest/` when you click **Send To Ingest**.
+`/tank/stagging/` is a **holding folder** for videos you want visible in the UI without immediately starting the watcher. The dashboard's **Staging** panel lets you:
+
+- **Upload** video files directly from the browser with a real-time progress bar. Uploads are resumable — if the connection drops, the browser retries from where it left off using the `X-Upload-Offset` header. A `.uploading` partial file is kept on disk between retries and atomically renamed to the final filename on completion.
+- **Send To Ingest** — move a staged file into `/tank/ingest/` for immediate watcher pickup.
 
 **Safe ingest:** Use atomic copy to avoid processing partial files:
 
@@ -410,10 +413,10 @@ A web-based monitoring UI on port 8088 provides real-time pipeline visibility an
 - Interactive decision prompts (approve/reject with countdown timers)
 - Job history with phase-level metrics
 - Active learning management (labeling status, dataset build, model training)
-- Staging management (`/tank/stagging` -> `/tank/ingest`)
+- Staging management: upload video files directly from the browser with a progress bar and resume support; send staged files to `/tank/ingest`
 - Ball + player ingest-model selectors in the Staging panel for future jobs
+- Processed matches list — click any match to open a dedicated playback page (`/match/{name}`) with a full video player and highlight clips in the sidebar
 - Remove Processed Match workflow with explicit confirmation before deletion
-- Media player for reviewing processed outputs
 - Read-only Detection Settings page showing the effective processing config
 
 **Start the dashboard:**
@@ -642,7 +645,11 @@ This image pins a Pascal-compatible stack from cu121 (`torch==2.4.1+cu121`, `tor
 1. **TensorRT INT8**: Export model and set `model.backend: tensorrt_int8` in config. 47 TOPS INT8 vs 12 TFLOPS FP32.
 2. **NVENC encoding**: Set `exporter.encoder: nvenc` to use hardware encoding instead of CPU libx264.
 3. **Frame skipping**: Set `detector.process_every_n_frames: 2` to halve GPU detection load (positions interpolated).
-4. **Source downscale**: Set `reframer.source_downscale: [3840, 1920]` to downscale before reframing.
+4. **Source downscale**: Set `reframer.source_downscale: [3840, 1920]` to downscale before reframing (saves ~50% reframe time; set to `null` for maximum output quality from 8K/5.7K source).
+
+**Detection resolution:** `detection.img_size` controls what YOLO actually sees. For 8K/5.7K source, use `img_size: 3840` — a ball that is 26 pixels wide at this resolution is far more reliably detected than at 13 pixels (`img_size: 1920`). Increase this setting when re-exporting source at higher resolution.
+
+**Output resolution:** `reframer.output_resolution: [3840, 2160]` produces 4K UHD broadcast and tactical videos. Set to `[1920, 1080]` for faster processing at 1080p.
 
 ## Project Structure
 

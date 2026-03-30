@@ -106,7 +106,8 @@ FastAPI-based web UI on port 8088 for real-time pipeline monitoring and interact
 - `src/events.py`: `EventStore` persists to SQLite (`/tank/data/dashboard.db`); `EventBus` wraps it with null-safety (never raises, logs warnings). Thread-safe: shared connection for `:memory:`, per-thread for file-based. On startup (file-based stores), `_cleanup_stale_jobs()` marks any `running`/`queued` jobs as `failed` with "Abandoned: service restarted" to prevent stale jobs after service restarts.
 - `src/dashboard.py`: `create_app(config)` returns FastAPI app. REST endpoints + SSE `/api/events` stream.
 - `src/metrics.py`: `PhaseTimer` (context-manager per-phase timing + stats recording), `gpu_utilization_snapshot()` (parses `nvidia-smi` CSV), `cpu_ram_snapshot()` (reads `/proc/stat` + `/proc/meminfo`, no psutil dependency).
-- `src/static/index.html`: Vanilla JS SPA. Dark theme. Connects via `EventSource`. Sections: pipeline progress bar, GPU gauges, System card (CPU/RAM gauges), stats, active learning/training controls, staging import panel, media player, processed-match reset controls, job history.
+- `src/static/index.html`: Vanilla JS SPA. Dark theme. Connects via `EventSource`. Sections: pipeline progress bar, GPU gauges, System card (CPU/RAM gauges), stats, active learning/training controls, staging import panel (with resumable upload + progress bar), processed-match list (links to `/match/{name}`), job history.
+- `src/static/match.html`: Dedicated match playback page. Two-column layout — sidebar lists all videos (highlights badge for HL clips) + match metadata; main area is an HTML5 video player. Auto-plays `broadcast.mp4`. No polling; fetches match data once via `/api/media/matches/{name}`. Includes "Remove Match" button (calls `/api/media/matches/{name}/reset`).
 
 ### REST API
 
@@ -127,8 +128,14 @@ FastAPI-based web UI on port 8088 for real-time pipeline monitoring and interact
 | `/api/training/build-dataset` | POST | Trigger dataset build (subprocess) |
 | `/api/training/train` | POST | Trigger model training (subprocess, configurable epochs) |
 | `/api/staging/files` | GET | List eligible top-level staged videos in `/tank/stagging` |
+| `/api/staging/upload` | POST | Upload a video into staging; supports resumable upload via `X-Upload-Offset` header |
+| `/api/staging/upload-status` | GET | Check partial upload status (`?filename=`); returns `{complete, uploaded_bytes}` |
+| `/api/staging/upload-cancel` | DELETE | Remove a `.uploading` partial file to cancel/restart an upload |
 | `/api/staging/import` | POST | Move a selected staged file into `/tank/ingest` |
+| `/api/media/matches` | GET | List all processed matches |
+| `/api/media/matches/{match_name}` | GET | Single match metadata + video list (mp4s + highlights) |
 | `/api/media/matches/{match_name}/reset` | POST | Delete a processed match family and restore one source video to `/tank/stagging` |
+| `/match/{match_name}` | GET | Match playback page (serves `match.html`) |
 
 ### Decision Hooks in Pipeline
 
@@ -197,6 +204,10 @@ Key sections currently used in production:
 
 - `paths`, `model`, `detector`, `field_of_interest`, `tracker`, `camera`, `center_of_play`, `reframer`, `highlights`, `exporter`, `watcher`, `ingest`, `active_learning`, `detection`, `filters`, `tracking`, `mode`, `logging`, `dashboard`
 - `paths.stagging` defaults to `/tank/stagging` and is used by the dashboard staging/reprocess UI
+- `detection.img_size: 3840` — YOLO inference resolution (higher = better detection of small/distant balls; 3840 for 8K/5.7K sources; 1920 for 4K)
+- `reframer.output_resolution: [3840, 2160]` — final output resolution (4K UHD); set `[1920, 1080]` for faster 1080p
+- `reframer.source_downscale: null` — set to `[3840, 1920]` to downscale 8K/5.7K source before reframing for speed; `null` uses full native resolution for maximum quality
+- `exporter.encoder: nvenc` — NVIDIA hardware encoder (uses GPU); `cpu` for software libx264/libx265
 
 When adding/changing config:
 

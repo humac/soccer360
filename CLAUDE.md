@@ -91,10 +91,12 @@ Key config: `camera.fov_ema_alpha`, `camera.deadband_deg`, `camera.velocity_thre
 - SQLite WAL mode store at `dashboard.db_path` (default `/tank/data/dashboard.db`)
 - SSE endpoint (`/api/events`) streams phase events, GPU snapshots, system snapshots (CPU/RAM), decisions, status heartbeats
 - `/api/system` endpoint + `system_snapshot` SSE events provide CPU utilization, RAM usage, core count (from `/proc`)
-- Dashboard UI: GPU gauges, System card (CPU/RAM gauges), pipeline progress, job history, training management, staging import, processed-match reset
+- Dashboard UI: GPU gauges, System card (CPU/RAM gauges), pipeline progress, job history, training management, staging upload panel (with progress bar + resume), processed-match list (each opens `/match/{name}`)
+- Match playback page (`/match/{name}`, served by `src/static/match.html`): dedicated two-column layout; sidebar lists videos + metadata; HTML5 player; auto-plays `broadcast.mp4`; no polling (fetches once)
 - Decision hooks in pipeline: mode confirmation (30s), post-detection review (60s), hard frame labeling (120s)
 - Training management API: `/api/training/labeling-status`, `/api/training/upload-labels/{match_name}`, `/api/training/build-dataset`, `/api/training/train`, `/api/training/models`
-- Additional dashboard APIs: `/api/staging/files`, `/api/staging/import`, `/api/media/matches/{match_name}/reset`
+- Staging upload API: `POST /api/staging/upload` (supports `X-Upload-Offset` header for resume; writes `.uploading` partial, atomic rename on completion), `GET /api/staging/upload-status?filename=`, `DELETE /api/staging/upload-cancel`
+- Additional dashboard APIs: `/api/staging/files`, `/api/staging/import`, `/api/media/matches/{match_name}` (single match data), `/api/media/matches/{match_name}/reset`
 - Config section: `dashboard:` with `enabled`, `db_path`, `port`
 - Dependencies: `fastapi>=0.109`, `uvicorn>=0.27`, `sse-starlette>=2.0`, `python-multipart>=0.0.6`
 

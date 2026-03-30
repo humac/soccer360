@@ -36,7 +36,8 @@ Soccer360 ingests 360 match video and outputs:
 - `src/active_learning.py`: V1 frame export triggers (`low_conf`, `lost_run`, `jump_reject`)
 - `src/watcher.py`: ingest queue handling + persistent dedupe fingerprint store
 - `src/exporter.py`: finalization + ingest archival status in `metadata.json`
-- `src/dashboard.py`: FastAPI dashboard also handles staging import and processed-match reset
+- `src/dashboard.py`: FastAPI dashboard — staging upload with progress/resume, processed-match list, single-match API, and match reset
+- `src/static/match.html`: dedicated match playback page served at `/match/{name}` — two-column sidebar + video player, no polling
 - `scripts/verify_container_assets.sh`: canonical image/runtime verifier
 - `scripts/install.sh`: uses verifier for worker build path
 
@@ -78,6 +79,12 @@ Soccer360 ingests 360 match video and outputs:
 - Main config: `configs/pipeline.yaml`
 - Keep config changes synced with module defaults and `tests/conftest.py`
 - `paths.stagging` defaults to `/tank/stagging` for the UI-managed requeue flow
+- `detection.img_size`: YOLO inference resolution — use `3840` for 8K/5.7K source; `1920` for 4K
+- `reframer.output_resolution`: final output size — `[3840, 2160]` for 4K UHD, `[1920, 1080]` for 1080p
+- `reframer.source_downscale`: set to `[3840, 1920]` to downscale before reframing for speed; `null` = full native resolution
+- `exporter.encoder`: `nvenc` for NVIDIA hardware encoding, `cpu` for libx264/libx265
+- Staging upload API: `POST /api/staging/upload` supports `X-Upload-Offset` header for resume (writes `.uploading` partial, atomically renames on completion); `GET /api/staging/upload-status?filename=`; `DELETE /api/staging/upload-cancel`
+- Match playback: `GET /api/media/matches/{name}` returns single match metadata + video list; `GET /match/{name}` serves `match.html`
 - Tests run in Docker:
 
 ```bash
