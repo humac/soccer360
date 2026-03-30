@@ -158,11 +158,26 @@
   <div class="card card-full">
     <h2>Staging</h2>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-      <button class="btn" style="background:var(--green);color:#000" onclick="triggerStagingUpload()">
+      <button id="staging-upload-btn" class="btn" style="background:var(--green);color:#000" onclick="triggerStagingUpload()">
         Upload To Staging
       </button>
       <span style="font-size:0.75rem;color:var(--muted)">Upload a video here first, then choose the ingest model and click Send To Ingest.</span>
       <input id="staging-upload-input" type="file" accept=".mp4,.mov,.insv" style="display:none" onchange="uploadToStaging(this)">
+    </div>
+    <div id="upload-progress-container" style="display:none;margin-bottom:12px;padding:10px;border:1px solid var(--border);border-radius:6px;background:rgba(255,255,255,0.03)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span id="upload-filename" style="font-size:0.82rem;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%"></span>
+        <span id="upload-status-text" style="font-size:0.75rem;color:var(--muted)"></span>
+      </div>
+      <div style="width:100%;height:8px;background:var(--border);border-radius:4px;overflow:hidden;margin-bottom:6px">
+        <div id="upload-progress-bar" style="height:100%;width:0%;background:var(--green);border-radius:4px;transition:width 0.3s ease"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--muted)">
+        <span id="upload-transferred"></span>
+        <span id="upload-speed"></span>
+        <span id="upload-eta"></span>
+      </div>
+      <button id="upload-cancel-btn" class="btn" style="margin-top:8px;background:#e74c3c;color:#fff;font-size:0.72rem;padding:2px 12px" onclick="cancelUpload()">Cancel</button>
     </div>
     <div id="staging-summary" style="font-size:0.85rem;margin-bottom:8px;color:var(--muted)">Loading...</div>
     <div id="staging-files" style="font-size:0.8rem;max-height:220px;overflow-y:auto"></div>
@@ -1082,7 +1097,46 @@ async function loadStaging() {
   }
 }
 
+let _activeUpload = null;   // {xhr, filename, file, startTime, resumeOffset}
+
+function _formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  if (bytes < 1024*1024*1024) return (bytes/(1024*1024)).toFixed(1) + ' MB';
+  return (bytes/(1024*1024*1024)).toFixed(2) + ' GB';
+}
+
+function _formatTime(sec) {
+  if (!isFinite(sec) || sec < 0) return '--:--';
+  if (sec < 60) return Math.ceil(sec) + 's';
+  if (sec < 3600) return Math.floor(sec/60) + 'm ' + Math.ceil(sec%60) + 's';
+  return Math.floor(sec/3600) + 'h ' + Math.floor((sec%3600)/60) + 'm';
+}
+
+function _showUploadProgress(show) {
+  document.getElementById('upload-progress-container').style.display = show ? 'block' : 'none';
+  document.getElementById('staging-upload-btn').disabled = show;
+}
+
+function _updateUploadUI(loaded, total, resumeOffset) {
+  const actualLoaded = resumeOffset + loaded;
+  const pct = total > 0 ? Math.min(100, (actualLoaded / total) * 100) : 0;
+  document.getElementById('upload-progress-bar').style.width = pct.toFixed(1) + '%';
+  document.getElementById('upload-transferred').textContent =
+    _formatBytes(actualLoaded) + ' / ' + _formatBytes(total) + '  (' + pct.toFixed(1) + '%)';
+
+  if (_activeUpload) {
+    const elapsed = (Date.now() - _activeUpload.startTime) / 1000;
+    const speed = elapsed > 0 ? loaded / elapsed : 0;
+    document.getElementById('upload-speed').textContent = speed > 0 ? _formatBytes(speed) + '/s' : '';
+    const remaining = total - actualLoaded;
+    const eta = speed > 0 ? remaining / speed : -1;
+    document.getElementById('upload-eta').textContent = eta >= 0 ? 'ETA ' + _formatTime(eta) : '';
+  }
+}
+
 function triggerStagingUpload() {
+  if (_activeUpload) return;
   const input = document.getElementById('staging-upload-input');
   if (!input) return;
   input.value = '';
@@ -1092,26 +1146,114 @@ function triggerStagingUpload() {
 async function uploadToStaging(inputEl) {
   const file = inputEl.files && inputEl.files[0];
   if (!file) return;
+  inputEl.value = '';
 
+  // Check for existing partial upload or completed file.
+  let resumeOffset = 0;
   try {
-    const form = new FormData();
-    form.append('file', file);
-    const resp = await fetch('/api/staging/upload', {
-      method: 'POST',
-      body: form
-    });
-    const d = await resp.json();
-    if (!resp.ok) {
-      alert(d.detail || 'Failed to upload to staging');
+    const statusResp = await fetch('/api/staging/upload-status?filename=' + encodeURIComponent(file.name));
+    const status = await statusResp.json();
+    if (status.complete) {
+      alert('File already exists in staging: ' + file.name);
+      loadStaging();
       return;
     }
-    alert('Uploaded to staging:\n' + d.staging_path);
-    loadStaging();
+    if (status.uploaded_bytes > 0) {
+      if (confirm('Found partial upload (' + _formatBytes(status.uploaded_bytes) + ' of ' +
+          _formatBytes(file.size) + ').\n\nResume upload?')) {
+        resumeOffset = status.uploaded_bytes;
+      } else {
+        // Cancel the partial and restart.
+        await fetch('/api/staging/upload-cancel', {
+          method: 'DELETE',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({filename: file.name})
+        });
+      }
+    }
   } catch(e) {
-    alert('Failed: ' + e.message);
-  } finally {
-    inputEl.value = '';
+    console.warn('Could not check upload status:', e);
   }
+
+  // Prepare the upload with resume support.
+  // Slice the file past the already-uploaded portion.
+  const blob = resumeOffset > 0 ? file.slice(resumeOffset) : file;
+  const form = new FormData();
+  form.append('file', blob, file.name);
+
+  document.getElementById('upload-filename').textContent = file.name;
+  document.getElementById('upload-status-text').textContent = resumeOffset > 0 ? 'Resuming...' : 'Uploading...';
+  _updateUploadUI(0, file.size, resumeOffset);
+  _showUploadProgress(true);
+
+  const xhr = new XMLHttpRequest();
+  _activeUpload = {xhr, filename: file.name, file, startTime: Date.now(), resumeOffset};
+
+  xhr.upload.addEventListener('progress', function(e) {
+    if (e.lengthComputable) {
+      _updateUploadUI(e.loaded, file.size, resumeOffset);
+    }
+  });
+
+  xhr.addEventListener('load', function() {
+    _activeUpload = null;
+    if (xhr.status >= 200 && xhr.status < 300) {
+      document.getElementById('upload-status-text').textContent = 'Complete!';
+      document.getElementById('upload-progress-bar').style.width = '100%';
+      document.getElementById('upload-progress-bar').style.background = 'var(--green)';
+      document.getElementById('upload-speed').textContent = '';
+      document.getElementById('upload-eta').textContent = '';
+      document.getElementById('upload-cancel-btn').style.display = 'none';
+      setTimeout(function() {
+        _showUploadProgress(false);
+        document.getElementById('upload-cancel-btn').style.display = '';
+        document.getElementById('upload-progress-bar').style.background = 'var(--green)';
+        loadStaging();
+      }, 2000);
+    } else {
+      let detail = 'Upload failed (HTTP ' + xhr.status + ')';
+      try { detail = JSON.parse(xhr.responseText).detail || detail; } catch(e) {}
+      document.getElementById('upload-status-text').textContent = 'Failed';
+      document.getElementById('upload-progress-bar').style.background = '#e74c3c';
+      alert(detail + '\n\nThe partial file is preserved. You can retry to resume.');
+      setTimeout(function() { _showUploadProgress(false); }, 3000);
+    }
+  });
+
+  xhr.addEventListener('error', function() {
+    _activeUpload = null;
+    document.getElementById('upload-status-text').textContent = 'Connection lost';
+    document.getElementById('upload-progress-bar').style.background = '#e74c3c';
+    alert('Upload interrupted. The partial file is preserved.\nClick "Upload To Staging" and select the same file to resume.');
+    setTimeout(function() { _showUploadProgress(false); }, 3000);
+  });
+
+  xhr.addEventListener('abort', function() {
+    _activeUpload = null;
+    document.getElementById('upload-status-text').textContent = 'Cancelled';
+    setTimeout(function() { _showUploadProgress(false); }, 1500);
+  });
+
+  xhr.open('POST', '/api/staging/upload');
+  if (resumeOffset > 0) {
+    xhr.setRequestHeader('X-Upload-Offset', String(resumeOffset));
+  }
+  xhr.send(form);
+}
+
+function cancelUpload() {
+  if (!_activeUpload) return;
+  const filename = _activeUpload.filename;
+  _activeUpload.xhr.abort();
+  // Keep the partial file for resume — don't delete unless user confirms.
+  if (confirm('Keep partial upload for later resume?\n\nClick "Cancel" to delete the partial file.')) {
+    return;
+  }
+  fetch('/api/staging/upload-cancel', {
+    method: 'DELETE',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({filename: filename})
+  }).catch(function(){});
 }
 
 async function importStagedFile(filename, btnEl) {

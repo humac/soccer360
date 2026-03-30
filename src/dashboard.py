@@ -1551,9 +1551,36 @@ def create_app(config: dict | None = None) -> FastAPI:
             ignore_suffixes=ignore_suffixes,
         )
 
+    @app.get("/api/staging/upload-status")
+    async def upload_status(filename: str):
+        """Check partial upload status for resume support.
+
+        Returns the byte offset to resume from.  If the final file already
+        exists, returns ``complete: true``.
+        """
+        _validate_flat_name(filename, "filename")
+        staging_dir.mkdir(parents=True, exist_ok=True)
+
+        dest_path = staging_dir / filename
+        if dest_path.exists():
+            return {"filename": filename, "complete": True,
+                    "size": dest_path.stat().st_size}
+
+        partial_path = staging_dir / (filename + ".uploading")
+        if partial_path.exists():
+            return {"filename": filename, "complete": False,
+                    "uploaded_bytes": partial_path.stat().st_size}
+
+        return {"filename": filename, "complete": False, "uploaded_bytes": 0}
+
     @app.post("/api/staging/upload")
-    async def upload_staging_file(file: UploadFile):
-        """Upload a video file into staging for later ingest."""
+    async def upload_staging_file(request: Request, file: UploadFile):
+        """Upload a video file into staging for later ingest.
+
+        Supports resumable uploads: the client sends an ``X-Upload-Offset``
+        header with the byte offset to resume from.  The server appends to
+        the ``.uploading`` partial file, then renames it on completion.
+        """
         filename = Path(file.filename or "").name
         _validate_flat_name(filename, "filename")
 
@@ -1570,31 +1597,49 @@ def create_app(config: dict | None = None) -> FastAPI:
                 detail=f"Staging file already exists: {dest_path.name}",
             )
 
-        bytes_written = 0
+        partial_path = staging_dir / (filename + ".uploading")
+
+        # Resume support: client tells us the byte offset it is resuming from.
+        resume_offset = int(request.headers.get("x-upload-offset", "0"))
+
+        # Validate offset matches partial file on disk.
+        existing_size = partial_path.stat().st_size if partial_path.exists() else 0
+        if resume_offset > 0 and existing_size != resume_offset:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Offset mismatch: expected {existing_size}, got {resume_offset}",
+            )
+
+        bytes_written = existing_size
         try:
-            with dest_path.open("xb") as out_f:
+            mode = "ab" if resume_offset > 0 and partial_path.exists() else "wb"
+            with partial_path.open(mode) as out_f:
                 while True:
                     chunk = await file.read(1024 * 1024)
                     if not chunk:
                         break
                     out_f.write(chunk)
                     bytes_written += len(chunk)
-        except FileExistsError:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Staging file already exists: {dest_path.name}",
-            )
         except Exception as exc:
-            if dest_path.exists():
-                dest_path.unlink()
-            raise HTTPException(status_code=500, detail=f"Failed to upload staged file: {exc}")
+            # Keep partial file for resume — don't delete it.
+            raise HTTPException(
+                status_code=500,
+                detail=f"Upload interrupted at {bytes_written} bytes: {exc}",
+            )
         finally:
             await file.close()
 
         if bytes_written <= 0:
-            if dest_path.exists():
-                dest_path.unlink()
+            partial_path.unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail="Uploaded file was empty")
+
+        # Atomic rename from .uploading to final name.
+        try:
+            partial_path.rename(dest_path)
+        except OSError:
+            # Cross-filesystem: copy + delete.
+            shutil.copy2(str(partial_path), str(dest_path))
+            partial_path.unlink(missing_ok=True)
 
         return {
             "ok": True,
@@ -1602,6 +1647,17 @@ def create_app(config: dict | None = None) -> FastAPI:
             "staging_path": str(dest_path),
             "size_mb": round(bytes_written / 1e6, 1),
         }
+
+    @app.delete("/api/staging/upload-cancel")
+    async def cancel_upload(request: Request):
+        """Remove a partial .uploading file to cancel/restart an upload."""
+        body = await request.json()
+        filename = body.get("filename", "")
+        _validate_flat_name(filename, "filename")
+        partial_path = staging_dir / (filename + ".uploading")
+        if partial_path.exists():
+            partial_path.unlink()
+        return {"ok": True, "filename": filename}
 
     @app.post("/api/staging/import")
     async def import_staging_file(request: Request):
