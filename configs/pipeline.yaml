@@ -87,7 +87,8 @@ reframer:
   output_resolution: [1920, 1080]
   # Pass source frames at native resolution to e2p (null = no downscale)
   # Set to [3840, 1920] to downscale before reframing for speed
-  source_downscale: null
+  # Recommended when source is 5.7K+ and output is 1080p (no visible quality loss)
+  source_downscale: [3840, 1920]
   num_workers: 12
   interpolation: bilinear
   # Seconds of overlap at segment boundaries for codec warmup (clean cuts)
@@ -193,7 +194,7 @@ detection:
   classes: [32, 0]           # COCO sports ball + person
   conf: 0.10
   iou: 0.5
-  img_size: 960
+  img_size: 1920
   max_det: 50
   half: true
   device: "cuda:0"
