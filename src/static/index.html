@@ -346,28 +346,11 @@
     </div>
   </div>
 
-  <!-- Media Player -->
+  <!-- Processed Matches -->
   <div class="card card-full">
-    <h2>Processed Videos</h2>
-    <div id="media-empty" class="empty-state" style="display:none;padding:20px">No processed videos found.</div>
-    <div id="media-controls" style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
-      <label style="font-size:0.85rem;color:var(--muted)">Match:</label>
-      <select id="media-match" onchange="onMatchSelect()"
-        style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:0.85rem;min-width:200px">
-        <option value="">Loading...</option>
-      </select>
-      <div id="media-video-btns" style="display:flex;gap:6px;flex-wrap:wrap"></div>
-      <button id="remove-match-btn" class="btn" style="background:var(--red);color:#fff;margin-left:auto" onclick="resetCurrentMatch()" disabled>
-        Remove Processed Match
-      </button>
-      <span id="media-size" style="color:var(--muted);font-size:0.8rem"></span>
-    </div>
-    <div id="media-player-wrap" style="display:none;background:#000;border-radius:6px;overflow:hidden;position:relative">
-      <video id="media-player" controls preload="metadata"
-        style="width:100%;max-height:60vh;display:block">
-      </video>
-    </div>
-    <div id="media-meta" style="margin-top:8px;font-size:0.8rem;color:var(--muted);display:none"></div>
+    <h2>Processed Matches</h2>
+    <div id="media-empty" style="display:none;padding:12px 0;font-size:0.85rem;color:var(--muted)">No processed matches found.</div>
+    <div id="media-list"></div>
   </div>
 
   <!-- Job History -->
@@ -739,7 +722,6 @@ async function loadTrainingStatus() {
     const statusColors = {idle: 'var(--muted)', building: 'var(--yellow)', running: 'var(--accent)', completed: 'var(--green)', failed: 'var(--red)'};
     el.innerHTML = 'Status: <span style="color:' + (statusColors[d.status] || 'var(--muted)') + '">' + d.status + '</span>';
     trainingBusy = d.status === 'building' || d.status === 'running';
-    updateRemoveMatchButton();
 
     if (d.error) {
       errEl.style.display = 'block';
@@ -1098,6 +1080,7 @@ async function loadStaging() {
 }
 
 let _activeUpload = null;   // {xhr, filename, file, startTime, resumeOffset}
+let trainingBusy = false;
 
 function _formatBytes(bytes) {
   if (bytes < 1024) return bytes + ' B';
@@ -1282,162 +1265,43 @@ async function importStagedFile(filename, btnEl) {
   }
 }
 
-// --- Media Player ---
-let mediaData = [];
-let currentMatch = null;
-let currentVideo = null;
-let trainingBusy = false;
-
-function updateRemoveMatchButton() {
-  const btn = document.getElementById('remove-match-btn');
-  if (!btn) return;
-  const blocked = trainingBusy;
-  btn.disabled = !currentMatch || blocked;
-  btn.style.opacity = currentMatch && !blocked ? '1' : '0.6';
-  btn.title = blocked
-    ? 'Unavailable while dataset build or training is running'
-    : (currentMatch ? 'Delete processed outputs and restore source to staging' : 'Select a processed match first');
-}
-
+// --- Processed Matches List ---
 async function loadMedia() {
   try {
     const resp = await fetch('/api/media/matches');
-    mediaData = await resp.json();
-    const select = document.getElementById('media-match');
+    const matches = await resp.json();
     const emptyEl = document.getElementById('media-empty');
-    const previousName = currentMatch ? currentMatch.name : null;
+    const listEl = document.getElementById('media-list');
 
-    if (mediaData.length === 0) {
-      select.innerHTML = '<option value="">No matches</option>';
+    if (!matches || matches.length === 0) {
       emptyEl.style.display = 'block';
-      document.getElementById('media-controls').style.display = 'none';
-      document.getElementById('media-player-wrap').style.display = 'none';
-      document.getElementById('media-meta').style.display = 'none';
-      document.getElementById('media-size').textContent = '';
-      currentMatch = null;
-      currentVideo = null;
-      updateRemoveMatchButton();
+      listEl.innerHTML = '';
       return;
     }
-
     emptyEl.style.display = 'none';
-    document.getElementById('media-controls').style.display = 'flex';
-    select.innerHTML = mediaData.map((m, i) =>
-      '<option value="' + i + '">' + escapeHtml(m.name) + '</option>'
-    ).join('');
-
-    let idx = mediaData.findIndex(m => m.name === previousName);
-    if (idx < 0) idx = 0;
-    select.value = String(idx);
-    onMatchSelect();
+    listEl.innerHTML = matches.map(m => {
+      const date = m.processed_at && m.processed_at !== '--'
+        ? new Date(m.processed_at).toLocaleString() : '--';
+      const videoCount = m.videos ? m.videos.length : 0;
+      const hlCount = m.videos ? m.videos.filter(v => v.name.startsWith('highlights/')).length : 0;
+      const vidLabel = (videoCount - hlCount) + ' video' + (videoCount - hlCount !== 1 ? 's' : '') +
+        (hlCount > 0 ? ', ' + hlCount + ' highlight' + (hlCount !== 1 ? 's' : '') : '');
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-weight:500;font-size:0.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+            escapeHtml(m.canonical_match || m.name) + '</div>' +
+          '<div style="font-size:0.75rem;color:var(--muted);margin-top:2px">' +
+            escapeHtml(date) + ' &nbsp;&middot;&nbsp; ' + escapeHtml(vidLabel) +
+          '</div>' +
+        '</div>' +
+        '<a href="/match/' + encodeURIComponent(m.name) + '" class="btn" ' +
+          'style="background:var(--accent);color:#fff;font-size:0.78rem;padding:3px 14px;text-decoration:none">' +
+          'Open' +
+        '</a>' +
+      '</div>';
+    }).join('');
   } catch(e) {
     console.error('Failed to load media:', e);
-  }
-}
-
-function onMatchSelect() {
-  const idx = parseInt(document.getElementById('media-match').value);
-  if (isNaN(idx) || !mediaData[idx]) {
-    currentMatch = null;
-    updateRemoveMatchButton();
-    return;
-  }
-  currentMatch = mediaData[idx];
-  updateRemoveMatchButton();
-
-  const btnsEl = document.getElementById('media-video-btns');
-  btnsEl.innerHTML = currentMatch.videos.map(v => {
-    const label = v.name.replace('.mp4', '').replace('highlights/', 'HL: ');
-    return '<button class="video-btn" onclick="playVideo(\'' +
-      escapeHtml(currentMatch.name) + '\',\'' + escapeHtml(v.name) + '\',this)">' +
-      escapeHtml(label) + '</button>';
-  }).join('');
-
-  const metaEl = document.getElementById('media-meta');
-  metaEl.style.display = 'block';
-  metaEl.textContent = 'Mode: ' + currentMatch.mode + ' | Processed: ' +
-    (currentMatch.processed_at !== '--' ? new Date(currentMatch.processed_at).toLocaleString() : '--');
-
-  // Auto-play broadcast if available
-  const broadcast = currentMatch.videos.find(v => v.name === 'broadcast.mp4');
-  if (broadcast) {
-    const firstBtn = btnsEl.querySelector('.video-btn');
-    playVideo(currentMatch.name, broadcast.name, firstBtn);
-  }
-}
-
-function playVideo(matchName, filename, btnEl) {
-  const player = document.getElementById('media-player');
-  const wrap = document.getElementById('media-player-wrap');
-  const sizeEl = document.getElementById('media-size');
-
-  // Update active button
-  document.querySelectorAll('.video-btn').forEach(b => b.classList.remove('active'));
-  if (btnEl) btnEl.classList.add('active');
-
-  const url = '/api/media/' + encodeURIComponent(matchName) + '/' + encodeURIComponent(filename);
-  player.src = url;
-  wrap.style.display = 'block';
-  currentVideo = filename;
-
-  // Show file size
-  const match = mediaData.find(m => m.name === matchName);
-  if (match) {
-    const vid = match.videos.find(v => v.name === filename);
-    if (vid) sizeEl.textContent = vid.size_mb + ' MB';
-  }
-}
-
-async function resetCurrentMatch() {
-  if (!currentMatch) return;
-  if (trainingBusy) {
-    alert('Cannot remove a processed match while dataset build or training is in progress.');
-    return;
-  }
-
-  const canonicalMatch = currentMatch.canonical_match || currentMatch.name;
-  const confirmed = confirm(
-    'Are you sure you want to remove "' + canonicalMatch + '"?\n\n' +
-    'This will delete:\n' +
-    '- processed videos and highlights\n' +
-    '- labels and hard-frame exports\n' +
-    '- the built dataset folder\n' +
-    '- dashboard job history\n\n' +
-    'Then it will restore one source video to /tank/stagging as *_reprocess for manual requeue.'
-  );
-  if (!confirmed) return;
-
-  try {
-    const resp = await fetch('/api/media/matches/' + encodeURIComponent(currentMatch.name) + '/reset', {
-      method: 'POST'
-    });
-    const d = await resp.json();
-    if (!resp.ok) {
-      alert(d.detail || 'Failed to remove processed match');
-      return;
-    }
-
-    let msg = 'Removed "' + d.canonical_match + '".\n\n' +
-      'Deleted processed dirs: ' + d.deleted_processed_dirs_count + '\n' +
-      'Deleted highlights dirs: ' + d.deleted_highlights_dirs_count + '\n' +
-      'Purged jobs: ' + d.purged_job_count;
-    if (d.restored_staging_path) {
-      msg += '\nRestored source: ' + d.restored_staging_path;
-    }
-    if (d.warnings && d.warnings.length > 0) {
-      msg += '\n\nWarnings:\n- ' + d.warnings.join('\n- ');
-    }
-    alert(msg);
-
-    currentMatch = null;
-    currentVideo = null;
-    loadMedia();
-    loadJobs();
-    loadLabelingStatus();
-    loadTrainingStatus();
-    loadStaging();
-  } catch(e) {
-    alert('Failed: ' + e.message);
   }
 }
 
@@ -1457,7 +1321,7 @@ setInterval(loadLabelingStatus, 15000);
 setInterval(loadTrainingStatus, 5000);
 setInterval(loadModels, 30000);
 setInterval(loadStaging, 15000);
-setInterval(loadMedia, 30000);
+setInterval(loadMedia, 60000);
 </script>
 </body>
 </html>

@@ -1044,6 +1044,13 @@ def create_app(config: dict | None = None) -> FastAPI:
             return HTMLResponse("<h1>Soccer360 Dashboard</h1><p>static/detection_settings.html not found</p>")
         return HTMLResponse(settings_file.read_text())
 
+    @app.get("/match/{match_name:path}", response_class=HTMLResponse)
+    async def match_page(match_name: str):
+        match_file = STATIC_DIR / "match.html"
+        if not match_file.exists():
+            return HTMLResponse("<h1>Soccer360</h1><p>static/match.html not found</p>")
+        return HTMLResponse(match_file.read_text())
+
     # ------------------------------------------------------------------
     # REST API
     # ------------------------------------------------------------------
@@ -1540,6 +1547,37 @@ def create_app(config: dict | None = None) -> FastAPI:
                         "processed_at": meta.get("processed_at", meta.get("processing_start", "--")),
                     })
         return matches
+
+    @app.get("/api/media/matches/{match_name}")
+    async def get_match(match_name: str):
+        """Return metadata and video list for a single processed match."""
+        if ".." in match_name or "/" in match_name or "\\" in match_name:
+            raise HTTPException(status_code=400, detail="Invalid match name")
+        match_dir = processed_dir / match_name
+        if not match_dir.is_dir():
+            raise HTTPException(status_code=404, detail=f"Match not found: {match_name}")
+        videos = []
+        for vf in sorted(match_dir.glob("*.mp4")):
+            videos.append({"name": vf.name, "size_mb": round(vf.stat().st_size / 1e6, 1)})
+        hl_dir = highlights_dir / match_name
+        if hl_dir.is_dir():
+            for vf in sorted(hl_dir.glob("*.mp4")):
+                videos.append({"name": f"highlights/{vf.name}", "size_mb": round(vf.stat().st_size / 1e6, 1)})
+        meta = {}
+        meta_file = match_dir / "metadata.json"
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text())
+            except Exception:
+                pass
+        return {
+            "name": match_name,
+            "canonical_match": meta.get("game_name", match_name),
+            "job_id": meta.get("job_id"),
+            "videos": videos,
+            "mode": meta.get("mode", "--"),
+            "processed_at": meta.get("processed_at", meta.get("processing_start", "--")),
+        }
 
     @app.get("/api/staging/files")
     async def list_staging_files():

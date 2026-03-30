@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Soccer360 · Match Playback</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
+    --text: #e1e4eb; --muted: #8b8fa3; --accent: #3b82f6;
+    --green: #22c55e; --yellow: #eab308; --red: #ef4444;
+  }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; min-height: 100vh; }
+
+  .topbar {
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 20px; background: var(--surface);
+    border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10;
+  }
+  .topbar a { color: var(--accent); text-decoration: none; font-size: 0.85rem; }
+  .topbar a:hover { text-decoration: underline; }
+  .topbar h1 { font-size: 1rem; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .layout { display: grid; grid-template-columns: 260px 1fr; gap: 0; min-height: calc(100vh - 49px); }
+
+  .sidebar {
+    background: var(--surface); border-right: 1px solid var(--border);
+    padding: 16px 12px; overflow-y: auto;
+  }
+  .sidebar h3 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 10px; }
+
+  .video-list { display: flex; flex-direction: column; gap: 4px; }
+  .video-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 6px; cursor: pointer;
+    border: 1px solid transparent; font-size: 0.83rem;
+    transition: background 0.15s;
+  }
+  .video-item:hover { background: rgba(255,255,255,0.05); border-color: var(--border); }
+  .video-item.active { background: rgba(59,130,246,0.15); border-color: var(--accent); color: var(--accent); }
+  .video-item .label { flex: 1; font-weight: 500; }
+  .video-item .size { font-size: 0.72rem; color: var(--muted); }
+  .video-item .badge {
+    font-size: 0.65rem; padding: 1px 6px; border-radius: 10px;
+    background: rgba(234,179,8,0.2); color: var(--yellow); border: 1px solid rgba(234,179,8,0.3);
+  }
+
+  .divider { height: 1px; background: var(--border); margin: 12px 0; }
+
+  .sidebar-meta { font-size: 0.75rem; color: var(--muted); line-height: 1.6; }
+  .sidebar-meta span { display: block; }
+
+  .main { display: flex; flex-direction: column; }
+
+  .player-wrap {
+    background: #000; flex: 1;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 360px;
+  }
+  .player-wrap video { width: 100%; max-height: calc(100vh - 200px); display: block; }
+  .player-empty {
+    color: var(--muted); font-size: 0.9rem; text-align: center; padding: 60px 20px;
+  }
+
+  .player-info {
+    padding: 10px 20px; background: var(--surface); border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; font-size: 0.8rem; color: var(--muted);
+  }
+  .player-info .filename { color: var(--text); font-weight: 500; flex: 1; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 14px; border-radius: 5px; border: none;
+    cursor: pointer; font-size: 0.82rem; font-weight: 500;
+    text-decoration: none; transition: opacity 0.15s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #remove-match-btn { background: var(--red); color: #fff; }
+
+  .error-banner {
+    margin: 20px; padding: 14px 18px;
+    background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);
+    border-radius: 6px; color: var(--red); font-size: 0.88rem;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="/">&#8592; Dashboard</a>
+  <h1 id="page-title">Loading…</h1>
+  <button id="remove-match-btn" class="btn" onclick="removeMatch()" disabled title="Delete processed outputs and restore source to staging">
+    Remove Match
+  </button>
+</div>
+
+<div id="error-banner" class="error-banner" style="display:none"></div>
+
+<div class="layout" id="layout" style="display:none">
+  <div class="sidebar">
+    <h3>Videos</h3>
+    <div id="video-list" class="video-list"></div>
+    <div class="divider"></div>
+    <div class="sidebar-meta" id="match-meta"></div>
+  </div>
+  <div class="main">
+    <div class="player-wrap" id="player-wrap">
+      <div class="player-empty" id="player-empty">Select a video to play</div>
+      <video id="player" controls preload="metadata" style="display:none"></video>
+    </div>
+    <div class="player-info" id="player-info" style="display:none">
+      <span class="filename" id="player-filename"></span>
+      <span id="player-size"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Extract match name from URL path: /match/{matchName}
+const pathParts = window.location.pathname.split('/');
+const matchName = decodeURIComponent(pathParts[pathParts.length - 1] || pathParts[pathParts.length - 2] || '');
+
+let matchData = null;
+let currentVideo = null;
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+async function loadMatch() {
+  if (!matchName) { showError('No match name in URL.'); return; }
+
+  try {
+    const resp = await fetch('/api/media/matches/' + encodeURIComponent(matchName));
+    if (!resp.ok) {
+      showError('Match not found: ' + matchName);
+      return;
+    }
+    matchData = await resp.json();
+  } catch(e) {
+    showError('Failed to load match: ' + e.message);
+    return;
+  }
+
+  document.getElementById('page-title').textContent = matchData.canonical_match || matchData.name;
+  document.title = 'Soccer360 · ' + (matchData.canonical_match || matchData.name);
+
+  // Sidebar meta
+  const metaEl = document.getElementById('match-meta');
+  const date = matchData.processed_at && matchData.processed_at !== '--'
+    ? new Date(matchData.processed_at).toLocaleString() : '--';
+  metaEl.innerHTML =
+    '<span><strong>Mode:</strong> ' + escapeHtml(matchData.mode || '--') + '</span>' +
+    '<span><strong>Processed:</strong> ' + escapeHtml(date) + '</span>' +
+    (matchData.job_id ? '<span style="margin-top:4px;word-break:break-all"><strong>Job:</strong> ' + escapeHtml(matchData.job_id) + '</span>' : '');
+
+  // Video list
+  const listEl = document.getElementById('video-list');
+  const videos = matchData.videos || [];
+  listEl.innerHTML = videos.map((v, i) => {
+    const isHL = v.name.startsWith('highlights/');
+    const rawLabel = v.name.replace(/^highlights\//, '').replace(/\.mp4$/, '');
+    const label = rawLabel.replace(/_/g, ' ');
+    return '<div class="video-item" id="vitem-' + i + '" onclick="playVideo(' + i + ')">' +
+      (isHL ? '<span class="badge">HL</span>' : '') +
+      '<span class="label">' + escapeHtml(label) + '</span>' +
+      '<span class="size">' + v.size_mb + ' MB</span>' +
+    '</div>';
+  }).join('');
+
+  document.getElementById('layout').style.display = 'grid';
+  document.getElementById('remove-match-btn').disabled = false;
+
+  // Auto-play broadcast
+  const broadcastIdx = videos.findIndex(v => v.name === 'broadcast.mp4');
+  if (broadcastIdx >= 0) playVideo(broadcastIdx);
+  else if (videos.length > 0) playVideo(0);
+}
+
+function playVideo(idx) {
+  if (!matchData) return;
+  const v = matchData.videos[idx];
+  if (!v) return;
+
+  // Update active state
+  document.querySelectorAll('.video-item').forEach(el => el.classList.remove('active'));
+  const item = document.getElementById('vitem-' + idx);
+  if (item) { item.classList.add('active'); item.scrollIntoView({block:'nearest'}); }
+
+  const player = document.getElementById('player');
+  const emptyEl = document.getElementById('player-empty');
+  const infoEl = document.getElementById('player-info');
+
+  const url = '/api/media/' + encodeURIComponent(matchData.name) + '/' + encodeURIComponent(v.name);
+
+  // Preserve playback position if same file (e.g. accidental re-click)
+  const isSame = currentVideo === v.name;
+  if (!isSame) {
+    player.src = url;
+    player.load();
+  }
+  currentVideo = v.name;
+  player.style.display = 'block';
+  emptyEl.style.display = 'none';
+  if (!isSame) player.play().catch(() => {});
+
+  // Info bar
+  const rawLabel = v.name.replace(/^highlights\//, '').replace(/\.mp4$/, '').replace(/_/g, ' ');
+  document.getElementById('player-filename').textContent = rawLabel;
+  document.getElementById('player-size').textContent = v.size_mb + ' MB';
+  infoEl.style.display = 'flex';
+}
+
+async function removeMatch() {
+  if (!matchData) return;
+
+  const canonicalMatch = matchData.canonical_match || matchData.name;
+  if (!confirm(
+    'Remove "' + canonicalMatch + '"?\n\n' +
+    'This deletes processed videos, highlights, labels, hard-frame exports, ' +
+    'dataset folder, and job history.\n\n' +
+    'The source video will be restored to /tank/stagging for requeue.'
+  )) return;
+
+  const btn = document.getElementById('remove-match-btn');
+  btn.disabled = true;
+  btn.textContent = 'Removing…';
+
+  try {
+    const resp = await fetch('/api/media/matches/' + encodeURIComponent(matchData.name) + '/reset', {
+      method: 'POST'
+    });
+    const d = await resp.json();
+    if (!resp.ok) {
+      alert(d.detail || 'Failed to remove match');
+      btn.disabled = false;
+      btn.textContent = 'Remove Match';
+      return;
+    }
+
+    let msg = 'Removed "' + d.canonical_match + '".\n' +
+      'Deleted ' + d.deleted_processed_dirs_count + ' processed dir(s), ' +
+      d.purged_job_count + ' job(s).';
+    if (d.restored_staging_path) msg += '\nRestored to staging: ' + d.restored_staging_path;
+    if (d.warnings && d.warnings.length) msg += '\n\nWarnings:\n- ' + d.warnings.join('\n- ');
+    alert(msg);
+
+    window.location.href = '/';
+  } catch(e) {
+    alert('Failed: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = 'Remove Match';
+  }
+}
+
+loadMatch();
+</script>
+</body>
+</html>
