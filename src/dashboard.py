@@ -2304,6 +2304,21 @@ def create_app(config: dict | None = None) -> FastAPI:
             partial_path.unlink()
         return {"ok": True, "filename": filename}
 
+    @app.post("/api/staging/delete")
+    async def delete_staging_file(request: Request):
+        """Permanently delete a staged video file."""
+        body = await request.json()
+        filename = body.get("filename", "")
+        _validate_flat_name(filename, "filename")
+        target = staging_dir / filename
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="Staged file not found")
+        target.unlink()
+        partial = staging_dir / (filename + ".uploading")
+        if partial.exists():
+            partial.unlink()
+        return {"ok": True, "filename": filename}
+
     @app.post("/api/staging/import")
     async def import_staging_file(request: Request):
         """Move a selected staging file into ingest for watcher pickup."""

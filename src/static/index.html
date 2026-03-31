@@ -423,14 +423,14 @@
 
   .match-table-head, .match-row {
     display: grid;
-    grid-template-columns: minmax(260px, 1.1fr) minmax(140px, 0.6fr) minmax(180px, 0.8fr) minmax(160px, 0.7fr) minmax(210px, 0.9fr) auto;
-    gap: 10px;
+    grid-template-columns: minmax(200px, 1.2fr) minmax(90px, 0.45fr) minmax(90px, 0.45fr) minmax(110px, 0.55fr) minmax(140px, 0.7fr) minmax(100px, 0.45fr);
+    gap: 0 14px;
     align-items: center;
-    min-width: 980px;
+    min-width: 860px;
   }
 
   .match-table-head {
-    padding: 9px 11px;
+    padding: 8px 14px;
     color: var(--muted);
     font-size: 0.64rem;
     letter-spacing: 0.12em;
@@ -439,16 +439,64 @@
     border-bottom: 1px solid var(--border);
     font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
   }
+  .match-table-head > :last-child,
+  .match-row > :last-child {
+    text-align: right;
+    justify-self: end;
+  }
+
+  .match-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: none;
+    color: var(--muted);
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: 0.15s ease;
+    flex-shrink: 0;
+  }
+  .icon-btn:hover { color: var(--text); background: rgba(255,255,255,0.06); border-color: var(--border); }
+  .icon-btn.delete-btn:hover { color: var(--red); background: rgba(226,120,114,0.1); border-color: rgba(226,120,114,0.25); }
 
   .match-row {
-    padding: 10px;
+    padding: 7px 14px;
     cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease;
-    border-top: 1px solid rgba(255,255,255,0.03);
+    transition: background 0.15s ease;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
   }
+  .match-row:last-child { border-bottom: none; }
   .match-row:hover, .match-row.active {
     background: rgba(92, 162, 255, 0.08);
   }
+
+  .ghost-btn.busy {
+    pointer-events: none;
+    opacity: 0.6;
+    gap: 6px;
+  }
+  .ghost-btn.busy::before {
+    content: '';
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--muted);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   .title-stack, .meta-stack {
     min-width: 0;
@@ -508,7 +556,7 @@
 
   .stepper {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
   }
   .step {
@@ -611,13 +659,11 @@
     .topbar, .overview-grid, .two-col { grid-template-columns: 1fr; }
     .hero-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .match-table-head, .match-row {
-      grid-template-columns: minmax(220px, 1fr) minmax(130px, 0.7fr) minmax(160px, 0.8fr) minmax(150px, 0.8fr);
-      min-width: 760px;
+      grid-template-columns: minmax(180px, 1fr) minmax(80px, 0.45fr) minmax(80px, 0.5fr) minmax(100px, 0.55fr) minmax(90px, 0.4fr);
+      min-width: 660px;
     }
     .match-table-head > :nth-child(5),
-    .match-table-head > :nth-child(6),
-    .match-row > :nth-child(5),
-    .match-row > :nth-child(6) { display: none; }
+    .match-row > :nth-child(5) { display: none; }
   }
 
   @media (max-width: 860px) {
@@ -703,7 +749,7 @@
         <div class="metric-tile">
           <div class="metric-label">Attention</div>
           <div class="metric-value" id="attention-count">0</div>
-          <div class="metric-note">Matches needing action</div>
+          <div class="metric-note">In labeling pipeline</div>
         </div>
         <div class="metric-tile">
           <div class="metric-label">Dataset</div>
@@ -724,7 +770,7 @@
   <section id="workspace-overview" class="workspace active">
     <div class="overview-grid">
       <div class="stack">
-        <div id="training-console-panel" class="panel">
+        <div class="panel">
           <div class="panel-header">
             <div>
               <div class="panel-title">Live Pipeline</div>
@@ -763,7 +809,7 @@
           <div class="panel-header">
             <div>
               <div class="panel-title">Matches Needing Attention</div>
-              <div class="panel-copy">The shortest path to the next useful action. If a first-time operator opens the dashboard, this list should tell them what to do without reading docs.</div>
+              <div class="panel-copy">Processed matches in the labeling and training pipeline — ready to label, actively labeling, dataset pending, or ready to train.</div>
             </div>
           </div>
           <div id="attention-list" class="attention-list"></div>
@@ -771,7 +817,7 @@
       </div>
 
       <div class="stack">
-        <div class="panel">
+        <div class="panel" style="align-self:start">
           <div class="panel-header">
             <div>
               <div class="panel-title">System Signals</div>
@@ -842,7 +888,7 @@
           <div>Outputs</div>
           <div>Labeling</div>
           <div>Model Lineage</div>
-          <div>Next Action</div>
+          <div>Actions</div>
         </div>
         <div id="match-library"></div>
       </div>
@@ -877,13 +923,12 @@
           </div>
           <div class="action-row" style="margin-top:14px">
             <button class="btn yellow" onclick="buildDataset()">Build Dataset</button>
-            <a class="btn secondary" href="#" id="labelstudio-link-inline" target="_blank">Open Label Studio</a>
           </div>
         </div>
       </div>
 
       <div class="stack">
-        <div class="panel">
+        <div class="panel" id="labeling-training-console">
           <div class="panel-header">
             <div>
               <div class="panel-title">Training Console</div>
@@ -1041,12 +1086,12 @@ const appState = {
   selectedMatchDetail: null,
   evtSource: null,
   lastEventId: 0,
+  busyKeys: new Set(),
 };
 
 let _activeUpload = null;
 
 document.getElementById('labelstudio-link').href = location.protocol + '//' + location.hostname + ':8080';
-document.getElementById('labelstudio-link-inline').href = location.protocol + '//' + location.hostname + ':8080';
 
 function escapeHtml(s) {
   const d = document.createElement('div');
@@ -1171,7 +1216,7 @@ function openTrainingConsole(options) {
   const opts = options || {};
   switchWorkspace('labeling');
   if (opts.closeDrawer) closeDrawer();
-  const panel = document.getElementById('training-console-panel');
+  const panel = document.getElementById('labeling-training-console');
   if (panel) {
     requestAnimationFrame(() => {
       panel.scrollIntoView({behavior: 'smooth', block: 'start'});
@@ -1199,7 +1244,7 @@ function updateHeaderSummary() {
   document.getElementById('queue-count').textContent = String(queued);
   document.getElementById('queue-copy').textContent = queued > 0 ? queued + ' assets waiting or queued' : 'No queued jobs';
   document.getElementById('attention-count').textContent = String(
-    (summary.staged || 0) + (summary.ready_to_label || 0) + (summary.dataset_pending || 0) + (summary.ready_to_train || 0)
+    (summary.ready_to_label || 0) + (summary.labeling || 0) + (summary.dataset_pending || 0) + (summary.ready_to_train || 0)
   );
   document.getElementById('dataset-state').textContent = String((workflow.dataset && workflow.dataset.state) || '--');
   document.getElementById('dataset-copy').textContent = (workflow.dataset && workflow.dataset.ready)
@@ -1230,10 +1275,10 @@ function updateHeaderSummary() {
 
 function renderOverview() {
   const matches = getWorkflowMatches();
-  const attentionMatches = matches.filter(item => ['processing','queued','staged','ready_to_label','labeling','dataset_pending','ready_to_train'].includes(item.status)).slice(0, 8);
+  const attentionMatches = matches.filter(item => ['ready_to_label','labeling','dataset_pending','ready_to_train'].includes(item.status)).slice(0, 8);
   const attentionEl = document.getElementById('attention-list');
   if (!attentionMatches.length) {
-    attentionEl.innerHTML = '<div class="empty">Everything is calm. No match currently needs operator action.</div>';
+    attentionEl.innerHTML = '<div class="empty">No matches in the labeling or training pipeline.</div>';
   } else {
     attentionEl.innerHTML = attentionMatches.map(item =>
       '<div class="attention-card">' +
@@ -1324,10 +1369,12 @@ function renderMatches() {
           '<span class="tiny">' + escapeHtml((labeling.labeled || 0) + ' labeled · ' + (labeling.dataset_state || 'unknown')) + '</span>' +
         '</div>' +
         '<div class="meta-stack">' +
-          '<span class="tiny">' + escapeHtml(modelLine || 'No recorded lineage yet') + '</span>' +
-          '<span class="tiny">' + escapeHtml('Next: ' + item.next_action) + '</span>' +
+          '<span class="tiny">' + escapeHtml(modelLine || 'No lineage yet') + '</span>' +
         '</div>' +
-        '<div><button class="ghost-btn" onclick="event.stopPropagation(); performMatchNextAction(' + quoteJs(item.key) + ')">' + escapeHtml(item.next_action) + '</button></div>' +
+        '<div class="match-actions">' +
+          '<button class="ghost-btn' + (appState.busyKeys.has(item.key) ? ' busy' : '') + '" data-action-key="' + escapeHtml(item.key) + '"' + (appState.busyKeys.has(item.key) ? ' disabled' : '') + ' onclick="event.stopPropagation(); performMatchNextAction(' + quoteJs(item.key) + ')">' + escapeHtml(item.next_action) + '</button>' +
+          (['processing','queued'].includes(item.status) ? '' : '<button class="icon-btn delete-btn" title="Delete match" onclick="event.stopPropagation(); deleteMatch(' + quoteJs(item.key) + ')">&#x2715;</button>') +
+        '</div>' +
       '</div>'
     );
   }).join('');
@@ -1346,8 +1393,6 @@ function renderLabelingWorkspace() {
         {title: 'Frames', ready: (label.frames || 0) > 0, copy: (label.frames || 0) + ' exported'},
         {title: 'Tasks', ready: !!label.tasks_generated, copy: label.tasks_generated ? (label.tasks_count || 0) + ' generated' : 'Generate tasks'},
         {title: 'Labels', ready: (label.labeled || 0) > 0, copy: (label.labeled || 0) + ' uploaded'},
-        {title: 'Dataset', ready: label.dataset_state === 'ready', pending: ['missing','stale'].includes(label.dataset_state), copy: label.dataset_state || 'unknown'},
-        {title: 'Train', ready: !!label.training_ready, copy: label.training_ready ? 'Ready' : (label.blocker || 'Blocked')},
       ];
       return '<div class="queue-card">' +
         '<div class="toolbar-row" style="justify-content:space-between;align-items:flex-start">' +
@@ -1360,8 +1405,6 @@ function renderLabelingWorkspace() {
             (label.tasks_generated ? '<a class="btn secondary" href="' + escapeHtml(document.getElementById('labelstudio-link').href) + '" target="_blank">Open Label Studio</a>' : '') +
             (label.tasks_generated ? '<button class="btn secondary" onclick="uploadLabels(' + quoteJs(item.key) + ')">Upload Labels</button>' : '') +
             (label.tasks_generated ? '' : '<button class="btn secondary" onclick="importTasks(' + quoteJs(item.key) + ')">Generate Tasks</button>') +
-            (((label.labeled || 0) > 0) && ['missing','stale'].includes(label.dataset_state || '') ? '<button class="btn yellow" onclick="buildDataset()">Build Dataset</button>' : '') +
-            (label.training_ready ? '<button class="btn green" onclick="openTrainingConsole()">Open Training</button>' : '') +
           '</div>' +
         '</div>' +
         '<div class="stepper" style="margin-top:12px">' +
@@ -1613,46 +1656,56 @@ function openLabelStudioWindow() {
 }
 
 async function performMatchNextAction(key) {
+  if (appState.busyKeys.has(key)) return;
   const match = appState.workflowIndex.get(key);
   if (!match) return;
 
   const labeling = match.labeling || {};
   const processed = match.processed || {};
 
-  if (match.status === 'staged') {
-    const filename = getPrimaryStagedFilename(match);
-    if (filename) {
-      await importStagedFile(filename);
-      return;
-    }
-  }
-
-  if (match.status === 'ready_to_label') {
-    await importTasks(match.key);
-    return;
-  }
-
+  // Navigational (instant) actions — no spinner needed
   if (match.status === 'labeling' && labeling.tasks_generated) {
     openLabelStudioWindow();
     return;
   }
-
   if (match.status === 'dataset_pending') {
-    await buildDataset();
+    switchWorkspace('labeling');
     return;
   }
-
   if (match.status === 'ready_to_train') {
     openTrainingConsole();
     return;
   }
-
   if (match.status === 'processed' && processed.primary_match_name) {
     window.location.href = '/match/' + encodeURIComponent(processed.primary_match_name);
     return;
   }
 
-  await inspectMatch(key);
+  // Async actions — show busy spinner
+  setBusy(key, true);
+  try {
+    if (match.status === 'staged') {
+      const filename = getPrimaryStagedFilename(match);
+      if (filename) { await importStagedFile(filename); return; }
+    }
+    if (match.status === 'ready_to_label') {
+      await importTasks(match.key);
+      return;
+    }
+    await inspectMatch(key);
+  } finally {
+    setBusy(key, false);
+  }
+}
+
+function setBusy(key, busy) {
+  if (busy) appState.busyKeys.add(key);
+  else appState.busyKeys.delete(key);
+  const btn = document.querySelector('[data-action-key="' + CSS.escape(key) + '"]');
+  if (btn) {
+    btn.classList.toggle('busy', busy);
+    btn.disabled = busy;
+  }
 }
 
 async function inspectMatch(key) {
@@ -1718,8 +1771,6 @@ function renderDrawer() {
         ((!labeling.tasks_generated && (labeling.frames || 0) > 0) ? '<button class="btn secondary" onclick="importTasks(' + quoteJs(match.key) + ')">Generate Tasks</button>' : '') +
         ((labeling.tasks_generated && (labeling.labeled || 0) === 0) ? '<a class="btn secondary" href="' + escapeHtml(document.getElementById('labelstudio-link').href) + '" target="_blank">Open Label Studio</a>' : '') +
         ((labeling.tasks_generated) ? '<button class="btn secondary" onclick="uploadLabels(' + quoteJs(match.key) + ')">Upload Labels</button>' : '') +
-        ((((labeling.labeled || 0) > 0) && ['missing','stale'].includes(labeling.dataset_state || '')) ? '<button class="btn yellow" onclick="buildDataset()">Build Dataset</button>' : '') +
-        ((labeling.training_ready) ? '<button class="btn green" onclick="openTrainingConsole({closeDrawer:true})">Open Training</button>' : '') +
       '</div>' +
     '</div>' +
     '<div class="drawer-section">' +
@@ -1728,8 +1779,6 @@ function renderDrawer() {
         '<div class="step ' + ((labeling.frames || 0) > 0 ? 'ready' : '') + '"><strong>Frames</strong>' + escapeHtml((labeling.frames || 0) + ' exported') + '</div>' +
         '<div class="step ' + (labeling.tasks_generated ? 'ready' : '') + '"><strong>Tasks</strong>' + escapeHtml(labeling.tasks_generated ? ((labeling.tasks_count || 0) + ' generated') : 'Generate tasks') + '</div>' +
         '<div class="step ' + ((labeling.labeled || 0) > 0 ? 'ready' : '') + '"><strong>Labels</strong>' + escapeHtml((labeling.labeled || 0) + ' uploaded') + '</div>' +
-        '<div class="step ' + (((labeling.dataset_state || '') === 'ready') ? 'ready' : (['missing','stale'].includes(labeling.dataset_state || '') ? 'pending' : '')) + '"><strong>Dataset</strong>' + escapeHtml(labeling.dataset_state || 'unknown') + '</div>' +
-        '<div class="step ' + (labeling.training_ready ? 'ready' : '') + '"><strong>Train</strong>' + escapeHtml(labeling.training_ready ? 'Ready' : (labeling.blocker || 'Blocked')) + '</div>' +
       '</div>' +
     '</div>' +
     '<div class="drawer-section">' +
@@ -2308,6 +2357,48 @@ async function resetMatch(matchName, label) {
   if (data.warnings && data.warnings.length) showToast('Warnings: ' + data.warnings.join('; '), 'error');
   closeDrawer();
   await loadDashboardData();
+}
+
+async function deleteMatch(key) {
+  const match = appState.workflowIndex.get(key);
+  if (!match) return;
+
+  if (['processing', 'queued'].includes(match.status)) {
+    showToast('Cannot delete a match while it is ' + match.status + '.', 'error');
+    return;
+  }
+
+  // Staged-only match: delete staged file(s)
+  if (match.status === 'staged') {
+    const files = (match.staging && match.staging.files) || [];
+    const names = files.map(function(f) { return f.name; });
+    if (!names.length) { showToast('No staged files found for this match.', 'error'); return; }
+    if (!await showModal('Delete staged file' + (names.length > 1 ? 's' : '') + '?', 'Permanently delete ' + names.join(', ') + ' from staging?', 'Delete', true)) return;
+    for (var i = 0; i < names.length; i++) {
+      var resp = await fetch('/api/staging/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({filename: names[i]}),
+      });
+      if (!resp.ok) {
+        var data = await resp.json().catch(function() { return {}; });
+        showToast('Failed to delete ' + names[i] + ': ' + (data.detail || resp.status), 'error');
+        break;
+      }
+    }
+    showToast('Deleted ' + names.length + ' staged file(s).', 'success');
+    await loadDashboardData();
+    return;
+  }
+
+  // Processed match family: delegate to existing reset flow
+  var matchName = match.processed && match.processed.primary_match_name;
+  if (matchName) {
+    await resetMatch(matchName, match.display_name);
+    return;
+  }
+
+  showToast('Cannot determine how to delete this match.', 'error');
 }
 
 loadDashboardData();
