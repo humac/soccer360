@@ -10,8 +10,15 @@ A guide for day-to-day operation of the Soccer360 pipeline: ingesting match reco
 - [Getting Started](#getting-started)
   - [What You Need](#what-you-need)
   - [How the System Works](#how-the-system-works)
+- [The Dashboard](#the-dashboard)
+  - [Overview Workspace](#overview-workspace)
+  - [Matches Workspace](#matches-workspace)
+  - [Labeling and Training Workspace](#labeling-and-training-workspace)
+  - [Models and Files Workspace](#models-and-files-workspace)
+  - [Match Playback Page](#match-playback-page)
 - [Ingesting a Match Recording](#ingesting-a-match-recording)
   - [Preparing Your Video](#preparing-your-video)
+  - [Uploading via the Dashboard](#uploading-via-the-dashboard)
   - [Dropping a File for Processing](#dropping-a-file-for-processing)
   - [Safe Copy Method](#safe-copy-method)
 - [Monitoring Processing](#monitoring-processing)
@@ -29,7 +36,10 @@ A guide for day-to-day operation of the Soccer360 pipeline: ingesting match reco
   - [What Are Hard Frames?](#what-are-hard-frames)
   - [Labeling in Label Studio](#labeling-in-label-studio)
   - [The Weekly Improvement Cycle](#the-weekly-improvement-cycle)
-- [Reprocessing a Match](#reprocessing-a-match)
+- [Managing Matches](#managing-matches)
+  - [Inspecting a Match](#inspecting-a-match)
+  - [Reprocessing a Match](#reprocessing-a-match)
+  - [Deleting a Match](#deleting-a-match)
 - [Troubleshooting](#troubleshooting)
   - [Video Not Being Picked Up](#video-not-being-picked-up)
   - [Processing Seems Stuck](#processing-seems-stuck)
@@ -54,8 +64,8 @@ You don't need to edit anything manually. Drop the video in, wait for processing
 ### What You Need
 
 - A 360-degree match recording in **equirectangular MP4 format** (typically 5760x2880 or similar)
-- Network access to the server's `/tank/ingest/` folder, or to `/tank/stagging/` if you prefer to stage files before queueing them from the UI
-- Access to the server for checking logs (optional but recommended)
+- A web browser to access the dashboard at `http://<server-address>:8088`
+- Network access to the server's `/tank/ingest/` folder, or use the dashboard's upload feature to stage files
 
 > **Note:** If you recorded with an Insta360 camera, you must first stitch and export to equirectangular MP4 using Insta360 Studio before ingesting. Raw `.insv` files cannot be processed directly.
 
@@ -70,6 +80,73 @@ The pipeline runs as an always-on background service (the "watcher"). When you p
 5. Archives the original recording (if configured)
 
 A typical 1-hour match at 5.7K resolution takes approximately 60-90 minutes to process. At 8K (7680x3840) with full-resolution inference, expect 4-5 hours — this is the quality-first overnight mode.
+
+## The Dashboard
+
+The Soccer360 dashboard is your primary interface for managing the pipeline. Open it at `http://<server-address>:8088`. It has four workspaces, accessible via tabs at the top.
+
+### Overview Workspace
+
+The default view shows pipeline status, system health, and matches needing attention.
+
+![Overview workspace showing pipeline status, system signals, and recent job history](./screenshots/operator-overview-dashboard.png)
+
+Key areas:
+
+- **Live Pipeline** -- shows the current job (or "Idle"), with hero metrics for queue depth, matches tracked, ready-to-label count, and ready-to-train count
+- **Phase Progress** -- a 9-phase visual strip (Detect, Track, Frames, Cluster, Camera, Broadcast, Tactical, Highlights, Export) that lights up as each phase runs and completes
+- **Matches Needing Attention** -- processed matches in the labeling and training pipeline that need operator action (ready to label, actively labeling, dataset pending, or ready to train)
+- **System Signals** -- live GPU utilization, GPU memory, CPU, and RAM gauges with temperature readout
+- **Recent Job History** -- operational log of completed and failed pipeline runs
+
+The dashboard streams events in real time -- no need to refresh the page. The connection status pill in the top bar shows "Connected" (blue) when live updates are flowing.
+
+### Matches Workspace
+
+The Match Library is your central view of every match across all stages.
+
+![Match Library showing all matches with status filters and action buttons](./screenshots/operator-matches-library.png)
+
+- **Search and filter** -- type in the search box to find matches by name, source file, or job ID. Use the filter buttons (All, Processing, Staged, Labeling, Ready To Train, Processed) to narrow the list.
+- **Status column** -- colored pill showing the match's current state in the pipeline
+- **Actions column** -- context-sensitive button that shows the logical next step for each match (Send to ingest, Generate Tasks, Open Label Studio, Start training, View playback). A delete button (x) appears for matches that can be removed.
+
+Click any row to open the **inspect drawer** with full match details.
+
+![Match inspect drawer showing lifecycle, lineage, and available actions](./screenshots/operator-match-drawer.png)
+
+The drawer shows the match lifecycle (Frames, Tasks, Labels steps), lineage information (which models were used, when it was processed), output files, and a reset preview if you want to remove the match.
+
+### Labeling and Training Workspace
+
+This workspace manages the active learning loop -- from labeling hard frames to training improved models.
+
+![Labeling and Training workspace with per-match cards, dataset state, and training console](./screenshots/operator-labeling-training.png)
+
+- **Per-Match Labeling Flow** (left column) -- cards for each processed match showing a 3-step progress stepper (Frames exported, Tasks generated, Labels uploaded). Action buttons let you inspect, open Label Studio, or upload labels for each match.
+- **Dataset State** (bottom left) -- global summary of all hard frames, labeled count, and dataset freshness. The **Build Dataset** button here combines labels from all matches into one training dataset.
+- **Training Console** (right column) -- configure and launch model training. Select a base model, set epochs, name the output, and click **Train Model**. The status card shows current/previous runs and a live training log.
+
+> **Note:** Build Dataset and Train Model are global actions that operate across all matches, not per-match. That's why they appear in their own panels rather than on individual match cards.
+
+### Models and Files Workspace
+
+Manage staged videos, model selection, and the model registry.
+
+![Models and Files workspace with staging inbox, ingest models, and model registry](./screenshots/operator-models-files.png)
+
+- **Staging Inbox** (left) -- upload videos directly from your browser, search staged files, and send them to the ingest queue individually or in bulk
+- **Current Ingest Models** (right top) -- choose which ball and player detection models the pipeline uses for the next processing run
+- **Model Registry** (right middle) -- browse all available models with role tags, sizes, and delete capability (protected models cannot be deleted)
+- **Full Job History** (right bottom) -- persistent record of all pipeline runs
+
+### Match Playback Page
+
+Click "Open Playback" on any processed match to view its outputs.
+
+![Match playback page with video player, available outputs grid, and match details](./screenshots/operator-match-playback.png)
+
+The playback page shows hero metrics (status, output count, labeling progress, dataset state), a video player that defaults to `broadcast.mp4`, and a grid of all available outputs (broadcast, tactical, highlights). Below the player you'll find lifecycle, lineage, and reset information.
 
 ## Ingesting a Match Recording
 
@@ -86,9 +163,22 @@ Before ingesting, ensure your video meets these requirements:
 
 > **Warning:** Do not ingest partial recordings, corrupted files, or non-equirectangular video. The pipeline will fail or produce unusable output.
 
+### Uploading via the Dashboard
+
+The recommended method for most operators:
+
+1. Open the dashboard and switch to the **Models & Files** workspace
+2. Click **Upload To Staging** and select your video file (.mp4, .mov, or .insv)
+3. A progress bar shows upload speed, transferred bytes, and ETA. Uploads are resumable -- if the connection drops, re-select the same file and it picks up where it left off.
+4. Once uploaded, the file appears in the Staging Inbox
+5. Click **Send To Ingest** next to the file (or select multiple files and use **Send Selected To Ingest**)
+6. A confirmation modal appears. Confirm to move the file to the processing queue.
+
+> **Tip:** You can upload multiple files ahead of time and control exactly when each one enters the queue.
+
 ### Dropping a File for Processing
 
-The simplest method -- copy the file directly:
+If you have direct file system access, copy the file directly:
 
 ```bash
 cp match_2024_01_15.mp4 /tank/ingest/
@@ -365,28 +455,45 @@ For detailed step-by-step instructions including Label Studio setup, labeling te
 5. **Build dataset + train** -- use the dashboard, or run `bash scripts/build_dataset.sh` then `soccer360 train --epochs 50 --data /tank/labeling/dataset/dataset.yaml`
 6. **Next games are better** -- set the dashboard ingest selector to `Auto` or pin the improved model before the next ingest or reprocess run
 
-## Reprocessing a Match
+## Managing Matches
 
-The easiest way to reprocess a completed match is through the dashboard:
+### Inspecting a Match
 
-1. Click the match row to open its dedicated match page (`/match/<name>`)
-2. Click **Remove Match Family**
-3. A modal previews exactly what will be deleted (processed dirs, highlights, labeling state, jobs purged, restore target) — confirm to proceed
-4. The dashboard removes processed outputs, highlights, labels, built dataset, related dashboard history, and the relevant watcher dedupe entry; a toast confirms the result
-5. One original source video is restored to `/tank/stagging/<match>_reprocess.ext`
-6. In the **Staging** panel, click **Send To Ingest** to queue the restored file; a toast confirms it moved to ingest
+Click any row in the Match Library to open the inspect drawer. The drawer shows:
 
-If you need to bypass the watcher entirely, an administrator can still run a one-off job against an archived source file:
+- **Lifecycle stepper** -- Frames, Tasks, Labels progress
+- **Lineage** -- which models were used, when processed, source and archive paths
+- **Workflow facts** -- hard frame count, label count, dataset inclusion
+- **Outputs** -- list of processed videos with sizes
+- **Reset preview** -- what would be affected if you remove this match
+
+### Reprocessing a Match
+
+To reprocess a completed match:
+
+1. Open the Match Library and click the match row to open the inspect drawer
+2. Scroll to the reset section and click **Remove Match Family**
+3. A modal previews exactly what will be deleted (processed dirs, highlights, labeling state, jobs purged, restore target) -- confirm to proceed
+4. The system removes processed outputs, highlights, labels, built dataset, related history, and the watcher dedupe entry. A toast confirms the result.
+5. One original source video is restored to the staging folder
+6. In the **Models & Files** workspace, click **Send To Ingest** to queue the restored file for reprocessing
+
+> **Warning:** Removing a match family permanently deletes all processed outputs and labeling data for that match. The training dataset is also invalidated and will need to be rebuilt.
+
+If you need to bypass the watcher entirely, an administrator can run a one-off job:
 
 ```bash
 docker compose run --rm worker soccer360 process /tank/archive_raw/match_<job_id>.mp4
 ```
 
-To keep intermediate scratch files for debugging:
+### Deleting a Match
 
-```bash
-docker compose run --rm worker soccer360 process /path/to/match.mp4 --no-cleanup
-```
+To permanently remove a match from the system:
+
+- **Staged matches** -- click the delete button (x) in the Actions column of the Match Library. A confirmation modal lists the staged files that will be deleted.
+- **Processed matches** -- click the delete button (x) or use the **Remove Match Family** button in the inspect drawer. This follows the same reset flow described above.
+
+> **Note:** Matches that are currently processing or queued cannot be deleted. Wait for processing to complete first.
 
 ## Troubleshooting
 

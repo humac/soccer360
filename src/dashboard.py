@@ -248,7 +248,31 @@ def _scan_labeling_status(labeling_dir: Path) -> dict:
     total_labeled = 0
 
     if not labeling_dir.is_dir():
-        return {"matches": [], "total_frames": 0, "total_labeled": 0, "dataset_ready": False}
+        return {
+            "matches": [],
+            "total_frames": 0,
+            "total_labeled": 0,
+            "dataset_ready": False,
+            "dataset_state": "missing",
+            "dataset_yaml": None,
+        }
+
+    dataset_dir = labeling_dir / "dataset"
+    dataset_yaml = dataset_dir / "dataset.yaml"
+    dataset_exists = dataset_yaml.exists()
+    dataset_mtime = dataset_yaml.stat().st_mtime if dataset_exists else 0.0
+
+    dataset_entries: set[str] = set()
+    if dataset_exists:
+        for split in ("train", "val"):
+            labels_root = dataset_dir / split / "labels"
+            if not labels_root.is_dir():
+                continue
+            for label_file in labels_root.glob("*.txt"):
+                dataset_entries.add(label_file.stem)
+
+    any_stale = False
+    any_ready = False
 
     for match_dir in sorted(labeling_dir.iterdir()):
         if not match_dir.is_dir() or match_dir.name in ("dataset",):
@@ -256,6 +280,7 @@ def _scan_labeling_status(labeling_dir: Path) -> dict:
 
         frames_dir = match_dir / "frames"
         labels_dir = match_dir / "labels"
+        tasks_json = match_dir / "labelstudio" / "tasks.json"
 
         frame_count = len(list(frames_dir.glob("*.jpg"))) if frames_dir.exists() else 0
         label_count = (
@@ -265,13 +290,55 @@ def _scan_labeling_status(labeling_dir: Path) -> dict:
         )
 
         if frame_count > 0:
-            tasks_json = match_dir / "labelstudio" / "tasks.json"
             tasks_count = 0
             if tasks_json.exists():
                 try:
                     tasks_count = len(json.loads(tasks_json.read_text()))
                 except Exception:
                     pass
+
+            latest_inputs_mtime = 0.0
+            for candidate in (frames_dir, labels_dir):
+                if not candidate.exists():
+                    continue
+                for child in candidate.iterdir():
+                    if child.is_file():
+                        latest_inputs_mtime = max(latest_inputs_mtime, child.stat().st_mtime)
+            if tasks_json.exists():
+                latest_inputs_mtime = max(latest_inputs_mtime, tasks_json.stat().st_mtime)
+
+            dataset_included_count = 0
+            if dataset_entries:
+                prefix = f"{match_dir.name}_"
+                dataset_included_count = sum(
+                    1 for item in dataset_entries if item.startswith(prefix)
+                )
+
+            if label_count == 0:
+                dataset_state = "not_ready"
+                training_ready = False
+                blocker = "Upload labels"
+            elif not dataset_exists:
+                dataset_state = "missing"
+                training_ready = False
+                blocker = "Build dataset"
+            elif dataset_included_count == 0 or latest_inputs_mtime > dataset_mtime:
+                dataset_state = "stale"
+                training_ready = False
+                blocker = "Rebuild dataset"
+                any_stale = True
+            else:
+                dataset_state = "ready"
+                training_ready = True
+                blocker = "Ready to train"
+                any_ready = True
+
+            if not tasks_json.exists():
+                blocker = "Generate tasks"
+                training_ready = False
+                if label_count == 0:
+                    dataset_state = "not_ready"
+
             matches.append({
                 "name": match_dir.name,
                 "frames": frame_count,
@@ -279,18 +346,27 @@ def _scan_labeling_status(labeling_dir: Path) -> dict:
                 "pct_labeled": round(label_count / frame_count * 100, 1) if frame_count > 0 else 0,
                 "tasks_imported": tasks_json.exists(),
                 "tasks_count": tasks_count,
+                "tasks_generated": tasks_json.exists(),
+                "dataset_included_count": dataset_included_count,
+                "dataset_state": dataset_state,
+                "training_ready": training_ready,
+                "blocker": blocker,
             })
             total_frames += frame_count
             total_labeled += label_count
-
-    dataset_yaml = labeling_dir / "dataset" / "dataset.yaml"
 
     return {
         "matches": matches,
         "total_frames": total_frames,
         "total_labeled": total_labeled,
-        "dataset_ready": dataset_yaml.exists(),
-        "dataset_yaml": str(dataset_yaml) if dataset_yaml.exists() else None,
+        "dataset_ready": dataset_exists,
+        "dataset_state": (
+            "missing" if not dataset_exists
+            else "stale" if any_stale
+            else "ready" if any_ready
+            else "idle"
+        ),
+        "dataset_yaml": str(dataset_yaml) if dataset_exists else None,
     }
 
 
@@ -862,7 +938,59 @@ def _is_hidden_training_artifact_model(path: Path, models_dir: Path) -> bool:
     )
 
 
-def _collect_available_models(config: dict, models_dir: Path) -> list[dict]:
+def _find_model_last_usage(
+    identity: str,
+    *,
+    processed_dir: Path | None = None,
+    training_state: dict | None = None,
+) -> tuple[str | None, str | None]:
+    """Return best-known last usage metadata for a model path."""
+    latest_at = None
+    latest_context = None
+
+    def _consider(when: str | None, context: str | None):
+        nonlocal latest_at, latest_context
+        if not when:
+            return
+        if latest_at is None or when > latest_at:
+            latest_at = when
+            latest_context = context
+
+    if training_state:
+        for key, label in (
+            ("last_completed_run", "Completed training run"),
+            ("last_failed_run", "Failed training run"),
+            ("current_run", "Active training run"),
+        ):
+            run = training_state.get(key) or {}
+            if _path_identity(run.get("base_model")) == identity:
+                _consider(run.get("finished_at") or run.get("started_at"), f"{label}: base model")
+            output_path = run.get("output_model_path")
+            if _path_identity(output_path) == identity:
+                _consider(run.get("finished_at") or run.get("started_at"), f"{label}: output model")
+
+    if processed_dir and processed_dir.is_dir():
+        for match_dir in processed_dir.iterdir():
+            if not match_dir.is_dir() or match_dir.name.startswith("."):
+                continue
+            meta = _load_json_file(match_dir / "metadata.json")
+            runtime = meta.get("model_runtime") if isinstance(meta.get("model_runtime"), dict) else {}
+            processed_at = meta.get("processed_at") or meta.get("processing_start")
+            if _path_identity(runtime.get("ball_model_path")) == identity:
+                _consider(str(processed_at or ""), f"Processed match {meta.get('game_name') or match_dir.name}: ball model")
+            if _path_identity(runtime.get("player_model_path")) == identity:
+                _consider(str(processed_at or ""), f"Processed match {meta.get('game_name') or match_dir.name}: player model")
+
+    return latest_at, latest_context
+
+
+def _collect_available_models(
+    config: dict,
+    models_dir: Path,
+    *,
+    processed_dir: Path | None = None,
+    training_state: dict | None = None,
+) -> list[dict]:
     """Collect unique available .pt models from local and configured locations."""
     configured_base = _path_identity(config.get("model", {}).get("base_model"))
     configured_detection = _path_identity(config.get("detection", {}).get("path"))
@@ -941,12 +1069,49 @@ def _collect_available_models(config: dict, models_dir: Path) -> list[dict]:
                 configured_player_detection,
                 configured_player_detector,
             },
+            "role_hints": [
+                hint
+                for hint, enabled in (
+                    ("training-base", identity == configured_base),
+                    ("ball-ingest", identity in {configured_detection, configured_detector, active_ball_inference_path}),
+                    ("player-ingest", identity in {configured_player_detection, configured_player_detector, active_player_inference_path}),
+                    ("active-alias", Path(identity).name == "ball_best.pt"),
+                )
+                if enabled
+            ],
+            "protected_reason": (
+                "Protected as active inference alias"
+                if Path(identity).name == "ball_best.pt"
+                else "Protected by configured training base model"
+                if identity == configured_base
+                else "Protected by current ball ingest selection"
+                if identity == active_ball_inference_path
+                else "Protected by current player ingest selection"
+                if identity == active_player_inference_path
+                else "Protected by configured ingest path"
+                if identity in {
+                    configured_detection,
+                    configured_detector,
+                    configured_player_detection,
+                    configured_player_detector,
+                }
+                else None
+            ),
             "can_delete": (
                 is_local
                 and Path(identity).name != "ball_best.pt"
                 and identity not in protected_paths
             ),
         })
+
+    for item in entries:
+        last_used_at, last_used_context = _find_model_last_usage(
+            item["path"],
+            processed_dir=processed_dir,
+            training_state=training_state,
+        )
+        item["last_used_at"] = last_used_at
+        item["last_used_context"] = last_used_context
 
     return sorted(
         entries,
@@ -1119,7 +1284,16 @@ def create_app(config: dict | None = None) -> FastAPI:
     # ------------------------------------------------------------------
 
     # In-memory training state (single-server, no persistence needed)
-    _training_state = {"status": "idle", "log": [], "error": None}
+    _training_state = {
+        "status": "idle",
+        "log": [],
+        "error": None,
+        "current_run": None,
+        "last_completed_run": None,
+        "last_failed_run": None,
+        "last_dataset_build": None,
+        "last_dataset_failure": None,
+    }
     _training_lock = threading.Lock()
 
     paths_cfg = config.get("paths", {})
@@ -1139,6 +1313,394 @@ def create_app(config: dict | None = None) -> FastAPI:
         str(ext).lower()
         for ext in watcher_cfg.get("ignore_suffixes", [".uploading", ".tmp", ".part"])
     }
+
+    def _training_snapshot() -> dict:
+        with _training_lock:
+            return json.loads(json.dumps(_training_state))
+
+    def _workflow_family_key(match_name: str, meta: dict | None = None) -> str:
+        meta = meta or {}
+        for candidate in (meta.get("ingest_source_path"), meta.get("source")):
+            if isinstance(candidate, str) and candidate:
+                stem = Path(candidate).stem
+                if stem:
+                    return stem
+
+        game_name = meta.get("game_name")
+        if (
+            isinstance(game_name, str)
+            and game_name
+            and (match_name == game_name or match_name.startswith(f"{game_name}_run"))
+        ):
+            return game_name
+
+        return re.sub(r"_run\d+$", "", match_name)
+
+    def _list_match_videos(match_name: str) -> list[dict]:
+        match_dir = processed_dir / match_name
+        videos = []
+        for vf in sorted(match_dir.glob("*.mp4")):
+            videos.append({"name": vf.name, "size_mb": round(vf.stat().st_size / 1e6, 1)})
+        hl_dir = highlights_dir / match_name
+        if hl_dir.is_dir():
+            for vf in sorted(hl_dir.glob("*.mp4")):
+                videos.append({"name": f"highlights/{vf.name}", "size_mb": round(vf.stat().st_size / 1e6, 1)})
+        return videos
+
+    def _count_hard_frames(match_name: str, match_dir: Path, meta: dict) -> int:
+        labeling_match_dir = labeling_dir / _workflow_family_key(match_name, meta)
+        frames_dir = labeling_match_dir / "frames"
+        if frames_dir.is_dir():
+            return len(list(frames_dir.glob("*.jpg")))
+
+        hard_frames_path = match_dir / "hard_frames.json"
+        if hard_frames_path.is_file():
+            try:
+                payload = json.loads(hard_frames_path.read_text())
+                frames = payload.get("frames")
+                if isinstance(frames, list):
+                    return len(frames)
+            except Exception:
+                pass
+        return 0
+
+    def _build_reset_preview(match_name: str) -> dict:
+        _validate_flat_name(match_name, "match name")
+        selected_dir = processed_dir / match_name
+        if not selected_dir.is_dir():
+            raise HTTPException(status_code=404, detail="Processed match not found")
+
+        selected_meta = _load_json_file(selected_dir / "metadata.json")
+        canonical_match = str(selected_meta.get("game_name") or selected_dir.name)
+
+        related: list[tuple[Path, dict]] = [(selected_dir, selected_meta)]
+        if processed_dir.is_dir():
+            for match_dir in sorted(processed_dir.iterdir()):
+                if (
+                    match_dir == selected_dir
+                    or not match_dir.is_dir()
+                    or match_dir.name.startswith(".")
+                ):
+                    continue
+                meta = _load_json_file(match_dir / "metadata.json")
+                meta_game_name = meta.get("game_name")
+                if isinstance(meta_game_name, str) and meta_game_name == canonical_match:
+                    related.append((match_dir, meta))
+
+        job_ids: list[str] = []
+        ingest_paths: list[str] = []
+        restore_candidates: list[Path] = []
+        restore_seen: set[str] = set()
+        restore_target_names: list[str] = []
+        for _, meta in related:
+            job_id = meta.get("job_id")
+            if isinstance(job_id, str) and job_id:
+                job_ids.append(job_id)
+
+            ingest_source = meta.get("ingest_source_path")
+            if isinstance(ingest_source, str) and ingest_source:
+                ingest_paths.append(ingest_source)
+                restore_target_names.append(Path(ingest_source).name)
+
+            for key in (
+                "ingest_archived_path",
+                "ingest_archive_destination_path",
+                "ingest_source_path",
+            ):
+                candidate = meta.get(key)
+                if not isinstance(candidate, str) or not candidate or candidate in restore_seen:
+                    continue
+                restore_candidates.append(Path(candidate))
+                restore_seen.add(candidate)
+
+        active_jobs = store.get_active_jobs_by_input_stem(canonical_match)
+        training_busy = _training_snapshot().get("status") in ("running", "building")
+        blocked_reason = None
+        if training_busy:
+            blocked_reason = "Cannot remove a processed match while dataset build or training is in progress."
+        elif active_jobs:
+            blocked_reason = f"Cannot remove '{canonical_match}' while a matching job is queued or running."
+
+        deleted_processed_count = sum(1 for match_dir, _ in related if match_dir.exists())
+        deleted_highlights_count = sum(
+            1 for match_dir, _ in related if (highlights_dir / match_dir.name).exists()
+        )
+        labeling_match_dir = labeling_dir / canonical_match
+        restore_name = next((name for name in restore_target_names if name), None)
+        restorable_source_path = None
+        for candidate in restore_candidates:
+            if candidate.exists():
+                restorable_source_path = str(candidate)
+                break
+
+        return {
+            "allowed": blocked_reason is None,
+            "blocked_reason": blocked_reason,
+            "canonical_match": canonical_match,
+            "selected_match_name": match_name,
+            "related_match_names": [match_dir.name for match_dir, _ in related],
+            "deleted_processed_dirs_count": deleted_processed_count,
+            "deleted_highlights_dirs_count": deleted_highlights_count,
+            "labeling_deleted": labeling_match_dir.exists(),
+            "dataset_invalidated": (labeling_dir / "dataset").exists(),
+            "purged_job_ids": sorted(dict.fromkeys(job_ids)),
+            "dedupe_target_paths": list(dict.fromkeys(ingest_paths)),
+            "restore_candidate_paths": [str(path) for path in restore_candidates],
+            "restorable_source_path": restorable_source_path,
+            "restore_target_name": restore_name,
+        }
+
+    def _build_match_payload(match_name: str) -> dict:
+        _validate_flat_name(match_name, "match name")
+        match_dir = processed_dir / match_name
+        if not match_dir.is_dir():
+            raise HTTPException(status_code=404, detail=f"Match not found: {match_name}")
+
+        meta = _load_json_file(match_dir / "metadata.json")
+        family_key = _workflow_family_key(match_name, meta)
+        videos = _list_match_videos(match_name)
+        labeling_state = _scan_labeling_status(labeling_dir)
+        labeling_match = next(
+            (item for item in labeling_state["matches"] if item["name"] == family_key),
+            None,
+        )
+        runtime = meta.get("model_runtime") if isinstance(meta.get("model_runtime"), dict) else {}
+        reset_preview = _build_reset_preview(match_name)
+
+        return {
+            "name": match_name,
+            "family_key": family_key,
+            "canonical_match": meta.get("game_name", match_name),
+            "job_id": meta.get("job_id"),
+            "videos": videos,
+            "mode": meta.get("mode", "--"),
+            "processed_at": meta.get("processed_at", meta.get("processing_start", "--")),
+            "source_path": meta.get("source"),
+            "ingest_source_path": meta.get("ingest_source_path"),
+            "ingest_archived_path": meta.get("ingest_archived_path"),
+            "ingest_archive_status": meta.get("ingest_archive_status"),
+            "outputs": meta.get("outputs", {}),
+            "phase_metrics": meta.get("phase_metrics"),
+            "hard_frames_count": _count_hard_frames(match_name, match_dir, meta),
+            "labeling": labeling_match,
+            "dataset_state": labeling_match.get("dataset_state") if labeling_match else labeling_state.get("dataset_state"),
+            "model_runtime": runtime,
+            "reset_preview": reset_preview,
+        }
+
+    def _build_workflow_matches() -> dict:
+        labeling_state = _scan_labeling_status(labeling_dir)
+        labeling_by_name = {item["name"]: item for item in labeling_state["matches"]}
+        inference_state = _inference_model_status(config, models_dir)
+        training_state = _training_snapshot()
+        jobs = store.get_jobs(limit=500)
+
+        staged_files = _list_staging_files(
+            staging_dir,
+            video_extensions=video_extensions,
+            ignore_suffixes=ignore_suffixes,
+        )
+        active_jobs_by_key: dict[str, list[dict]] = {}
+        for job in jobs:
+            if job.get("status") not in {"queued", "running"}:
+                continue
+            input_path = job.get("input_path") or ""
+            key = Path(str(input_path)).stem
+            active_jobs_by_key.setdefault(key, []).append(job)
+
+        records: dict[str, dict] = {}
+
+        def _record_for(key: str, *, display_name: str | None = None) -> dict:
+            if key not in records:
+                records[key] = {
+                    "key": key,
+                    "canonical_match": display_name or key,
+                    "display_name": display_name or key,
+                    "source_filename": None,
+                    "staging": {"present": False, "files": []},
+                    "job": {
+                        "state": "idle",
+                        "jobs": [],
+                        "job_id": None,
+                        "mode": None,
+                        "started_at": None,
+                    },
+                    "processed": {
+                        "present": False,
+                        "primary_match_name": None,
+                        "match_names": [],
+                        "video_count": 0,
+                        "highlight_count": 0,
+                        "processed_at": None,
+                    },
+                    "labeling": None,
+                    "models": {
+                        "planned_ball_model": Path(str(inference_state.get("ball", {}).get("resolved_path") or "")).name or None,
+                        "planned_player_model": Path(str(inference_state.get("player", {}).get("resolved_path") or "")).name or None,
+                        "actual_ball_model": None,
+                        "actual_player_model": None,
+                    },
+                    "reset_preview": None,
+                    "status": "idle",
+                    "next_action": "Inspect asset",
+                    "updated_at": None,
+                }
+            elif display_name and records[key]["display_name"] == key:
+                records[key]["display_name"] = display_name
+                records[key]["canonical_match"] = display_name
+            return records[key]
+
+        for staged in staged_files:
+            key = Path(staged["name"]).stem
+            record = _record_for(key)
+            record["source_filename"] = record["source_filename"] or staged["name"]
+            record["staging"]["present"] = True
+            record["staging"]["files"].append(staged)
+            record["updated_at"] = max(filter(None, [record["updated_at"], staged["modified_at"]]), default=staged["modified_at"])
+
+        if processed_dir.is_dir():
+            for match_dir in sorted(processed_dir.iterdir()):
+                if not match_dir.is_dir() or match_dir.name.startswith("."):
+                    continue
+                meta = _load_json_file(match_dir / "metadata.json")
+                key = _workflow_family_key(match_dir.name, meta)
+                display_name = meta.get("game_name") if isinstance(meta.get("game_name"), str) and meta.get("game_name") else key
+                record = _record_for(key, display_name=display_name)
+                processed_at = meta.get("processed_at", meta.get("processing_start"))
+                videos = _list_match_videos(match_dir.name)
+                highlight_count = sum(1 for item in videos if item["name"].startswith("highlights/"))
+                record["processed"]["present"] = True
+                record["processed"]["match_names"].append(match_dir.name)
+                record["processed"]["video_count"] += len(videos) - highlight_count
+                record["processed"]["highlight_count"] += highlight_count
+                if (
+                    record["processed"]["primary_match_name"] is None
+                    or str(processed_at or "") >= str(record["processed"]["processed_at"] or "")
+                ):
+                    record["processed"]["primary_match_name"] = match_dir.name
+                    record["processed"]["processed_at"] = processed_at
+                    record["source_filename"] = record["source_filename"] or (
+                        Path(str(meta.get("ingest_source_path") or meta.get("source") or "")).name or None
+                    )
+                    runtime = meta.get("model_runtime") if isinstance(meta.get("model_runtime"), dict) else {}
+                    record["models"]["actual_ball_model"] = (
+                        Path(str(runtime.get("ball_model_path") or "")).name or None
+                    )
+                    record["models"]["actual_player_model"] = (
+                        Path(str(runtime.get("player_model_path") or "")).name or None
+                    )
+                record["updated_at"] = max(filter(None, [record["updated_at"], processed_at]), default=processed_at)
+
+        for key, jobs_for_key in active_jobs_by_key.items():
+            record = _record_for(key)
+            jobs_for_key.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+            running = next((item for item in jobs_for_key if item.get("status") == "running"), None)
+            chosen = running or jobs_for_key[0]
+            record["job"] = {
+                "state": chosen.get("status"),
+                "jobs": jobs_for_key,
+                "job_id": chosen.get("job_id"),
+                "mode": chosen.get("mode"),
+                "started_at": chosen.get("started_at") or chosen.get("created_at"),
+            }
+            input_name = Path(str(chosen.get("input_path") or "")).name
+            record["source_filename"] = record["source_filename"] or input_name
+            record["updated_at"] = max(
+                filter(None, [record["updated_at"], chosen.get("started_at"), chosen.get("created_at")]),
+                default=record["updated_at"],
+            )
+
+        for key, label_item in labeling_by_name.items():
+            record = _record_for(key)
+            record["labeling"] = label_item
+            record["updated_at"] = record["updated_at"] or datetime.now().isoformat()
+
+        for record in records.values():
+            processed = record["processed"]
+            labeling_item = record["labeling"] or {}
+            primary_match_name = processed.get("primary_match_name")
+            if primary_match_name:
+                try:
+                    record["reset_preview"] = _build_reset_preview(primary_match_name)
+                except HTTPException:
+                    record["reset_preview"] = None
+
+            if record["job"]["state"] == "running":
+                record["status"] = "processing"
+                record["next_action"] = "Monitor live run"
+            elif record["job"]["state"] == "queued":
+                record["status"] = "queued"
+                record["next_action"] = "Watch queue"
+            elif record["staging"]["present"] and not processed["present"]:
+                record["status"] = "staged"
+                record["next_action"] = "Send to ingest"
+            elif processed["present"] and labeling_item.get("frames", 0) > 0 and not labeling_item.get("tasks_generated"):
+                record["status"] = "ready_to_label"
+                record["next_action"] = "Generate labeling tasks"
+            elif processed["present"] and labeling_item.get("tasks_generated") and labeling_item.get("labeled", 0) == 0:
+                record["status"] = "labeling"
+                record["next_action"] = "Open Label Studio"
+            elif labeling_item.get("dataset_state") in {"missing", "stale"} and labeling_item.get("labeled", 0) > 0:
+                record["status"] = "dataset_pending"
+                record["next_action"] = "Build dataset"
+            elif labeling_item.get("training_ready"):
+                record["status"] = "ready_to_train"
+                record["next_action"] = "Start training"
+            elif processed["present"]:
+                record["status"] = "processed"
+                record["next_action"] = "Review outputs"
+
+        def _updated_sort_value(value: str | None) -> float:
+            if not value:
+                return 0.0
+            try:
+                return datetime.fromisoformat(str(value)).timestamp()
+            except Exception:
+                return 0.0
+
+        matches = sorted(
+            records.values(),
+            key=lambda item: (
+                {
+                    "processing": 0,
+                    "queued": 1,
+                    "staged": 2,
+                    "ready_to_label": 3,
+                    "labeling": 4,
+                    "dataset_pending": 5,
+                    "ready_to_train": 6,
+                    "processed": 7,
+                    "idle": 8,
+                }.get(item["status"], 9),
+                -_updated_sort_value(item.get("updated_at")),
+                item["display_name"].lower(),
+            ),
+        )
+
+        summary = {
+            "total_matches": len(matches),
+            "staged": sum(1 for item in matches if item["status"] == "staged"),
+            "queued": sum(1 for item in matches if item["status"] == "queued"),
+            "processing": sum(1 for item in matches if item["status"] == "processing"),
+            "ready_to_label": sum(1 for item in matches if item["status"] == "ready_to_label"),
+            "labeling": sum(1 for item in matches if item["status"] == "labeling"),
+            "dataset_pending": sum(1 for item in matches if item["status"] == "dataset_pending"),
+            "ready_to_train": sum(1 for item in matches if item["status"] == "ready_to_train"),
+            "processed": sum(1 for item in matches if item["status"] == "processed"),
+        }
+
+        return {
+            "summary": summary,
+            "matches": matches,
+            "inference": inference_state,
+            "training": training_state,
+            "dataset": {
+                "state": labeling_state.get("dataset_state"),
+                "ready": labeling_state.get("dataset_ready"),
+                "total_frames": labeling_state.get("total_frames"),
+                "total_labeled": labeling_state.get("total_labeled"),
+            },
+        }
 
     @app.get("/api/training/labeling-status")
     async def labeling_status():
@@ -1281,13 +1843,17 @@ def create_app(config: dict | None = None) -> FastAPI:
 
     @app.get("/api/training/status")
     async def training_status():
-        with _training_lock:
-            return dict(_training_state)
+        return _training_snapshot()
 
     @app.get("/api/training/models")
     async def list_models():
         """List available models in /tank/models."""
-        return _collect_available_models(config, models_dir)
+        return _collect_available_models(
+            config,
+            models_dir,
+            processed_dir=processed_dir,
+            training_state=_training_snapshot(),
+        )
 
     @app.post("/api/training/models/delete")
     async def delete_model(request: Request):
@@ -1385,6 +1951,7 @@ def create_app(config: dict | None = None) -> FastAPI:
             _training_state["status"] = "building"
             _training_state["log"] = []
             _training_state["error"] = None
+            _training_state["current_run"] = None
 
         def _run_build():
             try:
@@ -1407,6 +1974,15 @@ def create_app(config: dict | None = None) -> FastAPI:
                 with _training_lock:
                     _training_state["log"] = log_lines
                     _training_state["status"] = "idle"
+                    _training_state["last_dataset_build"] = {
+                        "status": "completed",
+                        "finished_at": datetime.now().isoformat(),
+                        "train_count": result["train_count"],
+                        "val_count": result["val_count"],
+                        "total_count": result["total_count"],
+                        "dataset_yaml": str(result["dataset_yaml"]),
+                    }
+                    _training_state["last_dataset_failure"] = None
                 logger.info(
                     "Dataset build completed (%d train, %d val)",
                     result["train_count"],
@@ -1418,6 +1994,11 @@ def create_app(config: dict | None = None) -> FastAPI:
                     _training_state["error"] = str(exc)
                     if not _training_state["log"]:
                         _training_state["log"] = [str(exc)]
+                    _training_state["last_dataset_failure"] = {
+                        "status": "failed",
+                        "finished_at": datetime.now().isoformat(),
+                        "error": str(exc),
+                    }
                 logger.exception("Dataset build failed")
 
         threading.Thread(target=_run_build, daemon=True).start()
@@ -1440,12 +2021,30 @@ def create_app(config: dict | None = None) -> FastAPI:
             _training_state["status"] = "running"
             _training_state["log"] = []
             _training_state["error"] = None
+            _training_state["current_run"] = {
+                "status": "running",
+                "started_at": datetime.now().isoformat(),
+                "epochs": epochs,
+                "base_model": selected_base_model,
+                "output_model_name": output_model_name,
+                "update_active": update_active,
+                "output_model_path": str(
+                    models_dir / f"{str(output_model_name or 'ball_best')}.pt"
+                ),
+            }
 
         dataset_yaml = labeling_dir / "dataset" / "dataset.yaml"
         if not dataset_yaml.exists():
             with _training_lock:
                 _training_state["status"] = "failed"
                 _training_state["error"] = "No dataset found. Build the dataset first."
+                _training_state["last_failed_run"] = {
+                    **(_training_state.get("current_run") or {}),
+                    "status": "failed",
+                    "finished_at": datetime.now().isoformat(),
+                    "error": "No dataset found. Build the dataset first.",
+                }
+                _training_state["current_run"] = None
             raise HTTPException(status_code=400, detail="Dataset not built. Run build-dataset first.")
 
         def _run_training():
@@ -1464,6 +2063,7 @@ def create_app(config: dict | None = None) -> FastAPI:
                     cwd=str(APP_ROOT),
                 )
                 with _training_lock:
+                    current_run = dict(_training_state.get("current_run") or {})
                     _training_state["log"] = (
                         result.stdout.splitlines() + result.stderr.splitlines()
                     )[-50:]
@@ -1472,18 +2072,46 @@ def create_app(config: dict | None = None) -> FastAPI:
                         _training_state["error"] = (
                             result.stderr[-500:] if result.stderr else f"Exit code {result.returncode}"
                         )
+                        _training_state["last_failed_run"] = {
+                            **current_run,
+                            "status": "failed",
+                            "finished_at": datetime.now().isoformat(),
+                            "error": _training_state["error"],
+                            "returncode": result.returncode,
+                        }
                     else:
                         _training_state["status"] = "completed"
+                        _training_state["last_completed_run"] = {
+                            **current_run,
+                            "status": "completed",
+                            "finished_at": datetime.now().isoformat(),
+                            "returncode": result.returncode,
+                        }
+                    _training_state["current_run"] = None
                 logger.info("Training completed (exit=%d)", result.returncode)
             except subprocess.TimeoutExpired:
                 with _training_lock:
                     _training_state["status"] = "failed"
                     _training_state["error"] = "Training timed out after 2 hours"
+                    _training_state["last_failed_run"] = {
+                        **(_training_state.get("current_run") or {}),
+                        "status": "failed",
+                        "finished_at": datetime.now().isoformat(),
+                        "error": "Training timed out after 2 hours",
+                    }
+                    _training_state["current_run"] = None
                 logger.error("Training timed out")
             except Exception as exc:
                 with _training_lock:
                     _training_state["status"] = "failed"
                     _training_state["error"] = str(exc)
+                    _training_state["last_failed_run"] = {
+                        **(_training_state.get("current_run") or {}),
+                        "status": "failed",
+                        "finished_at": datetime.now().isoformat(),
+                        "error": str(exc),
+                    }
+                    _training_state["current_run"] = None
                 logger.exception("Training failed")
 
         threading.Thread(target=_run_training, daemon=True).start()
@@ -1548,36 +2176,15 @@ def create_app(config: dict | None = None) -> FastAPI:
                     })
         return matches
 
+    @app.get("/api/workflow/matches")
+    async def workflow_matches():
+        """Return canonical workflow rows for the redesigned dashboard."""
+        return _build_workflow_matches()
+
     @app.get("/api/media/matches/{match_name}")
     async def get_match(match_name: str):
         """Return metadata and video list for a single processed match."""
-        if ".." in match_name or "/" in match_name or "\\" in match_name:
-            raise HTTPException(status_code=400, detail="Invalid match name")
-        match_dir = processed_dir / match_name
-        if not match_dir.is_dir():
-            raise HTTPException(status_code=404, detail=f"Match not found: {match_name}")
-        videos = []
-        for vf in sorted(match_dir.glob("*.mp4")):
-            videos.append({"name": vf.name, "size_mb": round(vf.stat().st_size / 1e6, 1)})
-        hl_dir = highlights_dir / match_name
-        if hl_dir.is_dir():
-            for vf in sorted(hl_dir.glob("*.mp4")):
-                videos.append({"name": f"highlights/{vf.name}", "size_mb": round(vf.stat().st_size / 1e6, 1)})
-        meta = {}
-        meta_file = match_dir / "metadata.json"
-        if meta_file.exists():
-            try:
-                meta = json.loads(meta_file.read_text())
-            except Exception:
-                pass
-        return {
-            "name": match_name,
-            "canonical_match": meta.get("game_name", match_name),
-            "job_id": meta.get("job_id"),
-            "videos": videos,
-            "mode": meta.get("mode", "--"),
-            "processed_at": meta.get("processed_at", meta.get("processing_start", "--")),
-        }
+        return _build_match_payload(match_name)
 
     @app.get("/api/staging/files")
     async def list_staging_files():
@@ -1697,6 +2304,21 @@ def create_app(config: dict | None = None) -> FastAPI:
             partial_path.unlink()
         return {"ok": True, "filename": filename}
 
+    @app.post("/api/staging/delete")
+    async def delete_staging_file(request: Request):
+        """Permanently delete a staged video file."""
+        body = await request.json()
+        filename = body.get("filename", "")
+        _validate_flat_name(filename, "filename")
+        target = staging_dir / filename
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="Staged file not found")
+        target.unlink()
+        partial = staging_dir / (filename + ".uploading")
+        if partial.exists():
+            partial.unlink()
+        return {"ok": True, "filename": filename}
+
     @app.post("/api/staging/import")
     async def import_staging_file(request: Request):
         """Move a selected staging file into ingest for watcher pickup."""
@@ -1742,79 +2364,18 @@ def create_app(config: dict | None = None) -> FastAPI:
     @app.post("/api/media/matches/{match_name}/reset")
     async def reset_match(match_name: str):
         """Delete a processed match family and restore one source video to staging."""
-        _validate_flat_name(match_name, "match name")
+        preview = _build_reset_preview(match_name)
+        if not preview["allowed"]:
+            raise HTTPException(status_code=409, detail=preview["blocked_reason"])
 
-        with _training_lock:
-            if _training_state["status"] in ("running", "building"):
-                raise HTTPException(
-                    status_code=409,
-                    detail="Cannot remove a processed match while dataset build or training is in progress.",
-                )
-
-        selected_dir = processed_dir / match_name
-        if not selected_dir.is_dir():
-            raise HTTPException(status_code=404, detail="Processed match not found")
-
-        selected_meta = _load_json_file(selected_dir / "metadata.json")
-        canonical_match = str(selected_meta.get("game_name") or selected_dir.name)
-
-        active_jobs = store.get_active_jobs_by_input_stem(canonical_match)
-        if active_jobs:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Cannot remove '{canonical_match}' while a matching job is queued or running.",
-            )
-
-        related: list[tuple[Path, dict]] = [(selected_dir, selected_meta)]
-        if processed_dir.is_dir():
-            for match_dir in sorted(processed_dir.iterdir()):
-                if (
-                    match_dir == selected_dir
-                    or not match_dir.is_dir()
-                    or match_dir.name.startswith(".")
-                ):
-                    continue
-
-                meta = _load_json_file(match_dir / "metadata.json")
-                meta_game_name = meta.get("game_name")
-                if isinstance(meta_game_name, str) and meta_game_name == canonical_match:
-                    related.append((match_dir, meta))
-
-        job_ids = []
-        ingest_paths = []
-        restore_candidates = []
-        restore_seen = set()
-        restore_target_names = []
-        for match_dir, meta in related:
-            job_id = meta.get("job_id")
-            if isinstance(job_id, str) and job_id:
-                job_ids.append(job_id)
-
-            ingest_source = meta.get("ingest_source_path")
-            if isinstance(ingest_source, str) and ingest_source:
-                ingest_paths.append(ingest_source)
-                restore_target_names.append(Path(ingest_source).name)
-
-            for key in (
-                "ingest_archived_path",
-                "ingest_archive_destination_path",
-                "ingest_source_path",
-            ):
-                candidate = meta.get(key)
-                if not isinstance(candidate, str) or not candidate or candidate in restore_seen:
-                    continue
-                restore_candidates.append(Path(candidate))
-                restore_seen.add(candidate)
-
-        job_ids = sorted(dict.fromkeys(job_ids))
-        ingest_paths = list(dict.fromkeys(ingest_paths))
-        restore_name = next((name for name in restore_target_names if name), None)
+        canonical_match = preview["canonical_match"]
 
         warnings = []
         deleted_processed_count = 0
         deleted_highlights_count = 0
-        for match_dir, _ in related:
-            highlights_match_dir = highlights_dir / match_dir.name
+        for related_name in preview["related_match_names"]:
+            match_dir = processed_dir / related_name
+            highlights_match_dir = highlights_dir / related_name
             if highlights_match_dir.exists():
                 shutil.rmtree(highlights_match_dir)
                 deleted_highlights_count += 1
@@ -1834,26 +2395,27 @@ def create_app(config: dict | None = None) -> FastAPI:
             shutil.rmtree(dataset_dir)
             dataset_invalidated = True
 
-        purged_job_count = store.delete_jobs(job_ids)
+        purged_job_count = store.delete_jobs(preview["purged_job_ids"])
 
         dedupe_entries_removed = 0
         try:
             dedupe_store = ProcessedIngestStore(processed_state_path)
-            dedupe_entries_removed = dedupe_store.delete_paths(ingest_paths)
+            dedupe_entries_removed = dedupe_store.delete_paths(preview["dedupe_target_paths"])
         except Exception as exc:
             warnings.append(f"Failed to update watcher dedupe state: {exc}")
 
         staging_dir.mkdir(parents=True, exist_ok=True)
         restored_staging_path = None
         found_existing_candidate = False
-        for candidate in restore_candidates:
+        for candidate_str in preview["restore_candidate_paths"]:
+            candidate = Path(candidate_str)
             if not candidate.exists():
                 continue
 
             found_existing_candidate = True
             dest_path = _unique_file_path(
                 staging_dir,
-                restore_name or candidate.name,
+                preview["restore_target_name"] or candidate.name,
             )
             try:
                 _safe_move(candidate, dest_path, overwrite=False)
@@ -1875,7 +2437,7 @@ def create_app(config: dict | None = None) -> FastAPI:
             "deleted_highlights_dirs_count": deleted_highlights_count,
             "labeling_deleted": labeling_deleted,
             "dataset_invalidated": dataset_invalidated,
-            "purged_job_ids": job_ids,
+            "purged_job_ids": preview["purged_job_ids"],
             "purged_job_count": purged_job_count,
             "dedupe_entries_removed": dedupe_entries_removed,
             "restored_staging_path": restored_staging_path,

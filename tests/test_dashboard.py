@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 import zipfile
@@ -646,7 +647,53 @@ class TestTrainingAPI:
         """GET /api/training/status returns idle initially."""
         resp = client.get("/api/training/status")
         assert resp.status_code == 200
-        assert resp.json()["status"] == "idle"
+        data = resp.json()
+        assert data["status"] == "idle"
+        assert data["current_run"] is None
+        assert data["last_completed_run"] is None
+        assert data["last_failed_run"] is None
+        assert data["last_dataset_build"] is None
+        assert data["last_dataset_failure"] is None
+
+    def test_training_status_records_completed_run_metadata(self, client, dashboard_config):
+        labeling_dir = Path(dashboard_config["paths"]["labeling"])
+        models_dir = Path(dashboard_config["paths"]["models"])
+        dataset_dir = labeling_dir / "dataset"
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        (dataset_dir / "dataset.yaml").write_text("path: dataset\n", encoding="utf-8")
+        base_model = models_dir / "custom_base.pt"
+        base_model.write_bytes(b"weights")
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, 0, stdout="training ok\n", stderr="")
+
+        with patch("src.dashboard.subprocess.run", side_effect=fake_run):
+            resp = client.post(
+                "/api/training/train",
+                json={
+                    "epochs": 4,
+                    "base_model": str(base_model),
+                    "output_model_name": "experiment_a",
+                    "update_active": False,
+                },
+            )
+
+        assert resp.status_code == 200
+
+        status = None
+        for _ in range(40):
+            status = client.get("/api/training/status").json()
+            if status["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.05)
+
+        assert status is not None
+        assert status["status"] == "completed"
+        assert status["current_run"] is None
+        assert status["last_completed_run"]["epochs"] == 4
+        assert status["last_completed_run"]["base_model"] == str(base_model)
+        assert status["last_completed_run"]["output_model_name"] == "experiment_a"
+        assert status["last_completed_run"]["output_model_path"] == str(models_dir / "experiment_a.pt")
 
     def test_models_endpoint(self, client):
         """GET /api/training/models returns list."""
@@ -681,6 +728,39 @@ class TestTrainingAPI:
         assert any(item["path"] == str(active_model) and item["can_delete"] is False for item in data)
         assert any(item["path"] == str(configured_model) and item["can_delete"] is False for item in data)
         assert any(item["path"] == str(configured_ingest) and item["can_delete"] is False for item in data)
+
+    def test_models_endpoint_reports_role_hints_and_last_usage(self, client, dashboard_config):
+        models_dir = Path(dashboard_config["paths"]["models"])
+        processed_dir = Path(dashboard_config["paths"]["processed"])
+        inference_model = models_dir / "fine_tuned.pt"
+        inference_model.write_bytes(b"fine")
+        dashboard_config["detection"] = {"path": str(inference_model)}
+
+        _write_json(
+            processed_dir / "match_a" / "metadata.json",
+            {
+                "game_name": "match_a",
+                "processed_at": "2026-03-30T12:00:00",
+                "model_runtime": {
+                    "ball_model_path": str(inference_model),
+                    "ball_model_source": "runtime.pinned.ball",
+                },
+            },
+        )
+        (processed_dir / "match_a" / "broadcast.mp4").write_bytes(b"broadcast")
+
+        with patch("src.dashboard.create_event_store", return_value=EventStore(":memory:")):
+            app = create_app(dashboard_config)
+        local_client = _ASGIClient(app)
+
+        resp = local_client.get("/api/training/models")
+        assert resp.status_code == 200
+        data = resp.json()
+        model = next(item for item in data if item["path"] == str(inference_model))
+        assert "ball-ingest" in model["role_hints"]
+        assert model["protected_reason"] == "Protected by current ball ingest selection"
+        assert model["last_used_at"] == "2026-03-30T12:00:00"
+        assert model["last_used_context"] == "Processed match match_a: ball model"
 
     def test_models_endpoint_hides_per_run_best_and_last_artifacts(self, client, dashboard_config):
         models_dir = Path(dashboard_config["paths"]["models"])
@@ -1145,6 +1225,149 @@ class TestMatchEndpoints:
         video_names = {v["name"] for v in data["videos"]}
         assert "broadcast.mp4" in video_names
         assert "tactical_wide.mp4" in video_names
+
+    def test_get_match_returns_enriched_workflow_payload(self, client, dashboard_config):
+        processed_dir = Path(dashboard_config["paths"]["processed"])
+        highlights_dir = Path(dashboard_config["paths"]["highlights"])
+        labeling_dir = Path(dashboard_config["paths"]["labeling"])
+        archive_dir = Path(dashboard_config["paths"]["archive_raw"])
+        ingest_dir = Path(dashboard_config["paths"]["ingest"])
+
+        archived_video = archive_dir / "match_a_archived.mp4"
+        archived_video.write_bytes(b"archived")
+
+        match_dir = processed_dir / "match_a_run1"
+        match_dir.mkdir(parents=True)
+        (match_dir / "broadcast.mp4").write_bytes(b"x" * 1000)
+        (match_dir / "tactical_wide.mp4").write_bytes(b"y" * 2000)
+        (highlights_dir / "match_a_run1").mkdir(parents=True)
+        (highlights_dir / "match_a_run1" / "highlight_001.mp4").write_bytes(b"h")
+        (labeling_dir / "match_a" / "frames").mkdir(parents=True)
+        (labeling_dir / "match_a" / "frames" / "frame_000001.jpg").write_bytes(b"frame")
+        (labeling_dir / "match_a" / "labels").mkdir(parents=True)
+        (labeling_dir / "match_a" / "labels" / "frame_000001.txt").write_text("0 0.5 0.5 0.1 0.1\n", encoding="utf-8")
+        (labeling_dir / "match_a" / "labelstudio").mkdir(parents=True)
+        (labeling_dir / "match_a" / "labelstudio" / "tasks.json").write_text(
+            json.dumps([{"id": 1}]),
+            encoding="utf-8",
+        )
+        (labeling_dir / "dataset" / "train" / "labels").mkdir(parents=True, exist_ok=True)
+        (labeling_dir / "dataset" / "dataset.yaml").write_text("path: dataset\n", encoding="utf-8")
+        (labeling_dir / "dataset" / "train" / "labels" / "match_a_frame_000001.txt").write_text(
+            "0 0.5 0.5 0.1 0.1\n",
+            encoding="utf-8",
+        )
+
+        ingest_source = ingest_dir / "match_a.mp4"
+        _write_json(
+            match_dir / "metadata.json",
+            {
+                "game_name": "match_a",
+                "mode": "normal",
+                "job_id": "job-123",
+                "processed_at": "2026-03-30T12:00:00",
+                "ingest_source_path": str(ingest_source),
+                "ingest_archived_path": str(archived_video),
+                "ingest_archive_status": "moved",
+                "source": str(ingest_source),
+                "model_runtime": {
+                    "ball_model_path": "/tank/models/fine_tuned.pt",
+                    "ball_model_source": "runtime.pinned.ball",
+                    "player_model_path": "/tank/models/player.pt",
+                    "player_model_source": "runtime.pinned.player",
+                    "dual_model_enabled": True,
+                },
+            },
+        )
+
+        resp = client.get("/api/media/matches/match_a_run1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "match_a_run1"
+        assert data["family_key"] == "match_a"
+        assert data["dataset_state"] == "ready"
+        assert data["hard_frames_count"] == 1
+        assert data["labeling"]["tasks_generated"] is True
+        assert data["labeling"]["training_ready"] is True
+        assert data["model_runtime"]["ball_model_source"] == "runtime.pinned.ball"
+        assert data["model_runtime"]["player_model_source"] == "runtime.pinned.player"
+        assert data["reset_preview"]["allowed"] is True
+        assert data["reset_preview"]["restore_target_name"] == "match_a.mp4"
+
+    def test_workflow_matches_aggregates_canonical_lifecycle_rows(self, client, store, dashboard_config):
+        processed_dir = Path(dashboard_config["paths"]["processed"])
+        highlights_dir = Path(dashboard_config["paths"]["highlights"])
+        labeling_dir = Path(dashboard_config["paths"]["labeling"])
+        staging_dir = Path(dashboard_config["paths"]["stagging"])
+        archive_dir = Path(dashboard_config["paths"]["archive_raw"])
+        ingest_dir = Path(dashboard_config["paths"]["ingest"])
+
+        (staging_dir / "queued_clip.mp4").write_bytes(b"queued")
+
+        archived_video = archive_dir / "match_a_archived.mp4"
+        archived_video.write_bytes(b"archived")
+
+        match_dir = processed_dir / "match_a"
+        match_dir.mkdir(parents=True)
+        (match_dir / "broadcast.mp4").write_bytes(b"broadcast")
+        (highlights_dir / "match_a").mkdir(parents=True)
+        (highlights_dir / "match_a" / "highlight_001.mp4").write_bytes(b"highlight")
+        (labeling_dir / "match_a" / "frames").mkdir(parents=True)
+        (labeling_dir / "match_a" / "frames" / "frame_000001.jpg").write_bytes(b"frame")
+        (labeling_dir / "match_a" / "labels").mkdir(parents=True)
+        (labeling_dir / "match_a" / "labels" / "frame_000001.txt").write_text("0 0.5 0.5 0.1 0.1\n", encoding="utf-8")
+        (labeling_dir / "match_a" / "labelstudio").mkdir(parents=True)
+        (labeling_dir / "match_a" / "labelstudio" / "tasks.json").write_text(
+            json.dumps([{"id": 1}]),
+            encoding="utf-8",
+        )
+        (labeling_dir / "dataset" / "train" / "labels").mkdir(parents=True, exist_ok=True)
+        (labeling_dir / "dataset" / "dataset.yaml").write_text("path: dataset\n", encoding="utf-8")
+        (labeling_dir / "dataset" / "train" / "labels" / "match_a_frame_000001.txt").write_text(
+            "0 0.5 0.5 0.1 0.1\n",
+            encoding="utf-8",
+        )
+
+        ingest_source = ingest_dir / "match_a.mp4"
+        _write_json(
+            match_dir / "metadata.json",
+            {
+                "game_name": "Match A",
+                "job_id": "job-match-a",
+                "processed_at": "2026-03-30T12:00:00",
+                "ingest_source_path": str(ingest_source),
+                "ingest_archived_path": str(archived_video),
+                "model_runtime": {
+                    "ball_model_path": "/tank/models/fine_tuned.pt",
+                    "player_model_path": "/tank/models/player.pt",
+                },
+            },
+        )
+
+        store.job_created("job-queued", str(staging_dir / "queued_clip.mp4"))
+
+        resp = client.get("/api/workflow/matches")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["summary"]["ready_to_train"] == 1
+        assert data["summary"]["queued"] == 1
+        assert data["dataset"]["state"] == "ready"
+        assert data["dataset"]["ready"] is True
+
+        match_row = next(item for item in data["matches"] if item["key"] == "match_a")
+        assert match_row["status"] == "ready_to_train"
+        assert match_row["display_name"] == "Match A"
+        assert match_row["processed"]["highlight_count"] == 1
+        assert match_row["labeling"]["dataset_state"] == "ready"
+        assert match_row["labeling"]["training_ready"] is True
+        assert match_row["models"]["actual_ball_model"] == "fine_tuned.pt"
+        assert match_row["models"]["actual_player_model"] == "player.pt"
+        assert match_row["reset_preview"]["restore_target_name"] == "match_a.mp4"
+
+        queued_row = next(item for item in data["matches"] if item["key"] == "queued_clip")
+        assert queued_row["status"] == "queued"
+        assert queued_row["next_action"] == "Watch queue"
 
     def test_get_match_includes_highlights(self, client, dashboard_config):
         """Highlights are included prefixed with 'highlights/'."""

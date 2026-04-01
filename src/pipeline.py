@@ -317,6 +317,19 @@ class Pipeline:
             # Phase 7: Export to final destination
             logger.info("--- Phase 7: Export ---")
             with self._tracked_phase(timer, job_id, "export"):
+                model_runtime = None
+                if self.mode == "normal" and self.detector is not None:
+                    ball_model_path = getattr(self.detector, "ball_model_path", None) or getattr(self.detector, "model_path", None)
+                    player_model_path = getattr(self.detector, "player_model_path", None) or ball_model_path
+                    ball_model_source = getattr(self.detector, "ball_model_source", None) or getattr(self.detector, "model_source", None)
+                    player_model_source = getattr(self.detector, "player_model_source", None) or ball_model_source
+                    model_runtime = {
+                        "ball_model_path": ball_model_path,
+                        "ball_model_source": ball_model_source,
+                        "player_model_path": player_model_path,
+                        "player_model_source": player_model_source,
+                        "dual_model_enabled": bool(ball_model_path and player_model_path and ball_model_path != player_model_path),
+                    }
                 output_dir = self.exporter.finalize(
                     work_dir, str(input_path), meta,
                     processing_start=start_time,
@@ -324,6 +337,7 @@ class Pipeline:
                     ingest_source=str(ingest_source) if ingest_source else None,
                     job_id=job_id,
                     phase_metrics=timer.to_dict(),
+                    model_runtime=model_runtime,
                 )
 
             elapsed = (datetime.now() - start_time).total_seconds()
