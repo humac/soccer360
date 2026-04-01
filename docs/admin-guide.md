@@ -757,6 +757,10 @@ The web dashboard at `http://<server>:8088` provides real-time visibility into p
 
 The dashboard streams events via SSE (Server-Sent Events) -- no polling or manual refresh needed.
 
+**Detection Settings page:** The dashboard also includes a read-only Detection Settings page at `/settings/detection`, showing the effective runtime configuration (model paths, thresholds, FoI, camera parameters). Useful for quickly confirming which settings are active without SSH access.
+
+![Detection Settings page showing current pipeline configuration](./screenshots/admin-detection-settings.png)
+
 **Stale job cleanup:** On startup, the EventStore automatically marks any jobs left in `running` or `queued` state (from a prior crash or restart) as `failed` with the message "Abandoned: service restarted". This prevents zombie jobs from cluttering the history.
 
 **Configuration** (`configs/pipeline.yaml`):
