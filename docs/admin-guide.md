@@ -43,6 +43,7 @@ A guide for installing, configuring, and maintaining the Soccer360 pipeline serv
   - [Building the Dataset](#building-the-dataset)
   - [Training a New Model](#training-a-new-model)
   - [Model Promotion](#model-promotion)
+  - [TrackNetV3 Training](#tracknetv3-training)
 - [Dedupe State Management](#dedupe-state-management)
   - [How Dedupe Works](#how-dedupe-works)
   - [Forcing Reprocessing](#forcing-reprocessing)
@@ -263,6 +264,33 @@ All pipeline parameters live in `configs/pipeline.yaml`. Override the config pat
  | `detector.confidence_threshold` | `0.25` | Confidence filter |
  | `detector.process_every_n_frames` | `1` | Frame skip (1 = all, 2 = half) |
 
+**Tiling settings** (for wide-FOV panoramic detection):
+
+ | Key | Default | Purpose |
+| ----- | --------- | --------- |
+ | `detector.tiling.enabled` | `false` | Enable tiled detection |
+ | `detector.tiling.grid` | `[2, 2]` | Tile grid `[rows, cols]` -- use `[1, 4]` for 4 horizontal strips on panoramic footage |
+ | `detector.tiling.overlap` | `0.1` | Base overlap fraction between tiles |
+ | `detector.tiling.equirect_aware_overlap` | `false` | Boost overlap at horizontal edges (where equirectangular distortion is highest) |
+ | `detector.tiling.edge_overlap_boost` | `1.5` | Overlap multiplier applied at horizontal edge tiles when `equirect_aware_overlap` is enabled |
+
+> **Tip:** For 180+ panoramic footage, `[1, 4]` (4 horizontal strips) gives better detection of distant players at frame edges than the default `[2, 2]` grid. The equirectangular overlap boost compensates for higher distortion at horizontal extremes.
+
+**Ball model override** (TrackNetV3 temporal detection):
+
+ | Key | Default | Purpose |
+| ----- | --------- | --------- |
+ | `detection.ball_model.type` | `yolo` | Ball detection backend: `yolo` (default) or `tracknet` (TrackNetV3 temporal model) |
+ | `detection.ball_model.path` | `null` | Path to TrackNetV3 weights (`.pt` file) -- required when `type: tracknet` |
+ | `detection.ball_model.input_height` | `288` | TrackNetV3 input height |
+ | `detection.ball_model.input_width` | `512` | TrackNetV3 input width |
+ | `detection.ball_model.buffer_size` | `3` | Number of frames in temporal window |
+ | `detection.ball_model.heatmap_threshold` | `0.5` | Minimum heatmap peak to accept detection |
+ | `detection.ball_model.peak_radius` | `5` | Radius for weighted centroid sub-pixel refinement |
+ | `detection.ball_model.synthetic_bbox_half` | `5` | Half-size of synthetic bbox created for TrackNetV3 detections |
+
+> **Note:** When `ball_model.type: tracknet`, YOLO still runs for player detection (class 0) but ball detection (class 32) is handled exclusively by TrackNetV3. The TrackNetV3 output is converted to a synthetic bounding box compatible with the downstream pipeline (BallStabilizer, Camera, Highlights). When `ball_model.type: yolo` (default), existing behavior is unchanged.
+
 ### Field of Interest
 
 Controls which part of the 360 view is analyzed. Essential when the camera sees multiple fields.
@@ -294,6 +322,21 @@ Controls the virtual broadcast camera movement:
  | `camera.lost_coast_frames` | `30` | Frames to coast on prediction when ball lost |
  | `camera.lost_drift_frames` | `90` | Frames before drifting to field center |
 
+**Cinematic camera features** (all disabled by default):
+
+ | Key | Default | Purpose |
+| ----- | --------- | --------- |
+ | `camera.spatial_deadzone_enabled` | `false` | Enable spatial dead-zone (suppress pan when ball is in center of frame) |
+ | `camera.spatial_deadzone_frac` | `0.30` | Center fraction of FOV that triggers no pan (0.30 = center 30%) |
+ | `camera.spatial_deadzone_ramp` | `0.20` | Additional fraction for linear gain ramp between dead-zone and full pan |
+ | `camera.lookahead_enabled` | `false` | Enable Kalman velocity lookahead (project target ahead on fast passes) |
+ | `camera.lookahead_frames` | `3` | Number of frames to project ahead |
+ | `camera.lookahead_max_deg` | `10.0` | Maximum lookahead projection in degrees (prevents overreach on velocity spikes) |
+
+> **Tip:** The spatial dead-zone gives a more natural "broadcast operator" feel where the camera holds steady during normal play and only tracks when the ball approaches the frame edge. Start with the defaults and adjust `spatial_deadzone_frac` based on your footage -- wider FOV cameras may benefit from a larger dead-zone.
+>
+> **Tip:** Velocity lookahead helps the camera anticipate fast passes. It is self-regulating -- the projection is proportional to Kalman velocity, so it has negligible effect during slow play. Increase `lookahead_frames` for faster-paced matches.
+
 ### Center of Play
 
 Controls hybrid camera tracking that blends ball position with player cluster data. When ball detection is unreliable, the camera follows the center of player activity instead of drifting to a static field center.
@@ -313,7 +356,19 @@ Controls hybrid camera tracking that blends ball position with player cluster da
  | `center_of_play.spread_min_deg` | `15.0` | Player spread below this uses minimum FOV |
  | `center_of_play.spread_max_deg` | `60.0` | Player spread above this uses maximum FOV |
 
+**Velocity-adaptive blending** (disabled by default):
+
+ | Key | Default | Purpose |
+| ----- | --------- | --------- |
+ | `center_of_play.velocity_blend_enabled` | `false` | Enable velocity-adaptive ball/cluster blending |
+ | `center_of_play.fast_ball_weight` | `0.95` | Ball weight when ball velocity is above fast threshold |
+ | `center_of_play.slow_ball_weight` | `0.50` | Ball weight when ball velocity is below slow threshold |
+ | `center_of_play.velocity_fast_thresh_deg_per_sec` | `20.0` | Ball angular velocity considered "fast" |
+ | `center_of_play.velocity_slow_thresh_deg_per_sec` | `2.0` | Ball angular velocity considered "slow" |
+
 > **Tip:** The current defaults keep confident ball tracking dominant. Increase `low_conf_ball_blend_weight` if you want more center-of-play influence during weak ball detections.
+>
+> **Tip:** Velocity-adaptive blending replaces the fixed two-tier confidence-based blend with a continuous function of ball speed. Fast ball movement (passes, shots) gives the ball near-full camera control (95%), while slow or stationary ball (stoppage, set piece) blends 50/50 with the player cluster to show the wider context.
 >
 > **Note:** Player detection uses the pretrained COCO model and is not retrained by the active learning loop. The YOLO26l base model handles person detection on soccer fields, though spectator/parent filtering relies on confidence thresholds and FoI bounds.
 
@@ -622,6 +677,70 @@ Training:
 ### Model Promotion
 
 The training script automatically promotes the best checkpoint to `ball_best.pt`. Future ingest jobs use it only if the ingest selector is set to `Auto` or pinned to `ball_best.pt`; otherwise the worker continues following the configured detection model.
+
+### TrackNetV3 Training
+
+TrackNetV3 is an optional temporal ball detection model that uses 3 consecutive frames to detect motion-blurred or very small balls. Training TrackNetV3 uses the same YOLO-format labels from the active learning pipeline but converts them to Gaussian heatmap targets.
+
+#### Step 1: Build TrackNetV3 heatmap dataset
+
+Via the dashboard API:
+
+```bash
+curl -X POST http://localhost:8088/api/training/build-tracknet-dataset \
+  -H "Content-Type: application/json" \
+  -d '{"input_height": 288, "input_width": 512}'
+```
+
+Or via the CLI:
+
+```bash
+python scripts/train_tracknet.py \
+  --frames /tank/labeling/<match>/images \
+  --labels /tank/labeling/<match>/labels \
+  --output /tank/models/tracknet_v1 \
+  --epochs 100
+```
+
+The training script handles heatmap conversion automatically as its first step.
+
+#### Step 2: Train the model
+
+Via the dashboard API:
+
+```bash
+curl -X POST http://localhost:8088/api/training/train-tracknet \
+  -H "Content-Type: application/json" \
+  -d '{"epochs": 100, "batch_size": 8, "lr": 0.001}'
+```
+
+Training produces:
+
+- Periodic checkpoints: `tracknet_epoch0010.pt`, `tracknet_epoch0020.pt`, ...
+- Best model: `tracknet_best.pt`
+- Uses weighted focal loss (optimized for rare ball pixels vs background)
+- ReduceLROnPlateau scheduler with patience=10
+
+Monitor progress:
+
+```bash
+curl http://localhost:8088/api/training/tracknet-status
+```
+
+#### Step 3: Enable TrackNetV3 for inference
+
+Set in `configs/pipeline.yaml`:
+
+```yaml
+detection:
+  ball_model:
+    type: tracknet
+    path: /tank/models/tracknet_v1/tracknet_best.pt
+```
+
+Restart the worker to apply. YOLO continues handling player detection; only ball detection switches to TrackNetV3.
+
+> **Note:** TrackNetV3 runs per-frame with a 3-frame ring buffer, so there is a slight latency increase compared to YOLO-only detection. The benefit is significantly better recall on motion-blurred and sub-10px balls.
 
 ## Dedupe State Management
 
@@ -1026,6 +1145,7 @@ make verify-container-assets-clean
  | `soccer360 dashboard` | Start monitoring dashboard (port 8088) |
  | `soccer360 dashboard --port 9000` | Dashboard on custom port |
  | `soccer360 export-hard-frames <video> <detections>` | Manual hard-frame export |
+ | `python scripts/train_tracknet.py --frames <dir> --labels <dir> --output <dir>` | Train TrackNetV3 temporal ball detector |
 
 All commands accept `--config` / `-c` for custom config path.
 
@@ -1089,3 +1209,6 @@ All commands accept `--config` / `-c` for custom config path.
  | `scripts/train_ball.sh` | Training helper wrapper |
  | `scripts/build_dataset.sh` | Shell dataset builder helper |
  | `scripts/labelstudio_import.sh` | Label Studio importer |
+ | `scripts/train_tracknet.py` | TrackNetV3 training script |
+ | `src/tracknet.py` | TrackNetV3 model architecture + detector wrapper |
+ | `src/tracknet_data.py` | TrackNetV3 data utilities (heatmap generation, dataset loader) |

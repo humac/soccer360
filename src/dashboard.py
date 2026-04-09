@@ -71,9 +71,11 @@ from .events import EventStore, create_event_store
 from .metrics import cpu_ram_snapshot, gpu_utilization_snapshot
 from .detector import (
     is_v1_model_selection_locked_by_config,
+    load_ball_model_config_override,
     load_v1_runtime_model_selection,
     resolve_v1_model_path_and_source,
     resolve_v1_player_model_path_and_source,
+    save_ball_model_config_override,
     save_v1_runtime_model_selection,
 )
 from .watcher import ProcessedIngestStore
@@ -486,6 +488,18 @@ def _build_detection_settings_payload(config: dict, models_dir: Path) -> dict:
                     "config_path": "runtime.dual_model_enabled",
                     "help": "True when future ingest runs will use separate ball and player models in a single detection pass.",
                     "value": inference.get("dual_model_enabled"),
+                },
+                {
+                    "label": "Ball detection type",
+                    "config_path": "detection.ball_model.type",
+                    "help": "Active ball detection backend: 'yolo' (single-frame) or 'tracknet' (TrackNetV3 temporal, 3-frame window).",
+                    "value": inference.get("ball_model_config", {}).get("type", "yolo"),
+                },
+                {
+                    "label": "TrackNetV3 weights path",
+                    "config_path": "detection.ball_model.path",
+                    "help": "Path to TrackNetV3 model weights used when ball detection type is 'tracknet'.",
+                    "value": inference.get("ball_model_config", {}).get("tracknet_path"),
                 },
             ],
         }
@@ -1162,10 +1176,16 @@ def _inference_model_status(config: dict, models_dir: Path) -> dict:
         and bool(player.get("resolved_path"))
         and _path_identity(ball.get("resolved_path")) != _path_identity(player.get("resolved_path"))
     )
+    ball_model_config = load_ball_model_config_override(config)
     return {
         "ball": ball,
         "player": player,
         "dual_model_enabled": dual_model_enabled,
+        "ball_model_config": {
+            "type": ball_model_config.get("type", "yolo"),
+            "tracknet_path": ball_model_config.get("tracknet_path"),
+            "override_path": ball_model_config.get("override_path"),
+        },
         # Backward-compatible ball aliases for older callers/tests.
         **ball,
     }
@@ -1912,8 +1932,10 @@ def create_app(config: dict | None = None) -> FastAPI:
         body = await request.json() if request.headers.get("content-type") == "application/json" else {}
         role_payloads = {}
         if "ball" in body or "player" in body:
-            role_payloads["ball"] = body.get("ball", {}) or {}
-            role_payloads["player"] = body.get("player", {}) or {}
+            if "ball" in body:
+                role_payloads["ball"] = body.get("ball", {}) or {}
+            if "player" in body:
+                role_payloads["player"] = body.get("player", {}) or {}
         else:
             role_payloads["ball"] = body
 
@@ -1941,6 +1963,45 @@ def create_app(config: dict | None = None) -> FastAPI:
                 raise HTTPException(status_code=400, detail=str(exc))
 
         return _inference_model_status(config, models_dir)
+
+    @app.get("/api/inference/ball-model-config")
+    async def get_ball_model_config():
+        """Report the current ball detection type (YOLO vs TrackNetV3)."""
+        return load_ball_model_config_override(config)
+
+    @app.post("/api/inference/ball-model-config")
+    async def set_ball_model_config(request: Request):
+        """Set ball detection type: yolo or tracknet."""
+        body = await request.json()
+        ball_type = str(body.get("type", "yolo")).strip().lower()
+        tracknet_path = body.get("tracknet_path")
+
+        if ball_type not in {"yolo", "tracknet"}:
+            raise HTTPException(
+                status_code=400, detail="type must be 'yolo' or 'tracknet'"
+            )
+
+        if ball_type == "tracknet":
+            if not tracknet_path:
+                raise HTTPException(
+                    status_code=400,
+                    detail="tracknet_path is required when type is 'tracknet'",
+                )
+            tp = Path(str(tracknet_path))
+            if not tp.is_file():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"TrackNetV3 weights not found: {tracknet_path}",
+                )
+
+        try:
+            result = save_ball_model_config_override(
+                config, type=ball_type, tracknet_path=tracknet_path
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        return result
 
     @app.post("/api/training/build-dataset")
     async def build_dataset():
@@ -2116,6 +2177,149 @@ def create_app(config: dict | None = None) -> FastAPI:
 
         threading.Thread(target=_run_training, daemon=True).start()
         return {"ok": True, "status": "running", "epochs": epochs}
+
+    # ------------------------------------------------------------------
+    # TrackNetV3 training endpoints
+    # ------------------------------------------------------------------
+
+    _tracknet_training_state: dict = {
+        "status": "idle",
+        "log": [],
+        "error": None,
+        "current_run": None,
+    }
+
+    @app.post("/api/training/build-tracknet-dataset")
+    async def build_tracknet_dataset(request: Request):
+        """Convert YOLO labels to TrackNetV3 heatmap format."""
+        body = (
+            await request.json()
+            if request.headers.get("content-type") == "application/json"
+            else {}
+        )
+        img_h = body.get("input_height", 288)
+        img_w = body.get("input_width", 512)
+        ball_class = body.get("ball_class", 32)
+
+        def _run_build():
+            try:
+                from src.tracknet_data import convert_yolo_labels_to_heatmaps
+                labels_source = labeling_dir / "dataset" / "labels" / "train"
+                if not labels_source.exists():
+                    labels_source = labeling_dir / "dataset" / "labels"
+                output = labeling_dir / "tracknet_heatmaps"
+                count = convert_yolo_labels_to_heatmaps(
+                    labels_dir=labels_source,
+                    output_dir=output,
+                    img_h=img_h,
+                    img_w=img_w,
+                    ball_class=ball_class,
+                )
+                with _training_lock:
+                    _tracknet_training_state["status"] = "dataset_ready"
+                    _tracknet_training_state["log"].append(
+                        f"Generated {count} heatmaps"
+                    )
+                logger.info("TrackNet dataset built: %d heatmaps", count)
+            except Exception as exc:
+                with _training_lock:
+                    _tracknet_training_state["status"] = "failed"
+                    _tracknet_training_state["error"] = str(exc)
+                logger.exception("TrackNet dataset build failed")
+
+        with _training_lock:
+            _tracknet_training_state["status"] = "building"
+            _tracknet_training_state["log"] = []
+            _tracknet_training_state["error"] = None
+
+        threading.Thread(target=_run_build, daemon=True).start()
+        return {"ok": True, "status": "building"}
+
+    @app.post("/api/training/train-tracknet")
+    async def start_tracknet_training(request: Request):
+        """Trigger TrackNetV3 training."""
+        body = (
+            await request.json()
+            if request.headers.get("content-type") == "application/json"
+            else {}
+        )
+        epochs = body.get("epochs", 100)
+        batch_size = body.get("batch_size", 8)
+        lr = body.get("lr", 1e-3)
+        base_model = body.get("base_model")
+
+        with _training_lock:
+            if _tracknet_training_state["status"] == "running":
+                raise HTTPException(
+                    status_code=409,
+                    detail="TrackNet training already in progress",
+                )
+            _tracknet_training_state["status"] = "running"
+            _tracknet_training_state["log"] = []
+            _tracknet_training_state["error"] = None
+            _tracknet_training_state["current_run"] = {
+                "status": "running",
+                "started_at": datetime.now().isoformat(),
+                "epochs": epochs,
+            }
+
+        def _run_training():
+            try:
+                cmd = [
+                    sys.executable, "scripts/train_tracknet.py",
+                    "--frames", str(labeling_dir / "dataset" / "images" / "train"),
+                    "--labels", str(labeling_dir / "dataset" / "labels" / "train"),
+                    "--output", str(models_dir / "tracknet"),
+                    "--epochs", str(epochs),
+                    "--batch-size", str(batch_size),
+                    "--lr", str(lr),
+                ]
+                if base_model:
+                    cmd.extend(["--base-model", str(base_model)])
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=7200,
+                    cwd=str(APP_ROOT),
+                )
+                with _training_lock:
+                    _tracknet_training_state["log"] = (
+                        result.stdout.splitlines() + result.stderr.splitlines()
+                    )[-50:]
+                    if result.returncode != 0:
+                        _tracknet_training_state["status"] = "failed"
+                        _tracknet_training_state["error"] = (
+                            result.stderr[-500:] if result.stderr
+                            else f"Exit code {result.returncode}"
+                        )
+                    else:
+                        _tracknet_training_state["status"] = "completed"
+                    _tracknet_training_state["current_run"] = None
+                logger.info(
+                    "TrackNet training completed (exit=%d)", result.returncode
+                )
+            except subprocess.TimeoutExpired:
+                with _training_lock:
+                    _tracknet_training_state["status"] = "failed"
+                    _tracknet_training_state["error"] = "Training timed out"
+                    _tracknet_training_state["current_run"] = None
+            except Exception as exc:
+                with _training_lock:
+                    _tracknet_training_state["status"] = "failed"
+                    _tracknet_training_state["error"] = str(exc)
+                    _tracknet_training_state["current_run"] = None
+                logger.exception("TrackNet training failed")
+
+        threading.Thread(target=_run_training, daemon=True).start()
+        return {"ok": True, "status": "running", "epochs": epochs}
+
+    @app.get("/api/training/tracknet-status")
+    async def tracknet_training_status():
+        """Return current TrackNetV3 training status."""
+        with _training_lock:
+            return dict(_tracknet_training_state)
 
     # ------------------------------------------------------------------
     # Labeling frame server (for Label Studio to fetch images)

@@ -21,6 +21,7 @@ model:
 detector:
   runtime_override_path: /tank/data/ingest_model_selection.json
   player_runtime_override_path: /tank/data/ingest_player_model_selection.json
+  ball_model_config_override_path: /tank/data/ball_model_config.json
   player_model_path: /app/models/yolo26l.pt
   batch_size: 16
   batch_size_tensorrt: 32
@@ -32,8 +33,10 @@ detector:
   process_every_n_frames: 1
   tiling:
     enabled: false
-    tiles: 4
+    grid: [2, 2]              # [rows, cols] -- e.g., [1, 4] for 4 horizontal strips
     overlap: 0.1
+    equirect_aware_overlap: false
+    edge_overlap_boost: 1.5   # overlap multiplier at horizontal frame edges
 
 field_of_interest:
   enabled: true
@@ -79,6 +82,14 @@ camera:
   lost_fov_widen: true
   # FOV smoothing (lower = smoother zoom transitions, 0.08 ≈ 12-frame half-life)
   fov_ema_alpha: 0.08
+  # Spatial dead-zone: suppress pan when ball is in center portion of frame
+  spatial_deadzone_enabled: true
+  spatial_deadzone_frac: 0.30       # center 30% of FOV = no-pan zone
+  spatial_deadzone_ramp: 0.20       # additional 20% for gain ramp (0->1)
+  # Velocity lookahead: project target ahead on fast passes
+  lookahead_enabled: true
+  lookahead_frames: 3
+  lookahead_max_deg: 10.0
   kalman:
     process_noise: 0.1
     measurement_noise: 2.0
@@ -199,6 +210,16 @@ detection:
   max_det: 50
   half: true
   device: "cuda:0"
+  # Ball-specific model override (temporal heatmap detection)
+  ball_model:
+    type: yolo              # "tracknet" to enable TrackNetV3 temporal ball detection
+    path: null              # path to TrackNetV3 weights (.pt)
+    input_height: 288
+    input_width: 512
+    buffer_size: 3          # number of frames in temporal window
+    heatmap_threshold: 0.5
+    peak_radius: 5
+    synthetic_bbox_half: 5  # half-size of synthetic bbox for TrackNetV3 detections
 
 # Spatial and temporal filters for detection quality
 filters:
@@ -225,13 +246,19 @@ center_of_play:
   min_player_conf: 0.60       # stricter threshold to reduce sideline spectators in the cluster
   trim_fraction: 0.25         # discard more outliers from each end (removes GKs + sideline clutter)
   min_players: 5              # require a fuller player group before trusting the cluster
-  ball_blend_weight: 0.05     # when ball detected confidently: 95% ball, 5% cluster
-  low_conf_ball_blend_weight: 0.20  # when ball is weak, still cap cluster influence
+  ball_blend_weight: 0.15     # when ball detected confidently: 85% ball, 15% cluster
+  low_conf_ball_blend_weight: 0.40  # when ball is weak, cluster gets significant influence
   ema_alpha: 0.15             # slower centroid smoothing to reduce jitter
   fov_from_spread: true       # adapt FOV based on player spread
   spread_max_fov: 105.0       # max FOV when players very spread out
   spread_min_deg: 15.0        # spread below this -> min_fov
   spread_max_deg: 60.0        # spread above this -> spread_max_fov
+  # Velocity-adaptive blending: fast ball -> more ball weight, slow -> more cluster
+  velocity_blend_enabled: true
+  fast_ball_weight: 0.95             # ball weight at high velocity
+  slow_ball_weight: 0.50             # ball weight at low velocity / stoppage
+  velocity_fast_thresh_deg_per_sec: 20.0
+  velocity_slow_thresh_deg_per_sec: 2.0
 
 dashboard:
   enabled: true

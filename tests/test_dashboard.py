@@ -878,6 +878,39 @@ class TestTrainingAPI:
         assert data["player"]["resolved_source"] == "runtime.pinned.player"
         assert data["dual_model_enabled"] is True
 
+    def test_set_inference_model_partial_role_update_preserves_other_role(self, client, dashboard_config):
+        models_dir = Path(dashboard_config["paths"]["models"])
+        ball_model = models_dir / "ball_only.pt"
+        player_model = models_dir / "player_base.pt"
+        next_player_model = models_dir / "player_next.pt"
+        ball_model.write_bytes(b"ball")
+        player_model.write_bytes(b"player")
+        next_player_model.write_bytes(b"next-player")
+
+        with patch("src.dashboard.create_event_store", return_value=EventStore(":memory:")):
+            app = create_app(dashboard_config)
+        local_client = _ASGIClient(app)
+
+        initial_resp = local_client.post(
+            "/api/inference/model",
+            json={
+                "ball": {"mode": "pinned", "path": str(ball_model)},
+                "player": {"mode": "pinned", "path": str(player_model)},
+            },
+        )
+        assert initial_resp.status_code == 200
+
+        resp = local_client.post(
+            "/api/inference/model",
+            json={"player": {"mode": "pinned", "path": str(next_player_model)}},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ball"]["resolved_path"] == str(ball_model)
+        assert data["ball"]["resolved_source"] == "runtime.pinned.ball"
+        assert data["player"]["resolved_path"] == str(next_player_model)
+        assert data["player"]["resolved_source"] == "runtime.pinned.player"
+
     def test_set_inference_model_rejects_when_locked_by_detector_config(self, client, dashboard_config):
         models_dir = Path(dashboard_config["paths"]["models"])
         locked_model = models_dir / "locked.pt"
@@ -1088,6 +1121,69 @@ class TestTrainingAPI:
         result = _build_dataset_from_labels(labeling_dir=labeling_dir, val_ratio=0.5)
 
         assert result["total_count"] == 1
+
+
+class TestBallModelConfig:
+    """Tests for dashboard-managed ball detection type (YOLO vs TrackNetV3)."""
+
+    def test_get_default_returns_yolo(self, client):
+        resp = client.get("/api/inference/ball-model-config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["type"] == "yolo"
+        assert data["tracknet_path"] is None
+
+    def test_set_tracknet_with_valid_path(self, client, dashboard_config):
+        models_dir = Path(dashboard_config["paths"]["models"])
+        weights = models_dir / "tracknet_best.pt"
+        weights.write_bytes(b"fake_weights")
+
+        resp = client.post(
+            "/api/inference/ball-model-config",
+            json={"type": "tracknet", "tracknet_path": str(weights)},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["type"] == "tracknet"
+        assert data["tracknet_path"] == str(weights)
+
+    def test_set_yolo_clears_override(self, client, dashboard_config):
+        models_dir = Path(dashboard_config["paths"]["models"])
+        weights = models_dir / "tracknet_best.pt"
+        weights.write_bytes(b"fake_weights")
+
+        client.post(
+            "/api/inference/ball-model-config",
+            json={"type": "tracknet", "tracknet_path": str(weights)},
+        )
+        resp = client.post("/api/inference/ball-model-config", json={"type": "yolo"})
+        assert resp.status_code == 200
+        assert resp.json()["type"] == "yolo"
+        assert resp.json()["tracknet_path"] is None
+
+    def test_set_tracknet_without_path_400(self, client):
+        resp = client.post("/api/inference/ball-model-config", json={"type": "tracknet"})
+        assert resp.status_code == 400
+
+    def test_set_invalid_type_400(self, client):
+        resp = client.post("/api/inference/ball-model-config", json={"type": "foo"})
+        assert resp.status_code == 400
+
+    def test_inference_status_includes_ball_model_config(self, client):
+        resp = client.get("/api/inference/model")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "ball_model_config" in data
+        assert data["ball_model_config"]["type"] == "yolo"
+
+    def test_detection_settings_includes_tracknet_fields(self, client):
+        resp = client.get("/api/settings/detection")
+        assert resp.status_code == 200
+        data = resp.json()
+        ingest_group = next(g for g in data["groups"] if g["key"] == "ingest_model")
+        labels = [f["label"] for f in ingest_group["fields"]]
+        assert "Ball detection type" in labels
+        assert "TrackNetV3 weights path" in labels
 
 
 class TestUploadResume:

@@ -36,6 +36,7 @@ A guide for day-to-day operation of the Soccer360 pipeline: ingesting match reco
   - [What Are Hard Frames?](#what-are-hard-frames)
   - [Labeling in Label Studio](#labeling-in-label-studio)
   - [The Weekly Improvement Cycle](#the-weekly-improvement-cycle)
+  - [TrackNetV3 Training (Advanced)](#tracknetv3-training-advanced)
 - [Managing Matches](#managing-matches)
   - [Inspecting a Match](#inspecting-a-match)
   - [Reprocessing a Match](#reprocessing-a-match)
@@ -125,7 +126,7 @@ This workspace manages the active learning loop -- from labeling hard frames to 
 
 - **Per-Match Labeling Flow** (left column) -- cards for each processed match showing a 3-step progress stepper (Frames exported, Tasks generated, Labels uploaded). Action buttons let you inspect, open Label Studio, or upload labels for each match.
 - **Dataset State** (bottom left) -- global summary of all hard frames, labeled count, and dataset freshness. The **Build Dataset** button here combines labels from all matches into one training dataset.
-- **Training Console** (right column) -- configure and launch model training. Select a base model, set epochs, name the output, and click **Train Model**. The status card shows current/previous runs and a live training log.
+- **Training Console** (right column) -- configure and launch model training. Select a base model, set epochs, name the output, and click **Train Model**. The status card shows current/previous runs and a live training log. The console supports both YOLO ball detection training and TrackNetV3 temporal ball detection training (see below).
 
 > **Note:** Build Dataset and Train Model are global actions that operate across all matches, not per-match. That's why they appear in their own panels rather than on individual match cards.
 
@@ -454,6 +455,18 @@ For detailed step-by-step instructions including Label Studio setup, labeling te
 4. **Upload labels** -- click **Upload** in the dashboard and select the YOLO export ZIP
 5. **Build dataset + train** -- use the dashboard, or run `bash scripts/build_dataset.sh` then `soccer360 train --epochs 50 --data /tank/labeling/dataset/dataset.yaml`
 6. **Next games are better** -- set the dashboard ingest selector to `Auto` or pin the improved model before the next ingest or reprocess run
+
+### TrackNetV3 Training (Advanced)
+
+TrackNetV3 is an optional temporal ball detection model that uses 3 consecutive frames to detect motion-blurred or very small balls that single-frame YOLO may miss. If your administrator has enabled TrackNetV3 (`detection.ball_model.type: tracknet` in the config), you can train it from the dashboard:
+
+1. **Build TrackNetV3 Dataset** -- the dashboard's training API converts existing YOLO ball labels into Gaussian heatmap targets (`.npy` files). This is a separate step from the standard YOLO dataset build. Your administrator can trigger this via the API endpoint `POST /api/training/build-tracknet-dataset`.
+
+2. **Train TrackNetV3** -- launch training via `POST /api/training/train-tracknet`. The training runs in the background and produces checkpoint files. Progress can be monitored via `GET /api/training/tracknet-status`.
+
+3. **Use the trained model** -- once training completes, set the `detection.ball_model.path` config key to the best checkpoint path and restart the worker.
+
+> **Note:** TrackNetV3 training is currently managed through the API rather than the dashboard UI. Ask your administrator to configure and launch TrackNetV3 training runs. The standard YOLO training console in the dashboard continues to work as before for ball detection model improvements.
 
 ## Managing Matches
 

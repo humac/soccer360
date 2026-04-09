@@ -29,6 +29,7 @@ DEFAULT_V1_RUNTIME_OVERRIDE_PATH = "/tank/data/ingest_model_selection.json"
 DEFAULT_V1_PLAYER_RUNTIME_OVERRIDE_PATH = "/tank/data/ingest_player_model_selection.json"
 DEFAULT_BALL_CLASS_ID = 32
 DEFAULT_PLAYER_CLASS_ID = 0
+DEFAULT_BALL_MODEL_CONFIG_OVERRIDE_PATH = "/tank/data/ball_model_config.json"
 
 
 def resolve_model_path(config: dict) -> tuple[str | None, str]:
@@ -249,6 +250,104 @@ def save_v1_runtime_model_selection(
         "mode": normalized_mode,
         "path": payload.get("path"),
         "selection_path": str(selection_path),
+    }
+
+
+def resolve_ball_model_config_override_path(config: dict) -> Path:
+    """Return the persisted ball-model-config override path."""
+    det_cfg = config.get("detector", {})
+    configured = _normalize_model_path(
+        det_cfg.get("ball_model_config_override_path")
+    )
+    if configured:
+        path = Path(configured)
+        if not path.is_absolute():
+            return Path(DEFAULT_BALL_MODEL_CONFIG_OVERRIDE_PATH).parent / path
+        return path
+    return Path(DEFAULT_BALL_MODEL_CONFIG_OVERRIDE_PATH)
+
+
+def load_ball_model_config_override(config: dict) -> dict:
+    """Load persisted ball-model-config override (YOLO vs TrackNetV3).
+
+    Returns:
+        {"type": "yolo"|"tracknet", "tracknet_path": str|None, "override_path": str}
+    """
+    override_path = resolve_ball_model_config_override_path(config)
+    default_payload = {
+        "type": "yolo",
+        "tracknet_path": None,
+        "override_path": str(override_path),
+    }
+    if not override_path.is_file():
+        return default_payload
+
+    try:
+        payload = json.loads(override_path.read_text())
+    except Exception:
+        logger.warning(
+            "Invalid ball model config override ignored: %s", override_path
+        )
+        return default_payload
+
+    if not isinstance(payload, dict):
+        return default_payload
+
+    ball_type = str(payload.get("type", "yolo")).strip().lower()
+    if ball_type not in {"yolo", "tracknet"}:
+        return default_payload
+
+    tracknet_path = _normalize_model_path(payload.get("tracknet_path")) or None
+    if ball_type != "tracknet":
+        tracknet_path = None
+
+    return {
+        "type": ball_type,
+        "tracknet_path": tracknet_path,
+        "override_path": str(override_path),
+    }
+
+
+def save_ball_model_config_override(
+    config: dict,
+    *,
+    type: str,
+    tracknet_path: str | None = None,
+) -> dict:
+    """Persist ball-model-config override (YOLO vs TrackNetV3).
+
+    type="yolo" deletes the override file (restores config-only behavior).
+    type="tracknet" requires a tracknet_path.
+    """
+    normalized_type = str(type).strip().lower()
+    if normalized_type not in {"yolo", "tracknet"}:
+        raise ValueError(f"Unsupported ball model type: {type}")
+    if normalized_type == "tracknet" and not _normalize_model_path(tracknet_path):
+        raise ValueError("TrackNetV3 requires a model weights path")
+
+    override_path = resolve_ball_model_config_override_path(config)
+    if normalized_type == "yolo":
+        if override_path.exists():
+            override_path.unlink()
+        return {
+            "type": "yolo",
+            "tracknet_path": None,
+            "override_path": str(override_path),
+        }
+
+    override_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = override_path.parent / f".{override_path.name}.tmp-{override_path.stem}"
+    payload = {
+        "type": normalized_type,
+        "tracknet_path": str(tracknet_path),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp_path.replace(override_path)
+    return {
+        "type": normalized_type,
+        "tracknet_path": str(tracknet_path),
+        "override_path": str(override_path),
     }
 
 
@@ -520,6 +619,39 @@ class Detector:
             # Y-range filter
             self.min_y_frac = filt_cfg.get("min_y_frac", 0.20)
             self.max_y_frac = filt_cfg.get("max_y_frac", 0.98)
+
+            # TrackNetV3 temporal ball detection (optional)
+            tn_ball_cfg = v1_cfg.get("ball_model", {})
+            # Dashboard override takes precedence over static config
+            ball_model_override = load_ball_model_config_override(config)
+            override_path = resolve_ball_model_config_override_path(config)
+            has_override = override_path.is_file()
+            effective_type = (
+                ball_model_override["type"] if has_override
+                else tn_ball_cfg.get("type", "yolo")
+            )
+            effective_tracknet_path = (
+                ball_model_override.get("tracknet_path")
+                or tn_ball_cfg.get("path")
+            )
+
+            self._tracknet_enabled = effective_type == "tracknet"
+            self._tracknet = None
+            self._tracknet_buffer_size = tn_ball_cfg.get("buffer_size", 3)
+            self._tracknet_bbox_half = tn_ball_cfg.get("synthetic_bbox_half", 5)
+            if self._tracknet_enabled:
+                tracknet_config = config
+                if effective_tracknet_path and effective_tracknet_path != tn_ball_cfg.get("path"):
+                    tracknet_config = dict(config)
+                    detection_copy = dict(tracknet_config.get("detection", {}))
+                    bm_copy = dict(detection_copy.get("ball_model", {}))
+                    bm_copy["path"] = effective_tracknet_path
+                    detection_copy["ball_model"] = bm_copy
+                    tracknet_config["detection"] = detection_copy
+                from .tracknet import TrackNetV3Detector
+                self._tracknet = TrackNetV3Detector(tracknet_config)
+                source = "dashboard" if ball_model_override.get("type") == "tracknet" else "config"
+                logger.info("TrackNetV3 ball detection enabled (source=%s)", source)
         else:
             # Legacy init (existing code unchanged)
             model_cfg = config.get("model", {})
@@ -538,8 +670,21 @@ class Detector:
 
             self.tiling = det_cfg.get("tiling", {})
             self.tiling_enabled = self.tiling.get("enabled", False)
-            self.tile_count = self.tiling.get("tiles", 4)  # 2x2
+            grid = self.tiling.get("grid", None)
+            if grid is not None and isinstance(grid, list) and len(grid) == 2:
+                self.tile_rows = grid[0]
+                self.tile_cols = grid[1]
+            else:
+                # Backwards compat: tiles=4 -> 2x2
+                self.tile_rows = 2
+                self.tile_cols = 2
             self.tile_overlap = self.tiling.get("overlap", 0.1)
+            self.tile_equirect_overlap = self.tiling.get(
+                "equirect_aware_overlap", False
+            )
+            self.tile_edge_overlap_boost = self.tiling.get(
+                "edge_overlap_boost", 1.5
+            )
             self.model_source = "model.path"
             self.ball_model_path = self.model_path
             self.ball_model_source = self.model_source
@@ -547,6 +692,8 @@ class Detector:
             self.player_model_source = self.model_source
             self.ball_class = DEFAULT_BALL_CLASS_ID
             self.player_class = DEFAULT_PLAYER_CLASS_ID
+            self._tracknet_enabled = False
+            self._tracknet = None
 
         # Field-of-Interest filtering
         foi_cfg = config.get("field_of_interest", {})
@@ -736,17 +883,48 @@ class Detector:
         batch_indices: list[int] = []
         frame_count = 0
 
+        # TrackNetV3 frame ring buffer (only when enabled)
+        tracknet_ring: list[np.ndarray] = []
+
         for frame_idx, frame in enumerate(reader):
             # Skip frames if configured
             if skip_n > 1 and frame_idx % skip_n != 0:
                 frame_count = frame_idx + 1
                 continue
 
+            # TrackNetV3 dual-path: temporal model for ball, YOLO for players
+            if self._tracknet_enabled and self._tracknet is not None:
+                tracknet_ring.append(frame.copy())
+                if len(tracknet_ring) > self._tracknet_buffer_size:
+                    tracknet_ring.pop(0)
+
+                # Ball detection via TrackNetV3
+                ball_det = self._tracknet.predict(
+                    list(tracknet_ring),
+                    det_width=det_w,
+                    det_height=det_h,
+                )
+                if ball_det is not None:
+                    cx, cy, conf = ball_det
+                    hs = self._tracknet_bbox_half
+                    detected_detections.append({
+                        "frame": frame_idx,
+                        "bbox": [cx - hs, cy - hs, cx + hs, cy + hs],
+                        "confidence": conf,
+                        "class": self.ball_class,
+                    })
+
             batch_frames.append(frame)
             batch_indices.append(frame_idx)
 
             if len(batch_frames) == bs:
                 dets = self._detect_batch(batch_frames, batch_indices)
+                if self._tracknet_enabled:
+                    # Filter out ball detections — TrackNetV3 handles those
+                    dets = [
+                        d for d in dets
+                        if d.get("class", d.get("class_id")) != self.ball_class
+                    ]
                 detected_detections.extend(dets)
                 batch_frames.clear()
                 batch_indices.clear()
@@ -758,6 +936,11 @@ class Detector:
         # Process remaining
         if batch_frames:
             dets = self._detect_batch(batch_frames, batch_indices)
+            if self._tracknet_enabled:
+                dets = [
+                    d for d in dets
+                    if d.get("class", d.get("class_id")) != self.ball_class
+                ]
             detected_detections.extend(dets)
 
         # Interpolate skipped frames
@@ -1122,19 +1305,31 @@ class Detector:
         return detections
 
     def _detect_frame_tiled(self, frame: np.ndarray, frame_idx: int) -> list[dict]:
-        """Detect on a single frame using 2x2 tiling."""
+        """Detect on a single frame using configurable NxM tiling.
+
+        Supports equirectangular-aware overlap: edge columns get boosted
+        overlap to compensate for higher distortion at horizontal extremes.
+        """
         h, w = frame.shape[:2]
-        rows, cols = 2, 2
+        rows, cols = self.tile_rows, self.tile_cols
         tile_h = h // rows
         tile_w = w // cols
-        overlap_h = int(tile_h * self.tile_overlap)
-        overlap_w = int(tile_w * self.tile_overlap)
+        base_overlap_h = int(tile_h * self.tile_overlap)
+        base_overlap_w = int(tile_w * self.tile_overlap)
 
         all_boxes = []
         all_confs = []
+        all_classes = []
 
         for r in range(rows):
             for c in range(cols):
+                # Equirectangular-aware overlap: boost at horizontal edges
+                if self.tile_equirect_overlap and (c == 0 or c == cols - 1):
+                    overlap_w = int(base_overlap_w * self.tile_edge_overlap_boost)
+                else:
+                    overlap_w = base_overlap_w
+                overlap_h = base_overlap_h
+
                 y1 = max(0, r * tile_h - overlap_h)
                 y2 = min(h, (r + 1) * tile_h + overlap_h)
                 x1 = max(0, c * tile_w - overlap_w)
@@ -1158,6 +1353,7 @@ class Detector:
                     bx[3] += y1
                     all_boxes.append(bx)
                     all_confs.append(float(box.conf[0]))
+                    all_classes.append(int(box.cls[0]))
 
         # NMS across tiles
         if not all_boxes:
@@ -1173,7 +1369,7 @@ class Detector:
                 "frame": frame_idx,
                 "bbox": boxes_arr[i].tolist(),
                 "confidence": confs_arr[i],
-                "class": 0,
+                "class": all_classes[i],
             })
         return detections
 

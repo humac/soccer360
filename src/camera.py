@@ -70,6 +70,18 @@ class CameraPathGenerator:
         self.lost_fov_widen = cam_cfg.get("lost_fov_widen", True)
         self.fov_ema_alpha = cam_cfg.get("fov_ema_alpha", 0.08)
 
+        # Spatial dead-zone: suppress pan when ball is near center of frame
+        self.spatial_deadzone_enabled = cam_cfg.get(
+            "spatial_deadzone_enabled", False
+        )
+        self.spatial_deadzone_frac = cam_cfg.get("spatial_deadzone_frac", 0.30)
+        self.spatial_deadzone_ramp = cam_cfg.get("spatial_deadzone_ramp", 0.20)
+
+        # Lookahead: project target ahead using Kalman velocity
+        self.lookahead_enabled = cam_cfg.get("lookahead_enabled", False)
+        self.lookahead_frames = cam_cfg.get("lookahead_frames", 3)
+        self.lookahead_max_deg = cam_cfg.get("lookahead_max_deg", 10.0)
+
         kalman_cfg = cam_cfg.get("kalman", {})
         self.process_noise = kalman_cfg.get("process_noise", 0.1)
         self.measurement_noise = kalman_cfg.get("measurement_noise", 1.0)
@@ -94,6 +106,19 @@ class CameraPathGenerator:
         self.cop_spread_max_fov = cop_cfg.get("spread_max_fov", 105.0)
         self.cop_spread_min_deg = cop_cfg.get("spread_min_deg", 15.0)
         self.cop_spread_max_deg = cop_cfg.get("spread_max_deg", 60.0)
+
+        # Velocity-adaptive blending
+        self.cop_velocity_blend_enabled = cop_cfg.get(
+            "velocity_blend_enabled", False
+        )
+        self.cop_fast_ball_weight = cop_cfg.get("fast_ball_weight", 0.95)
+        self.cop_slow_ball_weight = cop_cfg.get("slow_ball_weight", 0.50)
+        self.cop_velocity_fast_thresh = cop_cfg.get(
+            "velocity_fast_thresh_deg_per_sec", 20.0
+        )
+        self.cop_velocity_slow_thresh = cop_cfg.get(
+            "velocity_slow_thresh_deg_per_sec", 2.0
+        )
 
     def generate_static(self, meta: VideoMeta, output_path: Path):
         """Generate a static camera path at field center for NO_DETECT mode."""
@@ -143,7 +168,7 @@ class CameraPathGenerator:
 
         # Step 1: Convert pixel coords to angles (hybrid or ball-only)
         if clusters is not None:
-            raw_angles = self._tracks_to_angles_hybrid(tracks, clusters)
+            raw_angles = self._tracks_to_angles_hybrid(tracks, clusters, fps)
         else:
             raw_angles = self._tracks_to_angles(tracks)
 
@@ -152,6 +177,9 @@ class CameraPathGenerator:
 
         # Step 3: EMA post-smoothing
         ema_output = self._ema_smooth(kalman_output)
+
+        # Step 3.5: Spatial dead-zone (suppress pan when ball near frame center)
+        ema_output = self._apply_spatial_deadzone(ema_output)
 
         # Step 4: Pan speed clamping
         clamped = self._clamp_pan_speed(ema_output, fps)
@@ -193,27 +221,71 @@ class CameraPathGenerator:
         return result
 
     def _tracks_to_angles_hybrid(
-        self, tracks: list[dict], clusters: list[dict]
+        self,
+        tracks: list[dict],
+        clusters: list[dict],
+        fps: float = 30.0,
     ) -> list[tuple[float, float, float] | None]:
         """Convert tracks + clusters to angles with priority blending.
 
         Priority: ball (high conf) > ball+cluster blend > cluster only > None.
+
+        When velocity_blend_enabled, the ball/cluster blend weight adapts
+        continuously based on ball velocity: fast ball = more ball weight,
+        slow ball = more cluster influence.
         """
         cluster_by_frame = {c["frame"]: c.get("cluster") for c in clusters}
         result = []
+        prev_ball_x: float | None = None
+        prev_ball_y: float | None = None
 
         for i, t in enumerate(tracks):
             ball = t.get("ball")
             cluster = cluster_by_frame.get(i)
 
             if ball is not None and cluster is not None:
-                # Blend ball position with cluster centroid
                 ball_conf = ball.get("confidence", 0.5)
-                blend = (
-                    self.cop_ball_blend
-                    if ball_conf >= 0.5
-                    else self.cop_low_conf_ball_blend
-                )
+
+                if (
+                    self.cop_velocity_blend_enabled
+                    and prev_ball_x is not None
+                ):
+                    # Velocity-adaptive blend weight
+                    dx = ball["x"] - prev_ball_x
+                    dy = ball["y"] - prev_ball_y
+                    dist_deg = (
+                        math.sqrt(dx**2 + dy**2)
+                        * (360.0 / self.det_width)
+                    )
+                    vel_deg_s = dist_deg * fps
+
+                    vel_range = (
+                        self.cop_velocity_fast_thresh
+                        - self.cop_velocity_slow_thresh
+                    )
+                    t_vel = (
+                        (vel_deg_s - self.cop_velocity_slow_thresh) / vel_range
+                        if vel_range > 0
+                        else 1.0
+                    )
+                    t_vel = max(0.0, min(1.0, t_vel))
+                    ball_weight = self.cop_slow_ball_weight + (
+                        self.cop_fast_ball_weight - self.cop_slow_ball_weight
+                    ) * t_vel
+
+                    # Low-confidence modulation
+                    if ball_conf < 0.5:
+                        ball_weight *= 0.85
+
+                    blend = 1.0 - ball_weight
+                else:
+                    # Existing two-tier confidence-based blend
+                    blend = (
+                        self.cop_ball_blend
+                        if ball_conf >= 0.5
+                        else self.cop_low_conf_ball_blend
+                    )
+
                 x = (1 - blend) * ball["x"] + blend * cluster["x"]
                 y = (1 - blend) * ball["y"] + blend * cluster["y"]
                 yaw, pitch = pixel_to_yaw_pitch(
@@ -235,6 +307,11 @@ class CameraPathGenerator:
                 result.append((yaw, pitch, 0.3))
             else:
                 result.append(None)
+
+            # Track previous ball position for velocity calculation
+            if ball is not None:
+                prev_ball_x = ball["x"]
+                prev_ball_y = ball["y"]
 
         return result
 
@@ -298,12 +375,44 @@ class CameraPathGenerator:
         for angle in raw_angles:
             kf.predict()
 
+            raw_target_yaw: float | None = None
+            raw_target_pitch: float | None = None
+
             if angle is not None:
                 yaw, pitch, conf = angle
 
                 # Handle yaw wrap-around: unwrap relative to filter state
                 filter_yaw = float(kf.x[0, 0])
                 yaw_unwrapped = filter_yaw + angle_diff(yaw, wrap_angle(filter_yaw))
+
+                # Store raw target before any modification
+                raw_target_yaw = yaw
+                raw_target_pitch = pitch
+
+                # Lookahead: project measurement ahead using predicted velocity
+                if self.lookahead_enabled:
+                    proj_dyaw = (
+                        float(kf.x[2, 0]) * self.lookahead_frames * dt
+                    )
+                    proj_dpitch = (
+                        float(kf.x[3, 0]) * self.lookahead_frames * dt
+                    )
+                    proj_dyaw = float(
+                        np.clip(
+                            proj_dyaw,
+                            -self.lookahead_max_deg,
+                            self.lookahead_max_deg,
+                        )
+                    )
+                    proj_dpitch = float(
+                        np.clip(
+                            proj_dpitch,
+                            -self.lookahead_max_deg,
+                            self.lookahead_max_deg,
+                        )
+                    )
+                    yaw_unwrapped += proj_dyaw
+                    pitch += proj_dpitch
 
                 kf.update(np.array([[yaw_unwrapped], [pitch]]))
                 lost_count = 0
@@ -333,6 +442,8 @@ class CameraPathGenerator:
                 "d_pitch": float(kf.x[3, 0]),
                 "lost": angle is None,
                 "lost_count": lost_count,
+                "raw_target_yaw": raw_target_yaw,
+                "raw_target_pitch": raw_target_pitch,
             })
 
         return output
@@ -362,6 +473,63 @@ class CameraPathGenerator:
             })
 
         return smoothed
+
+    def _apply_spatial_deadzone(self, entries: list[dict]) -> list[dict]:
+        """Suppress camera pan when ball is near center of frame.
+
+        Unlike the velocity deadband (which suppresses small *movements*),
+        the spatial dead-zone suppresses movement when the ball's *position*
+        is near the center of the current camera frame.  The camera only
+        accelerates as the ball approaches the frame edge.
+
+        Gain schedule:
+          offset <= deadzone boundary  ->  gain = 0 (no pan)
+          deadzone < offset <= ramp    ->  gain ramps linearly 0 -> 1
+          offset > ramp boundary       ->  gain = 1 (full pan)
+        """
+        if not self.spatial_deadzone_enabled or len(entries) <= 1:
+            return entries
+
+        result = [entries[0].copy()]
+
+        for i in range(1, len(entries)):
+            prev = result[-1]
+            curr = entries[i].copy()
+
+            raw_yaw = curr.get("raw_target_yaw")
+            raw_pitch = curr.get("raw_target_pitch")
+
+            if raw_yaw is not None and raw_pitch is not None:
+                # Angular offset between ball and current camera position
+                offset_yaw = abs(angle_diff(raw_yaw, prev["yaw"]))
+                offset_pitch = abs(raw_pitch - prev["pitch"])
+                offset = math.sqrt(offset_yaw**2 + offset_pitch**2)
+
+                # Boundaries relative to default FOV
+                half_fov = self.default_fov / 2.0
+                deadzone_radius = half_fov * self.spatial_deadzone_frac
+                ramp_radius = half_fov * (
+                    self.spatial_deadzone_frac + self.spatial_deadzone_ramp
+                )
+
+                if offset <= deadzone_radius:
+                    gain = 0.0
+                elif offset < ramp_radius:
+                    gain = (offset - deadzone_radius) / (
+                        ramp_radius - deadzone_radius
+                    )
+                else:
+                    gain = 1.0
+
+                # Apply gain to movement delta
+                dyaw = angle_diff(curr["yaw"], prev["yaw"])
+                dpitch = curr["pitch"] - prev["pitch"]
+                curr["yaw"] = prev["yaw"] + dyaw * gain
+                curr["pitch"] = prev["pitch"] + dpitch * gain
+
+            result.append(curr)
+
+        return result
 
     def _clamp_pan_speed(self, entries: list[dict], fps: float) -> list[dict]:
         """Enforce maximum angular velocity and deadband between consecutive frames.

@@ -10,7 +10,9 @@ np = pytest.importorskip("numpy")
 import src.detector as detector_mod
 from src.detector import (
     Detector,
+    load_ball_model_config_override,
     resolve_v1_model_path_and_source,
+    save_ball_model_config_override,
 )
 from src.utils import VideoMeta, pixel_to_yaw_pitch, wrap_angle_deg
 
@@ -384,3 +386,141 @@ class TestDetectorHardening:
 
         assert center1 is not None and 20.0 < center1 < 40.0
         assert center2 is not None and -40.0 < center2 < -20.0
+
+
+# ---------------------------------------------------------------------------
+# Tiling grid configuration tests
+# ---------------------------------------------------------------------------
+
+class TestTilingGrid:
+    """Tests for configurable tile grid and equirect-aware overlap."""
+
+    def test_default_2x2_grid(self, test_config):
+        """Default tiling config produces a 2x2 grid."""
+        config = {**test_config}
+        config["detector"] = {
+            **test_config["detector"],
+            "tiling": {"enabled": True, "grid": [2, 2], "overlap": 0.1},
+        }
+        # Remove detection section to use legacy mode
+        cfg = {k: v for k, v in config.items() if k != "detection"}
+        det = Detector(cfg)
+        assert det.tile_rows == 2
+        assert det.tile_cols == 2
+
+    def test_horizontal_strips_1x3(self, test_config):
+        """grid: [1, 3] produces 1 row, 3 columns (horizontal strips)."""
+        config = {**test_config}
+        config["detector"] = {
+            **test_config["detector"],
+            "tiling": {"enabled": True, "grid": [1, 3], "overlap": 0.1},
+        }
+        cfg = {k: v for k, v in config.items() if k != "detection"}
+        det = Detector(cfg)
+        assert det.tile_rows == 1
+        assert det.tile_cols == 3
+
+    def test_legacy_tiles_compat(self, test_config):
+        """Old tiles: 4 config falls back to 2x2 grid."""
+        config = {**test_config}
+        config["detector"] = {
+            **test_config["detector"],
+            "tiling": {"enabled": True, "tiles": 4, "overlap": 0.1},
+        }
+        cfg = {k: v for k, v in config.items() if k != "detection"}
+        det = Detector(cfg)
+        assert det.tile_rows == 2
+        assert det.tile_cols == 2
+
+    def test_equirect_overlap_config(self, test_config):
+        """Equirect-aware overlap settings are parsed correctly."""
+        config = {**test_config}
+        config["detector"] = {
+            **test_config["detector"],
+            "tiling": {
+                "enabled": True,
+                "grid": [1, 4],
+                "overlap": 0.15,
+                "equirect_aware_overlap": True,
+                "edge_overlap_boost": 2.0,
+            },
+        }
+        cfg = {k: v for k, v in config.items() if k != "detection"}
+        det = Detector(cfg)
+        assert det.tile_equirect_overlap is True
+        assert det.tile_edge_overlap_boost == 2.0
+        assert det.tile_rows == 1
+        assert det.tile_cols == 4
+
+
+# ---------------------------------------------------------------------------
+# Ball model config override (dashboard TrackNetV3 toggle)
+# ---------------------------------------------------------------------------
+
+class TestBallModelConfigOverride:
+    def test_load_returns_yolo_when_no_file(self, tmp_path):
+        config = {"detector": {"ball_model_config_override_path": str(tmp_path / "nonexistent.json")}}
+        result = load_ball_model_config_override(config)
+        assert result["type"] == "yolo"
+        assert result["tracknet_path"] is None
+
+    def test_save_tracknet_roundtrip(self, tmp_path):
+        override_path = tmp_path / "ball_model_config.json"
+        config = {"detector": {"ball_model_config_override_path": str(override_path)}}
+        weights = tmp_path / "tracknet.pt"
+        weights.write_text("fake")
+
+        saved = save_ball_model_config_override(config, type="tracknet", tracknet_path=str(weights))
+        assert saved["type"] == "tracknet"
+        assert saved["tracknet_path"] == str(weights)
+
+        loaded = load_ball_model_config_override(config)
+        assert loaded["type"] == "tracknet"
+        assert loaded["tracknet_path"] == str(weights)
+
+    def test_save_yolo_deletes_override(self, tmp_path):
+        override_path = tmp_path / "ball_model_config.json"
+        config = {"detector": {"ball_model_config_override_path": str(override_path)}}
+        weights = tmp_path / "tracknet.pt"
+        weights.write_text("fake")
+
+        save_ball_model_config_override(config, type="tracknet", tracknet_path=str(weights))
+        assert override_path.exists()
+
+        save_ball_model_config_override(config, type="yolo")
+        assert not override_path.exists()
+
+        loaded = load_ball_model_config_override(config)
+        assert loaded["type"] == "yolo"
+
+    def test_save_tracknet_without_path_raises(self, tmp_path):
+        config = {"detector": {"ball_model_config_override_path": str(tmp_path / "bmc.json")}}
+        with pytest.raises(ValueError, match="requires a model weights path"):
+            save_ball_model_config_override(config, type="tracknet")
+
+    def test_save_invalid_type_raises(self, tmp_path):
+        config = {"detector": {"ball_model_config_override_path": str(tmp_path / "bmc.json")}}
+        with pytest.raises(ValueError, match="Unsupported ball model type"):
+            save_ball_model_config_override(config, type="foo")
+
+    def test_detector_init_reads_dashboard_override(self, tmp_path, test_config, monkeypatch):
+        """Dashboard override should enable TrackNetV3 even when config says yolo."""
+        override_path = tmp_path / "ball_model_config.json"
+        weights = tmp_path / "tracknet.pt"
+        weights.write_text("fake")
+
+        config = {**test_config}
+        config["detector"] = {**config["detector"], "ball_model_config_override_path": str(override_path)}
+        save_ball_model_config_override(config, type="tracknet", tracknet_path=str(weights))
+
+        mock_tracknet = type("MockTrackNet", (), {"predict": lambda *a: None})
+        monkeypatch.setattr("src.tracknet.TrackNetV3Detector", lambda cfg: mock_tracknet())
+
+        det = Detector(config)
+        assert det._tracknet_enabled is True
+
+    def test_detector_init_falls_back_to_config(self, test_config):
+        """Without override file, config determines tracknet state (default: yolo)."""
+        det_cfg = {k: v for k, v in test_config.items() if k != "detection"}
+        det = Detector(det_cfg)
+        assert det._tracknet_enabled is False

@@ -93,13 +93,51 @@ Soccer360 is a **CLI-first video processing pipeline with a web monitoring/opera
 
 ## API Surface
 
-33 endpoints total (unauthenticated): status, jobs, decisions, training/labeling, staging/upload, media/video streaming, SSE event stream.
+36 endpoints total (unauthenticated): status, jobs, decisions, training/labeling (including TrackNetV3 training), staging/upload, media/video streaming, SSE event stream.
+
+New TrackNetV3 training endpoints (Phase 3):
+- `POST /api/training/build-tracknet-dataset` — converts YOLO labels to Gaussian heatmaps for TrackNetV3
+- `POST /api/training/train-tracknet` — launches TrackNetV3 training in background thread
+- `GET /api/training/tracknet-status` — returns TrackNetV3 training state
 
 ## Configuration
 
 Single file: `configs/pipeline.yaml` with 15+ sections: paths, detector, detection, camera, center_of_play, tracker, highlights, active_learning, reframer, exporter, ingest, watcher, dashboard, logging.
 
+## Recent Feature Additions (Pipeline Upgrade Phases)
+
+### Phase 1: Cinematic Camera Controller
+
+New camera smoothing features (all default to disabled for backwards compatibility):
+
+- **Spatial Dead-Zone** (`camera.spatial_deadzone_*`): Ball can sit in center ~30% of FOV without triggering a pan. Camera only moves as ball approaches frame edge. Replaces "tracking shot" feel with "broadcast operator" feel.
+- **Kalman Velocity Lookahead** (`camera.lookahead_*`): Projects target 3-5 frames ahead using Kalman velocity state on fast passes. Self-regulating — negligible on slow play.
+- **Velocity-Adaptive Blending** (`center_of_play.velocity_blend_*`): Continuous ball/cluster blend weight based on ball velocity. Fast ball = 95% ball weight, slow ball = 50/50 with cluster.
+
+### Phase 2: TrackNetV3 Temporal Ball Detection
+
+Optional dual-path detection mode:
+
+- **TrackNetV3** (`detection.ball_model.type: tracknet`): Temporal heatmap model uses 3 consecutive frames to detect motion-blurred sub-10px balls that single-frame YOLO misses.
+- YOLO continues handling player detection (class 0); TrackNetV3 handles ball detection when enabled.
+- Ring buffer of 3 frames fed per-frame to TrackNetV3; output converted to synthetic bbox compatible with downstream pipeline.
+- New module: `src/tracknet.py` (vendored encoder-decoder architecture).
+
+### Phase 3: TrackNetV3 Training Pipeline
+
+- `src/tracknet_data.py`: Converts YOLO-format labels to Gaussian heatmaps, provides PyTorch Dataset for frame triplets + heatmaps.
+- `scripts/train_tracknet.py`: Training script with weighted focal loss, ReduceLROnPlateau scheduler, checkpoint saving.
+- Dashboard endpoints for building TrackNetV3 datasets and launching training.
+
+### Phase 4: Horizontal Strip Tiling
+
+- Configurable NxM tile grid (`detector.tiling.grid: [rows, cols]`) replaces hardcoded 2x2.
+- `[1, 4]` = 4 horizontal strips (ideal for 180+ panoramic).
+- Equirectangular-aware overlap boost at horizontal edges (`detector.tiling.equirect_aware_overlap`, `edge_overlap_boost`).
+- Bug fix: class ID now preserved from YOLO detection (was hardcoded to 0).
+
 ## External Services
+
 - **Label Studio** (port 8080) — annotation interface
 - **NVIDIA GPU** — Tesla P40 via nvidia-docker
 - **FFmpeg** — streaming video I/O

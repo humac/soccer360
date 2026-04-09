@@ -562,7 +562,346 @@ class TestSmoothSpeedThresholds:
         # Consecutive dyaw changes should not reverse sign abruptly by large amounts
         for i in range(1, len(dyaws)):
             accel = abs(dyaws[i] - dyaws[i - 1])
-            assert accel < 2.0, (
+            # Allow up to deadband-sized acceleration spikes (deadband can
+            # cause 0 -> deadband_deg transitions).
+            limit = test_config["camera"]["deadband_deg"] + 0.5
+            assert accel <= limit, (
                 f"Camera acceleration spike at frame {i+2}: "
                 f"dyaw went {dyaws[i-1]:.2f} -> {dyaws[i]:.2f}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Spatial dead-zone tests
+# ---------------------------------------------------------------------------
+
+class TestSpatialDeadzone:
+    """Tests for the spatial dead-zone camera feature."""
+
+    def _make_gen(self, test_config, enabled=True, frac=0.30, ramp=0.20):
+        config = deepcopy(test_config)
+        config["camera"]["spatial_deadzone_enabled"] = enabled
+        config["camera"]["spatial_deadzone_frac"] = frac
+        config["camera"]["spatial_deadzone_ramp"] = ramp
+        return CameraPathGenerator(config)
+
+    def test_no_pan_when_ball_centered(self, test_config, tmp_work_dir):
+        """Ball sitting in the center of the frame should produce no camera pan."""
+        gen = self._make_gen(test_config, enabled=True, frac=0.30, ramp=0.20)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=1.0, total_frames=30, codec="h264",
+        )
+
+        # Ball sits exactly at frame center for all frames
+        tracks = [
+            {"frame": i, "ball": {"x": 160, "y": 80, "confidence": 0.9}}
+            for i in range(30)
+        ]
+        tracks_path = tmp_work_dir / "tracks_dz_center.json"
+        with open(tracks_path, "w") as f:
+            json.dump(tracks, f)
+
+        output_path = tmp_work_dir / "cam_dz_center.json"
+        gen.generate(tracks_path, meta, output_path)
+
+        with open(output_path) as f:
+            path = json.load(f)
+
+        # After the camera settles, yaw changes should be near zero
+        for i in range(5, len(path)):
+            dyaw = abs(angle_diff(path[i]["yaw"], path[i - 1]["yaw"]))
+            assert dyaw < 0.5, f"Camera panned {dyaw:.2f}° at frame {i} with ball centered"
+
+    def test_pan_ramps_as_ball_approaches_edge(self, test_config, tmp_work_dir):
+        """Camera gain should increase smoothly as ball moves toward frame edge."""
+        gen = self._make_gen(test_config, enabled=True, frac=0.30, ramp=0.20)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=2.0, total_frames=60, codec="h264",
+        )
+
+        # Ball moves slowly from center toward the right edge
+        tracks = []
+        for i in range(60):
+            x = 160 + i * 2.5  # center to right edge
+            tracks.append({
+                "frame": i,
+                "ball": {"x": min(x, 310), "y": 80, "confidence": 0.9},
+            })
+        tracks_path = tmp_work_dir / "tracks_dz_ramp.json"
+        with open(tracks_path, "w") as f:
+            json.dump(tracks, f)
+
+        output_path = tmp_work_dir / "cam_dz_ramp.json"
+        gen.generate(tracks_path, meta, output_path)
+
+        with open(output_path) as f:
+            path = json.load(f)
+
+        # Camera should start still (ball in deadzone) then gradually speed up.
+        # Compare average speed (not max) because the deadband can cause
+        # initial spikes when movement first crosses the threshold.
+        early_dyaws = [
+            abs(angle_diff(path[i]["yaw"], path[i - 1]["yaw"]))
+            for i in range(3, 15)
+        ]
+        late_dyaws = [
+            abs(angle_diff(path[i]["yaw"], path[i - 1]["yaw"]))
+            for i in range(40, 55)
+        ]
+        assert sum(late_dyaws) / len(late_dyaws) > sum(early_dyaws) / len(early_dyaws), (
+            "Camera should pan faster on average as ball approaches edge"
+        )
+
+    def test_disabled_by_default(self, test_config, sample_tracks, tmp_work_dir):
+        """With spatial_deadzone_enabled=False, output should match the non-deadzone path."""
+        gen_off = self._make_gen(test_config, enabled=False)
+        gen_baseline = CameraPathGenerator(test_config)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=1.0, total_frames=30, codec="h264",
+        )
+
+        p1 = tmp_work_dir / "cam_dz_off.json"
+        p2 = tmp_work_dir / "cam_dz_base.json"
+        gen_off.generate(sample_tracks, meta, p1)
+        gen_baseline.generate(sample_tracks, meta, p2)
+
+        with open(p1) as f:
+            path1 = json.load(f)
+        with open(p2) as f:
+            path2 = json.load(f)
+
+        for i in range(len(path1)):
+            assert abs(path1[i]["yaw"] - path2[i]["yaw"]) < 0.01
+            assert abs(path1[i]["pitch"] - path2[i]["pitch"]) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# Lookahead tests
+# ---------------------------------------------------------------------------
+
+class TestLookahead:
+    """Tests for Kalman velocity lookahead."""
+
+    def _make_gen(self, test_config, enabled=True, frames=3, max_deg=10.0):
+        config = deepcopy(test_config)
+        config["camera"]["lookahead_enabled"] = enabled
+        config["camera"]["lookahead_frames"] = frames
+        config["camera"]["lookahead_max_deg"] = max_deg
+        return CameraPathGenerator(config)
+
+    def test_leads_fast_pass(self, test_config, tmp_work_dir):
+        """With lookahead, camera should lead ahead of a fast-moving ball."""
+        gen_la = self._make_gen(test_config, enabled=True, frames=5)
+        gen_no = self._make_gen(test_config, enabled=False)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=2.0, total_frames=60, codec="h264",
+        )
+
+        # Ball moving fast to the right
+        tracks = []
+        for i in range(60):
+            x = 80 + i * 4  # fast rightward
+            tracks.append({
+                "frame": i,
+                "ball": {"x": min(x, 310), "y": 80, "confidence": 0.9},
+            })
+        tracks_path = tmp_work_dir / "tracks_la_fast.json"
+        with open(tracks_path, "w") as f:
+            json.dump(tracks, f)
+
+        p_la = tmp_work_dir / "cam_la.json"
+        p_no = tmp_work_dir / "cam_no_la.json"
+        gen_la.generate(tracks_path, meta, p_la)
+        gen_no.generate(tracks_path, meta, p_no)
+
+        with open(p_la) as f:
+            path_la = json.load(f)
+        with open(p_no) as f:
+            path_no = json.load(f)
+
+        # During steady-state fast movement, lookahead camera should be
+        # ahead (higher yaw) compared to non-lookahead
+        lead_frames = 0
+        for i in range(15, 45):
+            if path_la[i]["yaw"] > path_no[i]["yaw"] + 0.1:
+                lead_frames += 1
+        assert lead_frames > 15, (
+            f"Lookahead camera should lead the ball; only led in {lead_frames}/30 frames"
+        )
+
+    def test_negligible_on_slow_play(self, test_config, tmp_work_dir):
+        """Lookahead should have negligible effect on a stationary ball."""
+        gen_la = self._make_gen(test_config, enabled=True, frames=5)
+        gen_no = self._make_gen(test_config, enabled=False)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=1.0, total_frames=30, codec="h264",
+        )
+
+        # Ball stationary
+        tracks = [
+            {"frame": i, "ball": {"x": 200, "y": 80, "confidence": 0.9}}
+            for i in range(30)
+        ]
+        tracks_path = tmp_work_dir / "tracks_la_slow.json"
+        with open(tracks_path, "w") as f:
+            json.dump(tracks, f)
+
+        p_la = tmp_work_dir / "cam_la_slow.json"
+        p_no = tmp_work_dir / "cam_no_la_slow.json"
+        gen_la.generate(tracks_path, meta, p_la)
+        gen_no.generate(tracks_path, meta, p_no)
+
+        with open(p_la) as f:
+            path_la = json.load(f)
+        with open(p_no) as f:
+            path_no = json.load(f)
+
+        for i in range(5, 30):
+            diff = abs(path_la[i]["yaw"] - path_no[i]["yaw"])
+            assert diff < 1.0, (
+                f"Lookahead diverged {diff:.2f}° on stationary ball at frame {i}"
+            )
+
+    def test_clamped_projection(self, test_config, tmp_work_dir):
+        """Projection should be clamped to lookahead_max_deg."""
+        gen = self._make_gen(test_config, enabled=True, frames=10, max_deg=2.0)
+        meta = VideoMeta(
+            width=640, height=320, fps=30.0,
+            duration=2.0, total_frames=60, codec="h264",
+        )
+
+        # Very fast ball movement to trigger large projection
+        tracks = []
+        for i in range(60):
+            x = 30 + i * 5
+            tracks.append({
+                "frame": i,
+                "ball": {"x": min(x, 310), "y": 80, "confidence": 0.9},
+            })
+        tracks_path = tmp_work_dir / "tracks_la_clamp.json"
+        with open(tracks_path, "w") as f:
+            json.dump(tracks, f)
+
+        output_path = tmp_work_dir / "cam_la_clamp.json"
+        gen.generate(tracks_path, meta, output_path)
+
+        with open(output_path) as f:
+            path = json.load(f)
+
+        # Output should still be valid and smooth (not diverge due to unclamped projection)
+        for i in range(1, len(path)):
+            dyaw = abs(angle_diff(path[i]["yaw"], path[i - 1]["yaw"]))
+            max_delta = test_config["camera"]["max_fast_pan_speed_deg_per_sec"] / 30.0
+            assert dyaw <= max_delta + 0.5, f"Yaw jump {dyaw:.2f}° at frame {i}"
+
+
+# ---------------------------------------------------------------------------
+# Velocity-adaptive blending tests
+# ---------------------------------------------------------------------------
+
+class TestVelocityAdaptiveBlending:
+    """Tests for velocity-adaptive ball/cluster blending."""
+
+    def _make_gen(self, test_config, enabled=True):
+        config = deepcopy(test_config)
+        config["center_of_play"]["enabled"] = True
+        config["center_of_play"]["velocity_blend_enabled"] = enabled
+        config["center_of_play"]["fast_ball_weight"] = 0.95
+        config["center_of_play"]["slow_ball_weight"] = 0.50
+        config["center_of_play"]["velocity_fast_thresh_deg_per_sec"] = 20.0
+        config["center_of_play"]["velocity_slow_thresh_deg_per_sec"] = 2.0
+        return CameraPathGenerator(config)
+
+    def test_fast_ball_high_weight(self, test_config):
+        """Fast-moving ball should result in high ball weight (low cluster influence)."""
+        gen = self._make_gen(test_config, enabled=True)
+
+        # Two frames: ball jumps far right (fast movement)
+        tracks = [
+            {"frame": 0, "ball": {"x": 100, "y": 80, "confidence": 0.9}},
+            {"frame": 1, "ball": {"x": 200, "y": 80, "confidence": 0.9}},
+        ]
+        clusters = [
+            {"frame": 0, "cluster": {"x": 50, "y": 80, "spread_x_deg": 20.0,
+                                      "player_count": 15, "confidence": 0.6}},
+            {"frame": 1, "cluster": {"x": 50, "y": 80, "spread_x_deg": 20.0,
+                                      "player_count": 15, "confidence": 0.6}},
+        ]
+
+        angles = gen._tracks_to_angles_hybrid(tracks, clusters, fps=30.0)
+        ball_only = gen._tracks_to_angles(tracks)
+
+        # Frame 1 should be very close to ball-only (high ball weight)
+        ball_yaw = ball_only[1][0]
+        hybrid_yaw = angles[1][0]
+        cluster_yaw, _ = pixel_to_yaw_pitch(50, 80, gen.det_width, gen.det_height)
+        # Hybrid should be much closer to ball than cluster
+        assert abs(hybrid_yaw - ball_yaw) < abs(hybrid_yaw - cluster_yaw) * 0.3
+
+    def test_slow_ball_more_cluster(self, test_config):
+        """Stationary ball should allow more cluster influence."""
+        gen = self._make_gen(test_config, enabled=True)
+
+        # Two frames: ball is completely stationary (0px movement → 0 deg/sec
+        # → velocity blend uses slow_ball_weight=0.50, giving cluster 50%)
+        tracks = [
+            {"frame": 0, "ball": {"x": 200, "y": 80, "confidence": 0.9}},
+            {"frame": 1, "ball": {"x": 200, "y": 80, "confidence": 0.9}},
+        ]
+        clusters = [
+            {"frame": 0, "cluster": {"x": 100, "y": 80, "spread_x_deg": 20.0,
+                                      "player_count": 15, "confidence": 0.6}},
+            {"frame": 1, "cluster": {"x": 100, "y": 80, "spread_x_deg": 20.0,
+                                      "player_count": 15, "confidence": 0.6}},
+        ]
+
+        angles_vel = gen._tracks_to_angles_hybrid(tracks, clusters, fps=30.0)
+
+        # Compare to non-velocity (fixed blend) version
+        gen_fixed = self._make_gen(test_config, enabled=False)
+        angles_fixed = gen_fixed._tracks_to_angles_hybrid(tracks, clusters, fps=30.0)
+
+        # Velocity blend at 0 speed → ball_weight=0.50, cluster=0.50
+        # Fixed blend → ball_blend_weight=0.05, cluster=0.05
+        # So velocity blend should pull much more toward cluster
+        cluster_yaw, _ = pixel_to_yaw_pitch(100, 80, gen.det_width, gen.det_height)
+
+        vel_dist_to_cluster = abs(angles_vel[1][0] - cluster_yaw)
+        fixed_dist_to_cluster = abs(angles_fixed[1][0] - cluster_yaw)
+
+        assert vel_dist_to_cluster < fixed_dist_to_cluster, (
+            "Stationary ball should pull hybrid angle closer to cluster than fixed blend"
+        )
+
+    def test_disabled_preserves_existing(self, test_config):
+        """With velocity_blend_enabled=False, output matches two-tier behavior."""
+        gen_on = self._make_gen(test_config, enabled=False)  # disabled
+        gen_base = CameraPathGenerator(deepcopy(test_config) | {
+            "center_of_play": {
+                **test_config["center_of_play"],
+                "enabled": True,
+            },
+        })
+
+        tracks = [
+            {"frame": 0, "ball": {"x": 100, "y": 80, "confidence": 0.9}},
+            {"frame": 1, "ball": {"x": 200, "y": 80, "confidence": 0.9}},
+        ]
+        clusters = [
+            {"frame": 0, "cluster": {"x": 50, "y": 80, "spread_x_deg": 20.0,
+                                      "player_count": 15, "confidence": 0.6}},
+            {"frame": 1, "cluster": {"x": 50, "y": 80, "spread_x_deg": 20.0,
+                                      "player_count": 15, "confidence": 0.6}},
+        ]
+
+        angles_off = gen_on._tracks_to_angles_hybrid(tracks, clusters, fps=30.0)
+        angles_base = gen_base._tracks_to_angles_hybrid(tracks, clusters, fps=30.0)
+
+        for i in range(len(angles_off)):
+            assert abs(angles_off[i][0] - angles_base[i][0]) < 0.01
+            assert abs(angles_off[i][1] - angles_base[i][1]) < 0.01

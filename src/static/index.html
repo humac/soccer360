@@ -1019,6 +1019,19 @@
               <select id="inference-player-model-select"></select>
             </div>
           </div>
+          <div class="form-grid" style="margin-top:12px">
+            <div class="field-stack">
+              <label class="tiny" for="ball-detection-type-select">Ball Detection Type</label>
+              <select id="ball-detection-type-select" onchange="onBallDetectionTypeChange()">
+                <option value="yolo">YOLO (single-frame)</option>
+                <option value="tracknet">TrackNetV3 (temporal, 3-frame)</option>
+              </select>
+            </div>
+            <div class="field-stack" id="tracknet-path-group" style="display:none">
+              <label class="tiny" for="tracknet-path-select">TrackNetV3 Weights</label>
+              <select id="tracknet-path-select" onchange="onTracknetPathChange()"></select>
+            </div>
+          </div>
           <div class="action-row" style="margin-top:14px">
             <button id="apply-inference-model-btn" class="btn" onclick="applyInferenceModelSelection()">Apply Ingest Models</button>
           </div>
@@ -1087,6 +1100,11 @@ const appState = {
   evtSource: null,
   lastEventId: 0,
   busyKeys: new Set(),
+  inferenceDraft: {
+    ball: null,
+    player: null,
+    ballDetectionType: null,
+  },
 };
 
 let _activeUpload = null;
@@ -1507,6 +1525,8 @@ function renderInferenceControls() {
   const inference = appState.workflow && appState.workflow.inference ? appState.workflow.inference : {};
   const ball = inference.ball || {};
   const player = inference.player || {};
+  const serverBallValue = inferenceStatusValue(ball);
+  const serverPlayerValue = inferenceStatusValue(player);
   const summary = document.getElementById('inference-summary');
   summary.innerHTML =
     '<div class="match-name" style="font-size:1rem">Ball: ' + escapeHtml((ball.resolved_path || 'no model').split('/').pop()) + '</div>' +
@@ -1527,11 +1547,68 @@ function renderInferenceControls() {
   const playerSelect = document.getElementById('inference-player-model-select');
   ballSelect.innerHTML = buildInferenceOptions('ball');
   playerSelect.innerHTML = buildInferenceOptions('player');
-  applyInferenceSelectionToControl(ballSelect, ball);
-  applyInferenceSelectionToControl(playerSelect, player);
   ballSelect.disabled = !!ball.config_locked;
   playerSelect.disabled = !!player.config_locked;
+  applyInferenceSelectionToControl(ballSelect, ball, 'ball', serverBallValue);
+  applyInferenceSelectionToControl(playerSelect, player, 'player', serverPlayerValue);
+  ballSelect.onchange = () => updateInferenceDraft('ball', ballSelect.value, serverBallValue);
+  playerSelect.onchange = () => updateInferenceDraft('player', playerSelect.value, serverPlayerValue);
   document.getElementById('apply-inference-model-btn').disabled = !!ball.config_locked && !!player.config_locked;
+
+  // Ball detection type (YOLO vs TrackNetV3)
+  const ballModelConfig = inference.ball_model_config || {};
+  const typeSelect = document.getElementById('ball-detection-type-select');
+  const tracknetPathGroup = document.getElementById('tracknet-path-group');
+  const tracknetPathSelect = document.getElementById('tracknet-path-select');
+  const serverType = ballModelConfig.type || 'yolo';
+  const serverTracknetPath = ballModelConfig.tracknet_path || '';
+
+  // Use draft if user changed the dropdown but hasn't applied yet
+  const typeDraft = appState.inferenceDraft.ballDetectionType;
+  if (typeDraft && typeDraft.serverType === serverType) {
+    typeSelect.value = typeDraft.type;
+    tracknetPathGroup.style.display = typeDraft.type === 'tracknet' ? '' : 'none';
+  } else {
+    appState.inferenceDraft.ballDetectionType = null;
+    typeSelect.value = serverType;
+    tracknetPathGroup.style.display = serverType === 'tracknet' ? '' : 'none';
+  }
+
+  const models = appState.models || [];
+  tracknetPathSelect.innerHTML = '<option value="">Select TrackNetV3 weights...</option>' +
+    models.map(function(m) { return '<option value="' + escapeHtml(m.path) + '">' + escapeHtml(m.name) + '</option>'; }).join('');
+
+  // Restore tracknet path from draft or server
+  if (typeDraft && typeDraft.tracknetPath) {
+    tracknetPathSelect.value = typeDraft.tracknetPath;
+  } else if (ballModelConfig.tracknet_path) {
+    tracknetPathSelect.value = ballModelConfig.tracknet_path;
+  }
+}
+
+function onBallDetectionTypeChange() {
+  var typeSelect = document.getElementById('ball-detection-type-select');
+  var tracknetPathSelect = document.getElementById('tracknet-path-select');
+  document.getElementById('tracknet-path-group').style.display = typeSelect.value === 'tracknet' ? '' : 'none';
+  var inference = appState.workflow && appState.workflow.inference ? appState.workflow.inference : {};
+  var ballModelConfig = inference.ball_model_config || {};
+  appState.inferenceDraft.ballDetectionType = {
+    type: typeSelect.value,
+    tracknetPath: tracknetPathSelect.value || null,
+    serverType: ballModelConfig.type || 'yolo',
+  };
+}
+
+function onTracknetPathChange() {
+  var typeSelect = document.getElementById('ball-detection-type-select');
+  var tracknetPathSelect = document.getElementById('tracknet-path-select');
+  var inference = appState.workflow && appState.workflow.inference ? appState.workflow.inference : {};
+  var ballModelConfig = inference.ball_model_config || {};
+  appState.inferenceDraft.ballDetectionType = {
+    type: typeSelect.value,
+    tracknetPath: tracknetPathSelect.value || null,
+    serverType: ballModelConfig.type || 'yolo',
+  };
 }
 
 function buildInferenceOptions(role) {
@@ -1546,15 +1623,35 @@ function buildInferenceOptions(role) {
   );
 }
 
-function applyInferenceSelectionToControl(selectEl, status) {
-  if (!selectEl) return;
+function inferenceStatusValue(status) {
   if (status.selection_mode === 'pinned' && status.selected_path) {
-    const value = 'pinned::' + status.selected_path;
-    const hasValue = Array.from(selectEl.options).some(option => option.value === value);
-    selectEl.value = hasValue ? value : 'config';
-  } else {
-    selectEl.value = status.selection_mode || 'config';
+    return 'pinned::' + status.selected_path;
   }
+  return status.selection_mode || 'config';
+}
+
+function updateInferenceDraft(role, value, serverValue) {
+  appState.inferenceDraft[role] = {
+    value: value || 'config',
+    serverValue: serverValue || 'config',
+  };
+}
+
+function draftInferenceSelection(role, serverValue) {
+  const draft = appState.inferenceDraft[role];
+  if (!draft) return null;
+  if ((draft.serverValue || 'config') !== (serverValue || 'config')) {
+    appState.inferenceDraft[role] = null;
+    return null;
+  }
+  return draft.value || 'config';
+}
+
+function applyInferenceSelectionToControl(selectEl, status, role, serverValue) {
+  if (!selectEl) return;
+  const desiredValue = draftInferenceSelection(role, serverValue) || inferenceStatusValue(status);
+  const hasValue = Array.from(selectEl.options).some(option => option.value === desiredValue);
+  selectEl.value = hasValue ? desiredValue : 'config';
 }
 
 function renderModelRegistry() {
@@ -2053,7 +2150,19 @@ async function applyInferenceModelSelection() {
   const player = parseSelection(playerSelect.value);
   const ballLabel = ball.mode === 'pinned' ? (ball.path || 'pinned') : ball.mode;
   const playerLabel = player.mode === 'pinned' ? (player.path || 'pinned') : player.mode;
-  if (!await showModal('Apply detection models?', 'Ball model: ' + ballLabel + '\nPlayer model: ' + playerLabel, 'Apply')) return;
+  const typeSelect = document.getElementById('ball-detection-type-select');
+  const tracknetPathSelect = document.getElementById('tracknet-path-select');
+  const ballType = typeSelect.value;
+  const typeLabel = ballType === 'tracknet' ? 'TrackNetV3' : 'YOLO';
+
+  if (ballType === 'tracknet' && !tracknetPathSelect.value) {
+    showToast('Please select TrackNetV3 weights file.', 'error');
+    return;
+  }
+
+  if (!await showModal('Apply detection models?', 'Ball model: ' + ballLabel + '\nPlayer model: ' + playerLabel + '\nBall detection type: ' + typeLabel, 'Apply')) return;
+
+  // Save model path selection
   const resp = await fetch('/api/inference/model', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -2067,8 +2176,28 @@ async function applyInferenceModelSelection() {
     showToast(data.detail || 'Failed to update inference selection', 'error');
     return;
   }
+
+  // Save ball detection type (YOLO vs TrackNetV3)
+  const configPayload = {type: ballType};
+  if (ballType === 'tracknet') {
+    configPayload.tracknet_path = tracknetPathSelect.value;
+  }
+  const configResp = await fetch('/api/inference/ball-model-config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(configPayload),
+  });
+  if (!configResp.ok) {
+    const configData = await configResp.json();
+    showToast(configData.detail || 'Failed to update ball detection type', 'error');
+    return;
+  }
+
+  appState.inferenceDraft.ball = null;
+  appState.inferenceDraft.player = null;
+  appState.inferenceDraft.ballDetectionType = null;
   await loadDashboardData();
-  showToast('Updated ingest models.', 'success');
+  showToast('Updated ingest models (' + typeLabel + ').', 'success');
 }
 
 async function importTasks(matchName) {
